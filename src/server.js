@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { config } from './config.js';
 import { nowIso, openDatabase, toPlainRows } from './db.js';
-import { calculatePortfolio } from './portfolio.js';
+import { calculateMonthlyPerformance, calculatePortfolio } from './portfolio.js';
 import { providerFromName } from './market.js';
 import { createNotification } from './notifications.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
@@ -132,6 +132,10 @@ async function apiRoute(request, response, url) {
 
   if (method === 'GET' && url.pathname === '/api/portfolio') {
     return sendJson(response, 200, calculatePortfolio(db));
+  }
+  if (method === 'GET' && url.pathname === '/api/performance/monthly') {
+    const month = url.searchParams.get('month') || latestEtDate().slice(0, 7);
+    return sendJson(response, 200, calculateMonthlyPerformance(db, month));
   }
 
   if (method === 'POST' && url.pathname === '/api/prices/manual') {

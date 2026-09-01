@@ -57,3 +57,26 @@ test('Yahoo十日行情缺少上一交易日时自动用一个月行情补齐', 
   assert.match(requests[1], /range=1mo/);
   assert.deepEqual(bars.map((bar) => bar.tradeDate), ['2026-08-27', '2026-08-28', '2026-08-31']);
 });
+
+test('Yahoo会按最早建仓日扩展历史行情范围', async () => {
+  const requests = [];
+  const fakeFetch = async (url) => {
+    requests.push(url);
+    return {
+      ok: true,
+      json: async () => ({
+        chart: { result: [{
+          timestamp: [Date.parse('2026-08-31T13:30:00Z') / 1000],
+          indicators: {
+            quote: [{ open: [100], high: [100], low: [100], close: [100], volume: [1000] }],
+            adjclose: [{ adjclose: [100] }]
+          }
+        }] }
+      })
+    };
+  };
+  const provider = new YahooDailyProvider(fakeFetch);
+  await provider.fetchDaily('LITE', { historyStart: '2026-02-01' });
+  assert.equal(requests.length, 2);
+  assert.match(requests[1], /range=1y/);
+});

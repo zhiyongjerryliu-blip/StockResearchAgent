@@ -1,9 +1,22 @@
 import { nowIso, toPlainRows } from './db.js';
 import { round } from './domain.js';
-import { previousRegularUsTradingDate } from './trading-calendar.js';
+import {
+  isRegularUsTradingDay,
+  nextRegularUsTradingDate,
+  previousRegularUsTradingDate
+} from './trading-calendar.js';
 
 const EPSILON = 1e-8;
 const CALCULATION_VERSION = 'portfolio-v1';
+
+function transactionTradeDate(transaction) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date(transaction.trade_time));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const tradeDate = `${values.year}-${values.month}-${values.day}`;
+  return isRegularUsTradingDay(tradeDate) ? tradeDate : nextRegularUsTradingDate(tradeDate);
+}
 
 function consumeLots(lots, quantity) {
   let remaining = quantity;
@@ -115,11 +128,7 @@ function calculateDailyPnl(transactions, latest, previous, endingQuantity) {
   if (!latest || !previous) return null;
   const tradeDate = latest.trade_date;
   const todaysTransactions = transactions.filter((tx) => {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
-    }).formatToParts(new Date(tx.trade_time));
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    return `${values.year}-${values.month}-${values.day}` === tradeDate;
+    return transactionTradeDate(tx) === tradeDate;
   });
   if (!todaysTransactions.length) {
     return endingQuantity * (latest.close - previous.close);
@@ -210,6 +219,150 @@ export function calculatePortfolio(db) {
     asOf: nowIso(),
     positions: stocks,
     totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, round(value)]))
+  };
+}
+
+function monthBounds(month) {
+  if (!/^\d{4}-\d{2}$/.test(month || '')) throw new Error('月份格式必须为YYYY-MM');
+  const [year, monthNumber] = month.split('-').map(Number);
+  if (monthNumber < 1 || monthNumber > 12) throw new Error('月份无效');
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return { start: `${month}-01`, end: `${month}-${String(lastDay).padStart(2, '0')}` };
+}
+
+function consolidatedPricesThrough(db, ticker, endDate) {
+  return toPlainRows(db.prepare(`
+    SELECT trade_date, close
+    FROM (
+      SELECT trade_date, close, provider, ingested_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY trade_date
+               ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
+             ) AS row_number
+      FROM prices_daily
+      WHERE ticker = ? AND trade_date <= ?
+    )
+    WHERE row_number = 1
+    ORDER BY trade_date
+  `).all(ticker, endDate));
+}
+
+function transactionCashFlows(transactions) {
+  let boughtQuantity = 0;
+  let soldQuantity = 0;
+  let buyCash = 0;
+  let sellCash = 0;
+  for (const transaction of transactions) {
+    if (transaction.side === 'BUY') {
+      boughtQuantity += transaction.quantity;
+      buyCash += transaction.quantity * transaction.price + transaction.fee;
+    } else {
+      soldQuantity += transaction.quantity;
+      sellCash += transaction.quantity * transaction.price - transaction.fee;
+    }
+  }
+  return { boughtQuantity, soldQuantity, buyCash, sellCash };
+}
+
+export function calculateMonthlyPerformance(db, month) {
+  const { start, end } = monthBounds(month);
+  const tickers = toPlainRows(db.prepare(`
+    SELECT DISTINCT ticker FROM transactions ORDER BY ticker
+  `).all()).map((row) => row.ticker);
+  const days = new Map();
+
+  for (const ticker of tickers) {
+    const transactions = transactionsForTicker(db, ticker).map((transaction) => ({
+      ...transaction,
+      tradeDate: transactionTradeDate(transaction)
+    }));
+    const transactionsByDate = new Map();
+    let quantity = 0;
+    for (const transaction of transactions) {
+      if (transaction.tradeDate < start) {
+        quantity += transaction.side === 'BUY' ? transaction.quantity : -transaction.quantity;
+        continue;
+      }
+      if (transaction.tradeDate > end) continue;
+      const grouped = transactionsByDate.get(transaction.tradeDate) || [];
+      grouped.push(transaction);
+      transactionsByDate.set(transaction.tradeDate, grouped);
+    }
+
+    const prices = consolidatedPricesThrough(db, ticker, end);
+    const priceByDate = new Map(prices.map((price) => [price.trade_date, price]));
+    const monthPrices = prices.filter((price) => price.trade_date >= start);
+    const pendingTransactionDates = [...transactionsByDate.keys()].sort();
+    let pendingIndex = 0;
+
+    for (const price of monthPrices) {
+      while (
+        pendingIndex < pendingTransactionDates.length &&
+        pendingTransactionDates[pendingIndex] < price.trade_date
+      ) {
+        const skipped = transactionCashFlows(transactionsByDate.get(pendingTransactionDates[pendingIndex]));
+        quantity += skipped.boughtQuantity - skipped.soldQuantity;
+        pendingIndex += 1;
+      }
+
+      const todaysTransactions = transactionsByDate.get(price.trade_date) || [];
+      if (pendingTransactionDates[pendingIndex] === price.trade_date) pendingIndex += 1;
+      const flows = transactionCashFlows(todaysTransactions);
+      const beginningQuantity = quantity;
+      const endingQuantity = beginningQuantity + flows.boughtQuantity - flows.soldQuantity;
+      quantity = endingQuantity;
+
+      const active = beginningQuantity > EPSILON || endingQuantity > EPSILON || todaysTransactions.length > 0;
+      if (!active) continue;
+
+      const previousDate = previousRegularUsTradingDate(price.trade_date);
+      const previous = priceByDate.get(previousDate) || null;
+      const needsPreviousClose = beginningQuantity > EPSILON;
+      const complete = !needsPreviousClose || previous != null;
+      const dailyPnl = complete
+        ? endingQuantity * price.close + flows.sellCash - flows.buyCash -
+          beginningQuantity * (previous?.close || 0)
+        : null;
+      const detail = {
+        ticker,
+        beginningQuantity: round(beginningQuantity, 6),
+        endingQuantity: round(endingQuantity, 6),
+        close: round(price.close),
+        previousDate: needsPreviousClose ? previousDate : null,
+        previousClose: needsPreviousClose ? round(previous?.close) : null,
+        buyCash: round(flows.buyCash),
+        sellCash: round(flows.sellCash),
+        pnl: round(dailyPnl),
+        status: complete ? 'COMPLETE' : 'MISSING_PREVIOUS'
+      };
+      const day = days.get(price.trade_date) || { date: price.trade_date, positions: [] };
+      day.positions.push(detail);
+      days.set(price.trade_date, day);
+    }
+  }
+
+  const dailyRows = [...days.values()].sort((left, right) => left.date.localeCompare(right.date)).map((day) => {
+    const complete = day.positions.every((position) => position.status === 'COMPLETE');
+    const knownPnl = day.positions.reduce((sum, position) => sum + (position.pnl ?? 0), 0);
+    return {
+      ...day,
+      pnl: complete ? round(knownPnl) : null,
+      knownPnl: round(knownPnl),
+      status: complete ? 'COMPLETE' : 'INCOMPLETE'
+    };
+  });
+  const incompleteDays = dailyRows.filter((day) => day.status !== 'COMPLETE').length;
+  const knownPnl = dailyRows.reduce((sum, day) => sum + day.knownPnl, 0);
+  return {
+    month,
+    startDate: start,
+    endDate: end,
+    firstDisplayedDate: dailyRows[0]?.date || null,
+    lastDisplayedDate: dailyRows.at(-1)?.date || null,
+    totalPnl: incompleteDays ? null : round(knownPnl),
+    knownPnl: round(knownPnl),
+    incompleteDays,
+    days: dailyRows
   };
 }
 

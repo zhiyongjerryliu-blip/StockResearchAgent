@@ -99,3 +99,11 @@ export function previousRegularUsTradingDate(tradeDate) {
   } while (!isRegularUsTradingDay(formatDate(date)));
   return formatDate(date);
 }
+
+export function nextRegularUsTradingDate(tradeDate) {
+  const date = dateOnly(tradeDate);
+  do {
+    date.setTime(date.getTime() + DAY_MS);
+  } while (!isRegularUsTradingDay(formatDate(date)));
+  return formatDate(date);
+}

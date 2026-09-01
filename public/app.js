@@ -1,6 +1,7 @@
 const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
-  editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null
+  editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
+  currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null
 };
 
 const titles = {
@@ -31,6 +32,14 @@ function percent(value) {
 function pnlClass(value) {
   if (value == null || value === 0) return '';
   return value > 0 ? 'positive' : 'negative';
+}
+
+function currentEtMonth() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}`;
 }
 
 function escapeHtml(value) {
@@ -178,28 +187,119 @@ async function loadSelectedSecOverview(force = false) {
 
 function renderPortfolio() {
   const portfolio = state.portfolio || { positions: [], totals: {} };
+  const monthly = state.currentMonthPerformance;
   const metricMap = [
     ['#metric-value', portfolio.totals.marketValue, false],
     ['#metric-daily', portfolio.totals.dailyPnl, true],
+    ['#metric-monthly', monthly?.totalPnl, true],
     ['#metric-unrealized', portfolio.totals.unrealizedPnl, true],
     ['#metric-total', portfolio.totals.totalPnl, true]
   ];
   for (const [selector, value, isPnl] of metricMap) {
     const element = document.querySelector(selector);
-    element.textContent = money(value || 0);
+    element.textContent = money(value);
     element.className = isPnl ? pnlClass(value) : '';
   }
+  const monthlyNote = document.querySelector('#metric-monthly-note');
+  monthlyNote.textContent = monthly?.incompleteDays
+    ? `${monthly.incompleteDays}个交易日数据不完整 · 点击查看`
+    : '点击查看每日明细 →';
   const held = portfolio.positions.filter((position) => position.quantity > 0);
   document.querySelector('#positions-body').innerHTML = held.map((position) => `
     <tr>
       <td><span class="ticker">${position.ticker}</span><br><small class="muted">${escapeHtml(position.name || '')}</small></td>
       <td>${position.quantity}</td><td>${money(position.averageCost)}</td><td>${money(position.currentPrice)}</td>
       <td class="${pnlClass(position.dailyPnl)}">${money(position.dailyPnl)}</td>
+      <td>${monthlyPnlButton(position.ticker)}</td>
       <td class="${pnlClass(position.totalPnl)}">${money(position.totalPnl)}</td>
       <td class="${pnlClass(position.totalReturn)}">${percent(position.totalReturn)}</td>
     </tr>`).join('');
   document.querySelector('#positions-empty').classList.toggle('hidden', held.length > 0);
   document.querySelector('#last-updated').textContent = `更新于 ${new Date(portfolio.asOf || Date.now()).toLocaleString('zh-CN')}`;
+}
+
+function summarizeMonthlyPerformance(performance, ticker = null) {
+  if (!performance) return null;
+  if (!ticker) return performance;
+  const days = performance.days.map((day) => {
+    const positions = day.positions.filter((position) => position.ticker === ticker);
+    if (!positions.length) return null;
+    const complete = positions.every((position) => position.status === 'COMPLETE');
+    const knownPnl = positions.reduce((sum, position) => sum + (position.pnl ?? 0), 0);
+    return {
+      date: day.date,
+      positions,
+      pnl: complete ? knownPnl : null,
+      knownPnl,
+      status: complete ? 'COMPLETE' : 'INCOMPLETE'
+    };
+  }).filter(Boolean);
+  const incompleteDays = days.filter((day) => day.status !== 'COMPLETE').length;
+  const knownPnl = days.reduce((sum, day) => sum + day.knownPnl, 0);
+  return {
+    ...performance,
+    firstDisplayedDate: days[0]?.date || null,
+    lastDisplayedDate: days.at(-1)?.date || null,
+    totalPnl: incompleteDays ? null : knownPnl,
+    knownPnl,
+    incompleteDays,
+    days
+  };
+}
+
+function monthlyPnlButton(ticker) {
+  const performance = summarizeMonthlyPerformance(state.currentMonthPerformance, ticker);
+  const value = performance?.totalPnl;
+  return `<button type="button" class="pnl-detail-button ${pnlClass(value)}" data-monthly-ticker="${escapeHtml(ticker)}" title="查看${escapeHtml(ticker)}月度盈亏明细">${money(value)}</button>`;
+}
+
+function renderMonthlyDetail() {
+  const ticker = state.monthlyTickerFilter;
+  const performance = summarizeMonthlyPerformance(state.monthlyDetail, ticker);
+  if (!performance) return;
+  document.querySelector('#monthly-modal-title').textContent = ticker ? `${ticker} 月度盈亏明细` : '月度盈亏明细';
+  document.querySelector('#monthly-picker').value = performance.month;
+  const total = document.querySelector('#monthly-detail-total');
+  total.textContent = money(performance.totalPnl);
+  total.className = pnlClass(performance.totalPnl);
+  document.querySelector('#monthly-detail-note').textContent = performance.incompleteDays
+    ? `有 ${performance.incompleteDays} 个持仓交易日缺少必要行情，当月合计暂不发布；表中仍展示可确认的数据。`
+    : performance.days.length
+      ? `仅展示持仓有效区间：${performance.firstDisplayedDate} 至 ${performance.lastDisplayedDate}。建仓前及完全清仓后的日期不会展示。`
+      : '本月没有处于持仓区间的交易日。';
+
+  document.querySelector('#monthly-detail-body').innerHTML = [...performance.days].reverse().map((day) => {
+    const tickers = day.positions.map((position) => `<span class="monthly-ticker">${escapeHtml(position.ticker)}</span>`).join('');
+    const quantities = day.positions.map((position) =>
+      `<span>${escapeHtml(position.ticker)} ${position.beginningQuantity} → ${position.endingQuantity}</span>`
+    ).join('');
+    return `<tr>
+      <td><strong>${escapeHtml(day.date)}</strong></td>
+      <td><div class="monthly-tickers">${tickers}</div></td>
+      <td><div class="monthly-quantities">${quantities}</div></td>
+      <td class="${pnlClass(day.pnl)}">${money(day.pnl)}</td>
+      <td><span class="badge ${day.status === 'COMPLETE' ? 'buy' : 'P2'}">${day.status === 'COMPLETE' ? '完整' : '缺少行情'}</span></td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#monthly-detail-empty').classList.toggle('hidden', performance.days.length > 0);
+}
+
+async function loadMonthlyDetail(month) {
+  state.monthlyDetail = await api(`/api/performance/monthly?month=${encodeURIComponent(month)}`);
+  renderMonthlyDetail();
+}
+
+function openMonthlyDetail(ticker = null) {
+  state.monthlyTickerFilter = ticker;
+  state.monthlyDetail = state.currentMonthPerformance;
+  renderMonthlyDetail();
+  document.querySelector('#monthly-modal').classList.remove('hidden');
+  document.querySelector('#monthly-picker').focus();
+}
+
+function closeMonthlyDetail() {
+  document.querySelector('#monthly-modal').classList.add('hidden');
+  state.monthlyTickerFilter = null;
 }
 
 function renderTransactions() {
@@ -247,11 +347,12 @@ function renderConfig() {
 }
 
 async function loadAll() {
-  const [watchlist, portfolio, transactions, notifications, reviews, config] = await Promise.all([
+  const [watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance] = await Promise.all([
     api('/api/watchlist'), api('/api/portfolio'), api('/api/transactions'),
-    api('/api/notifications'), api('/api/reviews'), api('/api/config')
+    api('/api/notifications'), api('/api/reviews'), api('/api/config'),
+    api(`/api/performance/monthly?month=${currentEtMonth()}`)
   ]);
-  Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config });
+  Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance });
   renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderReviews(); renderConfig();
 }
 
@@ -293,9 +394,24 @@ document.querySelector('#nav').addEventListener('click', (event) => {
   const button = event.target.closest('[data-view]');
   if (button) showView(button.dataset.view);
 });
+document.querySelector('#metric-monthly-card').addEventListener('click', () => openMonthlyDetail());
+document.querySelector('#monthly-modal').addEventListener('click', (event) => {
+  if (event.target.closest('[data-close-monthly]')) closeMonthlyDetail();
+});
+document.querySelector('#monthly-picker').addEventListener('change', (event) => {
+  if (!event.target.value) return;
+  loadMonthlyDetail(event.target.value).catch((error) => showToast(error.message, true));
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !document.querySelector('#monthly-modal').classList.contains('hidden')) {
+    closeMonthlyDetail();
+  }
+});
 document.body.addEventListener('click', async (event) => {
   const go = event.target.closest('[data-go]');
   if (go) showView(go.dataset.go);
+  const monthlyTicker = event.target.closest('[data-monthly-ticker]');
+  if (monthlyTicker) openMonthlyDetail(monthlyTicker.dataset.monthlyTicker);
   const toggle = event.target.closest('[data-toggle-ticker]');
   if (toggle) {
     try {

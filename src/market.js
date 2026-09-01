@@ -5,6 +5,25 @@ function yahooSymbol(ticker) {
   return ticker.replaceAll('.', '-');
 }
 
+function etDate(value) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date(value));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function historyRange(startDate, latestDate) {
+  const days = Math.max(1, (Date.parse(latestDate) - Date.parse(startDate)) / 86_400_000);
+  if (days <= 31) return '1mo';
+  if (days <= 93) return '3mo';
+  if (days <= 186) return '6mo';
+  if (days <= 366) return '1y';
+  if (days <= 732) return '2y';
+  if (days <= 1_830) return '5y';
+  return 'max';
+}
+
 export class YahooDailyProvider {
   constructor(fetchImpl = fetch) {
     this.fetchImpl = fetchImpl;
@@ -39,14 +58,20 @@ export class YahooDailyProvider {
     })).filter((bar) => Number.isFinite(bar.close));
   }
 
-  async fetchDaily(ticker) {
+  async fetchDaily(ticker, options = {}) {
     let bars = await this.fetchRange(ticker, '10d');
     const latest = [...bars].sort((left, right) => right.tradeDate.localeCompare(left.tradeDate))[0];
     if (!latest) return bars;
 
     const expectedPreviousDate = previousRegularUsTradingDate(latest.tradeDate);
-    if (!bars.some((bar) => bar.tradeDate === expectedPreviousDate)) {
-      const fallbackBars = await this.fetchRange(ticker, '1mo');
+    const missingPrevious = !bars.some((bar) => bar.tradeDate === expectedPreviousDate);
+    const missingHistory = options.historyStart &&
+      !bars.some((bar) => bar.tradeDate <= options.historyStart);
+    if (missingPrevious || missingHistory) {
+      const fallbackRange = missingHistory
+        ? historyRange(options.historyStart, latest.tradeDate)
+        : '1mo';
+      const fallbackBars = await this.fetchRange(ticker, fallbackRange);
       const merged = new Map(bars.map((bar) => [bar.tradeDate, bar]));
       for (const bar of fallbackBars) merged.set(bar.tradeDate, bar);
       bars = [...merged.values()];
@@ -99,14 +124,23 @@ export function upsertDailyBars(db, bars) {
 export async function refreshWatchlistPrices(db, provider) {
   if (!provider) return { provider: 'manual', results: [] };
   const stocks = toPlainRows(db.prepare(`
-    SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
+    SELECT w.ticker,
+           (SELECT MIN(t.trade_time) FROM transactions t WHERE t.ticker = w.ticker) AS first_trade_time,
+           (SELECT MIN(p.trade_date) FROM prices_daily p WHERE p.ticker = w.ticker) AS first_price_date
+    FROM watchlist_items w
+    WHERE w.enabled = 1
+    ORDER BY w.ticker
   `).all());
   const results = [];
-  for (const { ticker } of stocks) {
+  for (const { ticker, first_trade_time: firstTradeTime, first_price_date: firstPriceDate } of stocks) {
     try {
-      const bars = await provider.fetchDaily(ticker);
+      const firstTradeDate = firstTradeTime ? etDate(firstTradeTime) : null;
+      const historyStart = firstTradeDate && (!firstPriceDate || firstPriceDate > firstTradeDate)
+        ? firstTradeDate
+        : null;
+      const bars = await provider.fetchDaily(ticker, { historyStart });
       const count = upsertDailyBars(db, bars);
-      results.push({ ticker, ok: true, count });
+      results.push({ ticker, ok: true, count, historyStart });
     } catch (error) {
       results.push({ ticker, ok: false, error: error.message });
     }

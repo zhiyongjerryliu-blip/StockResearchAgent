@@ -49,6 +49,9 @@
         <div class="metric-grid">
           <article class="metric-card"><span>当前市值</span><strong id="metric-value">$0.00</strong><small>启用股票的期末市值</small></article>
           <article class="metric-card"><span>今日盈亏</span><strong id="metric-daily">$0.00</strong><small>包含当日交易现金流调整</small></article>
+          <button type="button" class="metric-card metric-card-button" id="metric-monthly-card">
+            <span>本月盈亏</span><strong id="metric-monthly">$0.00</strong><small id="metric-monthly-note">点击查看每日明细 →</small>
+          </button>
           <article class="metric-card"><span>未实现盈亏</span><strong id="metric-unrealized">$0.00</strong><small>当前持仓相对剩余成本</small></article>
           <article class="metric-card"><span>累计总盈亏</span><strong id="metric-total">$0.00</strong><small>已实现与未实现合计</small></article>
         </div>
@@ -61,7 +64,7 @@
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>股票</th><th>股数</th><th>平均成本</th><th>当前价</th><th>今日盈亏</th><th>累计盈亏</th><th>总收益率</th></tr></thead>
+                <thead><tr><th>股票</th><th>股数</th><th>平均成本</th><th>当前价</th><th>今日盈亏</th><th>本月盈亏</th><th>累计盈亏</th><th>总收益率</th></tr></thead>
                 <tbody id="positions-body"></tbody>
               </table>
             </div>
@@ -239,6 +242,28 @@
         </article>
       </section>
     </main>
+  </div>
+
+  <div class="modal hidden" id="monthly-modal" role="dialog" aria-modal="true" aria-labelledby="monthly-modal-title">
+    <button class="modal-backdrop" type="button" data-close-monthly aria-label="关闭"></button>
+    <section class="modal-panel">
+      <div class="modal-head">
+        <div><p class="eyebrow">MONTHLY PERFORMANCE</p><h2 id="monthly-modal-title">月度盈亏明细</h2></div>
+        <button class="modal-close" type="button" data-close-monthly aria-label="关闭">×</button>
+      </div>
+      <div class="monthly-toolbar">
+        <label>查看月份<input id="monthly-picker" type="month"></label>
+        <div class="monthly-total"><span>当月合计</span><strong id="monthly-detail-total">—</strong></div>
+      </div>
+      <p class="monthly-note muted" id="monthly-detail-note"></p>
+      <div class="table-wrap monthly-table-wrap">
+        <table>
+          <thead><tr><th>交易日</th><th>持仓股票</th><th>期初 → 期末股数</th><th>当日盈亏</th><th>数据状态</th></tr></thead>
+          <tbody id="monthly-detail-body"></tbody>
+        </table>
+      </div>
+      <div id="monthly-detail-empty" class="empty hidden">这个月没有持仓盈亏数据。</div>
+    </section>
   </div>
   <script type="module" src="/app.js"></script>
 </body>
