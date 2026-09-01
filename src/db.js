@@ -52,12 +52,23 @@ CREATE TABLE IF NOT EXISTS transactions (
   price REAL NOT NULL CHECK(price >= 0),
   fee REAL NOT NULL DEFAULT 0 CHECK(fee >= 0),
   note TEXT,
+  import_batch_id INTEGER,
+  import_row_number INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_ticker_time
 ON transactions(ticker, trade_time, id);
+
+CREATE TABLE IF NOT EXISTS transaction_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_name TEXT NOT NULL,
+  file_sha256 TEXT NOT NULL UNIQUE,
+  row_count INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  committed_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS prices_daily (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
@@ -256,6 +267,15 @@ export function openDatabase(databasePath = config.databasePath) {
   }
   const db = new DatabaseSync(databasePath);
   db.exec(schema);
+  const transactionColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(transactions)').all()).map((column) => column.name)
+  );
+  if (!transactionColumns.has('import_batch_id')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN import_batch_id INTEGER');
+  }
+  if (!transactionColumns.has('import_row_number')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN import_row_number INTEGER');
+  }
   return db;
 }
 

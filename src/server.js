@@ -9,6 +9,7 @@ import { createNotification } from './notifications.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
 import { runDailyCycle, runMarketRefreshCycle, startScheduler } from './scheduler.js';
 import { getSecOverview, SecEdgarProvider, syncSecCompany } from './sec.js';
+import { commitTransactionImport, validateTransactionImport } from './transaction-import.js';
 import {
   addTransaction,
   deleteWatchlistItem,
@@ -34,7 +35,9 @@ const contentTypes = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
-  '.json': 'application/json; charset=utf-8'
+  '.json': 'application/json; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 };
 
 function sendJson(response, status, payload) {
@@ -47,7 +50,7 @@ async function readJson(request) {
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
-    if (total > 1_000_000) throw new Error('请求内容过大');
+    if (total > 8_000_000) throw new Error('请求内容过大');
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
@@ -124,6 +127,13 @@ async function apiRoute(request, response, url) {
   }
   if (method === 'POST' && url.pathname === '/api/transactions') {
     return sendJson(response, 201, addTransaction(db, await readJson(request)));
+  }
+  if (method === 'POST' && url.pathname === '/api/transactions/import/validate') {
+    return sendJson(response, 200, await validateTransactionImport(db, await readJson(request)));
+  }
+  if (method === 'POST' && url.pathname === '/api/transactions/import/commit') {
+    const body = await readJson(request);
+    return sendJson(response, 201, commitTransactionImport(db, body.token));
   }
   const transactionMatch = url.pathname.match(/^\/api\/transactions\/(\d+)$/);
   if (transactionMatch && method === 'DELETE') {

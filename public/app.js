@@ -1,7 +1,8 @@
 const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
-  currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null
+  currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
+  transactionImportToken: null
 };
 
 const titles = {
@@ -305,12 +306,53 @@ function closeMonthlyDetail() {
 function renderTransactions() {
   document.querySelector('#transactions-body').innerHTML = state.transactions.map((tx) => `
     <tr>
-      <td>${new Date(tx.trade_time).toLocaleString('zh-CN')}</td><td class="ticker">${tx.ticker}</td>
+      <td>${escapeHtml(String(tx.trade_time).slice(0, 10))}</td><td class="ticker">${tx.ticker}</td>
       <td><span class="badge ${tx.side === 'BUY' ? 'buy' : 'sell'}">${tx.side === 'BUY' ? '买入' : '卖出'}</span></td>
       <td>${tx.quantity}</td><td>${money(tx.price)}</td><td>${money(tx.fee)}</td>
       <td><button class="danger-link" data-delete-transaction="${tx.id}">删除</button></td>
     </tr>`).join('');
   document.querySelector('#transactions-empty').classList.toggle('hidden', state.transactions.length > 0);
+}
+
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('无法读取交易文件'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderTransactionImportResult(result, fileName) {
+  state.transactionImportToken = result.valid ? result.token : null;
+  const panel = document.querySelector('#transaction-import-result');
+  panel.classList.remove('hidden');
+  const summary = document.querySelector('#transaction-import-summary');
+  summary.className = result.valid ? 'import-valid' : 'import-invalid';
+  summary.textContent = result.valid
+    ? `${fileName} 预检通过，共 ${result.rowCount} 笔交易。`
+    : `${fileName} 未通过预检，共发现 ${result.errors.length} 个问题。`;
+  document.querySelector('#transaction-import-added').textContent = result.addedStocks.length
+    ? `确认导入时将自动加入股票池：${result.addedStocks.map((stock) => `${stock.ticker}（${stock.name}）`).join('、')}`
+    : '文件中的股票均已在股票池中。';
+  document.querySelector('#transaction-import-errors').innerHTML = result.errors.map((error) =>
+    `<li>${error.rowNumber ? `第${error.rowNumber}行：` : ''}${escapeHtml(error.message)}</li>`
+  ).join('');
+  const previewRows = result.rows.slice(0, 100);
+  document.querySelector('#transaction-import-preview-body').innerHTML = previewRows.map((row) => `
+    <tr>
+      <td>${row.rowNumber}</td><td>${escapeHtml(row.tradeDate)}</td><td class="ticker">${escapeHtml(row.ticker)}</td>
+      <td><span class="badge ${row.side === 'BUY' ? 'buy' : 'sell'}">${row.side === 'BUY' ? '买入' : '卖出'}</span></td>
+      <td>${row.quantity}</td><td>${money(row.price)}</td><td>${money(row.fee)}</td>
+    </tr>`).join('');
+  document.querySelector('#transaction-import-preview-wrap').classList.toggle('hidden', previewRows.length === 0);
+  document.querySelector('#commit-transaction-import').classList.toggle('hidden', !result.valid);
+}
+
+function resetTransactionImport() {
+  state.transactionImportToken = null;
+  document.querySelector('#transaction-import-form').reset();
+  document.querySelector('#transaction-import-result').classList.add('hidden');
 }
 
 function renderNotifications() {
@@ -485,6 +527,49 @@ document.querySelector('#transaction-form').addEventListener('submit', async (ev
     event.target.reset(); event.target.elements.fee.value = '0';
     await loadAll(); showToast('交易已保存，持仓已重新计算');
   } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#transaction-import-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const file = document.querySelector('#transaction-import-file').files[0];
+  if (!file) return showToast('请选择交易文件', true);
+  if (file.size > 5 * 1024 * 1024) return showToast('交易文件不能超过5MB', true);
+  const button = document.querySelector('#validate-transaction-import');
+  button.disabled = true;
+  button.textContent = '正在预检…';
+  try {
+    const dataBase64 = await fileAsDataUrl(file);
+    const result = await api('/api/transactions/import/validate', {
+      method: 'POST', body: JSON.stringify({ fileName: file.name, dataBase64 })
+    });
+    renderTransactionImportResult(result, file.name);
+    showToast(result.valid ? '交易文件预检通过' : '交易文件存在问题，请检查', !result.valid);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '预检文件';
+  }
+});
+
+document.querySelector('#commit-transaction-import').addEventListener('click', async (event) => {
+  if (!state.transactionImportToken) return showToast('请先重新预检交易文件', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在导入…';
+  try {
+    const result = await api('/api/transactions/import/commit', {
+      method: 'POST', body: JSON.stringify({ token: state.transactionImportToken })
+    });
+    resetTransactionImport();
+    await loadAll();
+    const added = result.addedStocks.length ? `，新增${result.addedStocks.length}只股票到股票池` : '';
+    showToast(`已导入${result.imported}笔交易${added}`);
+  } catch (error) {
+    showToast(error.message, true);
+    button.disabled = false;
+    button.textContent = '确认批量导入';
+  }
 });
 
 document.querySelector('#price-form').addEventListener('submit', async (event) => {

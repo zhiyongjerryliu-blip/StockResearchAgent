@@ -1,5 +1,5 @@
 import { nowIso, toPlain, toPlainRows } from './db.js';
-import { isoDate, nonNegativeNumber, normalizeTicker, positiveNumber } from './domain.js';
+import { nonNegativeNumber, normalizeTicker, positiveNumber } from './domain.js';
 import { calculatePosition } from './portfolio.js';
 import { calculateReliability } from './reliability.js';
 
@@ -155,7 +155,14 @@ export function addTransaction(db, input) {
   if (!security) throw new Error('请先将股票加入股票池');
   const side = String(input.side || '').toUpperCase();
   if (!['BUY', 'SELL'].includes(side)) throw new Error('交易方向必须为BUY或SELL');
-  const tradeTime = isoDate(input.tradeTime, '交易时间');
+  const tradeDate = String(input.tradeDate || input.tradeTime || '').slice(0, 10);
+  const parsedTradeDate = new Date(`${tradeDate}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(tradeDate) ||
+    Number.isNaN(parsedTradeDate.getTime()) ||
+    parsedTradeDate.toISOString().slice(0, 10) !== tradeDate
+  ) throw new Error('交易日期无效');
+  const tradeTime = `${tradeDate}T16:00:00.000Z`;
   const quantity = positiveNumber(input.quantity, '股数');
   const price = nonNegativeNumber(input.price, '成交价');
   const fee = nonNegativeNumber(input.fee, '费用');

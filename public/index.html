@@ -177,7 +177,7 @@
             <div class="panel-head"><div><p class="eyebrow">LEDGER</p><h2>交易流水</h2></div></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>时间</th><th>股票</th><th>方向</th><th>股数</th><th>价格</th><th>费用</th><th></th></tr></thead>
+                <thead><tr><th>日期</th><th>股票</th><th>方向</th><th>股数</th><th>价格</th><th>费用</th><th></th></tr></thead>
                 <tbody id="transactions-body"></tbody>
               </table>
             </div>
@@ -192,7 +192,7 @@
                   <label>股票<select name="ticker" id="trade-ticker" required></select></label>
                   <label>方向<select name="side"><option value="BUY">买入</option><option value="SELL">卖出</option></select></label>
                 </div>
-                <label>交易时间<input name="tradeTime" type="datetime-local" required></label>
+                <label>交易日期<input name="tradeDate" type="date" required></label>
                 <div class="form-row">
                   <label>股数<input name="quantity" type="number" min="0.000001" step="0.000001" required></label>
                   <label>成交价<input name="price" type="number" min="0" step="0.0001" required></label>
@@ -215,6 +215,28 @@
                 </div>
                 <button class="button secondary full" type="submit">保存价格</button>
               </form>
+            </article>
+
+            <article class="panel form-panel">
+              <p class="eyebrow">BATCH IMPORT</p><h2>批量录入交易</h2>
+              <p class="muted import-intro">支持Excel（.xlsx）和CSV。系统会先校验全部交易，确认后才一次性写入。</p>
+              <a class="button secondary full template-download" href="/templates/StockResearchAgent-%E4%BA%A4%E6%98%93%E6%89%B9%E9%87%8F%E5%AF%BC%E5%85%A5%E6%A8%A1%E6%9D%BF.xlsx" download>下载Excel模板</a>
+              <form id="transaction-import-form">
+                <label>选择交易文件<input id="transaction-import-file" type="file" accept=".xlsx,.csv" required></label>
+                <button class="button secondary full" id="validate-transaction-import" type="submit">预检文件</button>
+              </form>
+              <div id="transaction-import-result" class="import-result hidden">
+                <p id="transaction-import-summary"></p>
+                <p id="transaction-import-added" class="muted"></p>
+                <ul id="transaction-import-errors" class="import-errors"></ul>
+                <div class="table-wrap hidden" id="transaction-import-preview-wrap">
+                  <table class="import-preview-table">
+                    <thead><tr><th>行</th><th>日期</th><th>股票</th><th>方向</th><th>股数</th><th>价格</th><th>费用</th></tr></thead>
+                    <tbody id="transaction-import-preview-body"></tbody>
+                  </table>
+                </div>
+                <button class="button primary full hidden" id="commit-transaction-import" type="button">确认批量导入</button>
+              </div>
             </article>
           </div>
         </div>

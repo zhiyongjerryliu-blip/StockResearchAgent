@@ -5,3 +5,5 @@ data/
 *.sqlite-wal
 .DS_Store
 coverage/
+node_modules/
+outputs/

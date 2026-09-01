@@ -108,6 +108,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent-2); box-s
 textarea { min-height: 78px; resize: vertical; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .stack { display: grid; gap: 16px; }
+.import-intro { line-height: 1.6; margin-bottom: 14px; }
+.template-download { display: block; text-align: center; text-decoration: none; margin-bottom: 14px; }
+.import-result { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 15px; }
+.import-result > p { line-height: 1.55; margin-bottom: 9px; font-size: 12px; }
+.import-valid { color: var(--profit); font-weight: 800; }
+.import-invalid { color: var(--warning); font-weight: 800; }
+.import-errors { color: var(--warning); font-size: 11px; line-height: 1.7; padding-left: 18px; }
+.import-preview-table { min-width: 720px; margin-bottom: 12px; }
 .danger-link { color: var(--danger); }
 
 .notification-list, .review-list { display: grid; gap: 9px; }
