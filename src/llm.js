@@ -21,6 +21,7 @@ export async function explainStructuredReview(structuredReview, fetchImpl = fetc
           content: [
             '你是美股投研复盘编辑。只能使用用户提供的结构化事实，不得补充或猜测任何新闻、价格、机构身份或目标价。',
             '明确区分事实、模型推断和数据缺失。使用简洁中文，先总结当日表现，再说明持仓收益、风险和次日观察。',
+            '当priceDataStatus不是COMPLETE，或previousClose、dailyReturn、dailyPnl任一缺失时，必须明确说明前一交易日行情不完整，禁止推断涨跌幅和当日盈亏。',
             '如果数据不足，直接写数据不足。不得给出确定买卖命令。'
           ].join('')
         },

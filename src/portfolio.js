@@ -1,5 +1,6 @@
 import { nowIso, toPlainRows } from './db.js';
 import { round } from './domain.js';
+import { previousRegularUsTradingDate } from './trading-calendar.js';
 
 const EPSILON = 1e-8;
 const CALCULATION_VERSION = 'portfolio-v1';
@@ -67,7 +68,7 @@ export function calculateLots(transactions) {
 }
 
 function latestPrices(db, ticker) {
-  const rows = toPlainRows(db.prepare(`
+  const latest = toPlainRows(db.prepare(`
     SELECT trade_date, open, high, low, close, volume, provider
     FROM (
       SELECT trade_date, open, high, low, close, volume, provider, ingested_at,
@@ -80,9 +81,25 @@ function latestPrices(db, ticker) {
     )
     WHERE row_number = 1
     ORDER BY trade_date DESC
-    LIMIT 2
-  `).all(ticker));
-  return { latest: rows[0] || null, previous: rows[1] || null };
+    LIMIT 1
+  `).all(ticker))[0] || null;
+  if (!latest) return { latest: null, previous: null, expectedPreviousDate: null };
+
+  const expectedPreviousDate = previousRegularUsTradingDate(latest.trade_date);
+  const previous = toPlainRows(db.prepare(`
+    SELECT trade_date, open, high, low, close, volume, provider
+    FROM (
+      SELECT trade_date, open, high, low, close, volume, provider, ingested_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY trade_date
+               ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
+             ) AS row_number
+      FROM prices_daily
+      WHERE ticker = ? AND trade_date = ?
+    )
+    WHERE row_number = 1
+  `).all(ticker, expectedPreviousDate))[0] || null;
+  return { latest, previous, expectedPreviousDate };
 }
 
 function transactionsForTicker(db, ticker) {
@@ -130,7 +147,7 @@ function calculateDailyPnl(transactions, latest, previous, endingQuantity) {
 export function calculatePosition(db, ticker) {
   const transactions = transactionsForTicker(db, ticker);
   const lotResult = calculateLots(transactions);
-  const { latest, previous } = latestPrices(db, ticker);
+  const { latest, previous, expectedPreviousDate } = latestPrices(db, ticker);
   const currentPrice = latest?.close ?? null;
   const marketValue = currentPrice == null ? null : lotResult.quantity * currentPrice;
   const unrealizedPnl = marketValue == null ? null : marketValue - lotResult.remainingCost;
@@ -153,6 +170,9 @@ export function calculatePosition(db, ticker) {
     currentPrice: round(currentPrice),
     previousClose: round(previous?.close),
     priceDate: latest?.trade_date ?? null,
+    previousPriceDate: previous?.trade_date ?? null,
+    expectedPreviousPriceDate: expectedPreviousDate,
+    priceDataStatus: latest ? (previous ? 'COMPLETE' : 'MISSING_PREVIOUS') : 'NO_CURRENT',
     marketValue: round(marketValue),
     dailyPnl: round(dailyPnl),
     dailyReturn: latest && previous && previous.close !== 0

@@ -1,5 +1,5 @@
 import { nowIso, toPlainRows } from './db.js';
-import { calculatePortfolio } from './portfolio.js';
+import { calculatePortfolio, saveDailySnapshots } from './portfolio.js';
 import { explainStructuredReview } from './llm.js';
 import { parseJson, round } from './domain.js';
 
@@ -59,9 +59,14 @@ function deterministicStockNarrative(review) {
   const pieces = [];
   if (position.currentPrice == null) {
     pieces.push(`${position.ticker} 暂无有效收盘行情，今日无法完成收益和走势判断。`);
+  } else if (position.dailyReturn == null) {
+    pieces.push(
+      `${position.ticker} 截至 ${position.priceDate} 收盘价 $${position.currentPrice.toFixed(2)}。` +
+      `前一交易日 ${position.expectedPreviousPriceDate || '未知'} 的收盘行情缺失，暂不计算当日涨跌和当日盈亏。`
+    );
   } else {
-    const direction = (position.dailyReturn ?? 0) >= 0 ? '上涨' : '下跌';
-    const pct = position.dailyReturn == null ? '未知' : `${Math.abs(position.dailyReturn * 100).toFixed(2)}%`;
+    const direction = position.dailyReturn >= 0 ? '上涨' : '下跌';
+    const pct = `${Math.abs(position.dailyReturn * 100).toFixed(2)}%`;
     pieces.push(`${position.ticker} 今日${direction}${pct}，收盘价 $${position.currentPrice.toFixed(2)}。`);
   }
   if (position.quantity > 0 && position.totalPnl != null) {
@@ -116,7 +121,10 @@ export async function generateDailyReviews(db, reviewDate) {
       predictions: latestPredictions(db, position.ticker),
       limitations: [
         '公开成交数据不能确认最终交易账户身份',
-        '未达到综合可靠度门槛的预测不得作为正式预测发布'
+        '未达到综合可靠度门槛的预测不得作为正式预测发布',
+        ...(position.priceDataStatus === 'MISSING_PREVIOUS'
+          ? [`前一交易日 ${position.expectedPreviousPriceDate} 的收盘行情缺失，不得计算当日涨跌和当日盈亏`]
+          : [])
       ]
     };
     let narrative = deterministicStockNarrative(structured);
@@ -148,4 +156,50 @@ export async function generateDailyReviews(db, reviewDate) {
   await saveReview(db, reviewDate, null, 'PORTFOLIO', portfolioStructured, portfolioNarrative, 'review-v1');
 
   return { reviewDate, stockReviews, portfolio: { structured: portfolioStructured, narrative: portfolioNarrative } };
+}
+
+function equalReviewValue(left, right) {
+  if (left == null && right == null) return true;
+  return left === right;
+}
+
+function storedPositionMatches(stored, current) {
+  return [
+    'currentPrice',
+    'previousClose',
+    'priceDate',
+    'previousPriceDate',
+    'expectedPreviousPriceDate',
+    'priceDataStatus',
+    'dailyPnl',
+    'dailyReturn'
+  ].every((field) => equalReviewValue(stored?.[field], current[field]));
+}
+
+export async function refreshDailyReviewsIfNeeded(db, reviewDate) {
+  const existingRows = toPlainRows(db.prepare(`
+    SELECT ticker, structured_json
+    FROM daily_reviews
+    WHERE review_date = ? AND review_type = 'STOCK' AND status = 'FINAL'
+  `).all(reviewDate));
+  if (!existingRows.length) {
+    return { refreshed: false, reason: 'NO_EXISTING_STOCK_REVIEW', tickers: [] };
+  }
+
+  const existing = new Map(existingRows.map((row) => [
+    row.ticker,
+    parseJson(row.structured_json, {}).position
+  ]));
+  const portfolio = calculatePortfolio(db);
+  const staleTickers = portfolio.positions
+    .filter((position) => !storedPositionMatches(existing.get(position.ticker), position))
+    .map((position) => position.ticker);
+
+  if (!staleTickers.length) {
+    return { refreshed: false, reason: 'UP_TO_DATE', tickers: [] };
+  }
+
+  saveDailySnapshots(db, reviewDate);
+  await generateDailyReviews(db, reviewDate);
+  return { refreshed: true, reason: 'PRICE_DATA_CHANGED', tickers: staleTickers };
 }

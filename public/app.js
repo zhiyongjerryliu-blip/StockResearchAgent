@@ -1,11 +1,11 @@
 const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
-  editingWatchlistTicker: null
+  editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null
 };
 
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
-  reviews: '收盘复盘', settings: '系统状态'
+  financials: '财报分析', reviews: '收盘复盘', settings: '系统状态'
 };
 
 async function api(path, options = {}) {
@@ -53,6 +53,7 @@ function showView(view) {
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === view));
   document.querySelectorAll('.view').forEach((item) => item.classList.toggle('active', item.id === `view-${view}`));
   document.querySelector('#page-title').textContent = titles[view];
+  if (view === 'financials') loadSelectedSecOverview().catch((error) => showToast(error.message, true));
 }
 
 function renderWatchlist() {
@@ -74,20 +75,119 @@ function renderWatchlist() {
 
   const options = state.watchlist.filter((item) => item.enabled).map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
   for (const id of ['#trade-ticker', '#price-ticker']) document.querySelector(id).innerHTML = options || '<option value="">请先添加股票</option>';
+
+  const secSelect = document.querySelector('#sec-ticker');
+  const selectedTicker = secSelect.value || state.secLoadedTicker;
+  const secOptions = state.watchlist.map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
+  secSelect.innerHTML = secOptions || '<option value="">请先添加股票</option>';
+  if (selectedTicker && state.watchlist.some((item) => item.ticker === selectedTicker)) secSelect.value = selectedTicker;
+}
+
+function secValue(fact) {
+  if (!fact || !Number.isFinite(Number(fact.value))) return '—';
+  const value = Number(fact.value);
+  if (fact.unit === 'USD/shares') {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 3 }).format(value);
+  }
+  if (fact.unit === 'USD') {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2
+    }).format(value);
+  }
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+}
+
+function secPeriodLabel(fact) {
+  if (!fact) return '尚无数据';
+  const period = [fact.form, fact.periodEnd].filter(Boolean).join(' · ');
+  return period || '报告期未知';
+}
+
+function secMetricCell(period, metricKey) {
+  return secValue(period.metrics?.[metricKey]);
+}
+
+function renderSecOverview(overview) {
+  state.secOverview = overview;
+  state.secLoadedTicker = overview?.company?.ticker || null;
+  const latestMap = [
+    ['revenue', '#sec-revenue', '#sec-revenue-period'],
+    ['grossProfit', '#sec-gross-profit', '#sec-gross-profit-period'],
+    ['operatingIncome', '#sec-operating-income', '#sec-operating-income-period'],
+    ['netIncome', '#sec-net-income', '#sec-net-income-period'],
+    ['epsDiluted', '#sec-eps-diluted', '#sec-eps-diluted-period'],
+    ['cash', '#sec-cash', '#sec-cash-period']
+  ];
+  for (const [key, valueSelector, periodSelector] of latestMap) {
+    const fact = overview?.latest?.[key] || null;
+    document.querySelector(valueSelector).textContent = secValue(fact);
+    document.querySelector(periodSelector).textContent = secPeriodLabel(fact);
+  }
+
+  const status = overview?.status;
+  const statusParts = [];
+  if (overview?.company?.cik) statusParts.push(`CIK ${overview.company.cik}`);
+  if (status?.last_synced_at) statusParts.push(`同步于 ${new Date(status.last_synced_at).toLocaleString('zh-CN')}`);
+  if (status) statusParts.push(`${status.filings_count}份文件 · ${status.facts_count}条核心事实`);
+  if (status?.last_error) statusParts.push(`最近错误：${status.last_error}`);
+  document.querySelector('#sec-sync-status').textContent = statusParts.join(' · ') || '尚未同步 SEC 数据。';
+
+  const annual = overview?.annual || [];
+  const quarterly = overview?.quarterly || [];
+  const filings = overview?.filings || [];
+  document.querySelector('#sec-annual-body').innerHTML = annual.map((period) => `
+    <tr>
+      <td><strong>${escapeHtml(period.periodEnd)}</strong><br><small class="muted">${escapeHtml(period.form || '')}</small></td>
+      <td>${secMetricCell(period, 'revenue')}</td><td>${secMetricCell(period, 'grossProfit')}</td>
+      <td>${secMetricCell(period, 'operatingIncome')}</td><td>${secMetricCell(period, 'netIncome')}</td>
+      <td>${secMetricCell(period, 'epsDiluted')}</td><td>${secMetricCell(period, 'operatingCashFlow')}</td>
+      <td>${secMetricCell(period, 'assets')}</td><td>${secMetricCell(period, 'liabilities')}</td>
+      <td>${secMetricCell(period, 'equity')}</td>
+    </tr>`).join('');
+  document.querySelector('#sec-quarterly-body').innerHTML = quarterly.map((period) => `
+    <tr>
+      <td><strong>${escapeHtml(period.periodEnd)}</strong><br><small class="muted">${escapeHtml(period.form || '')}</small></td>
+      <td>${secMetricCell(period, 'revenue')}</td><td>${secMetricCell(period, 'grossProfit')}</td>
+      <td>${secMetricCell(period, 'operatingIncome')}</td><td>${secMetricCell(period, 'netIncome')}</td>
+      <td>${secMetricCell(period, 'epsDiluted')}</td>
+    </tr>`).join('');
+  document.querySelector('#sec-filings-body').innerHTML = filings.map((filing) => `
+    <tr>
+      <td><span class="badge ${filing.form.startsWith('8-K') ? 'P2' : 'buy'}">${escapeHtml(filing.form)}</span></td>
+      <td>${escapeHtml(filing.report_date || '—')}</td>
+      <td>${escapeHtml(filing.filed_at)}</td>
+      <td>${escapeHtml(filing.items || filing.primary_doc_description || '—')}</td>
+      <td><a class="sec-link" href="${escapeHtml(filing.filing_url)}" target="_blank" rel="noreferrer">查看原文 ↗</a></td>
+    </tr>`).join('');
+
+  const hasData = annual.length > 0 || quarterly.length > 0 || filings.length > 0;
+  document.querySelector('#sec-empty').classList.toggle('hidden', hasData);
+  document.querySelector('#sec-content').classList.toggle('hidden', !hasData);
+}
+
+async function loadSelectedSecOverview(force = false) {
+  const ticker = document.querySelector('#sec-ticker').value;
+  if (!ticker) {
+    renderSecOverview(null);
+    return;
+  }
+  if (!force && state.secLoadedTicker === ticker && state.secOverview) return;
+  const overview = await api(`/api/sec/overview?ticker=${encodeURIComponent(ticker)}`);
+  renderSecOverview(overview);
 }
 
 function renderPortfolio() {
   const portfolio = state.portfolio || { positions: [], totals: {} };
-  const metricMap = {
-    '#metric-value': portfolio.totals.marketValue,
-    '#metric-daily': portfolio.totals.dailyPnl,
-    '#metric-unrealized': portfolio.totals.unrealizedPnl,
-    '#metric-total': portfolio.totals.totalPnl
-  };
-  for (const [selector, value] of Object.entries(metricMap)) {
+  const metricMap = [
+    ['#metric-value', portfolio.totals.marketValue, false],
+    ['#metric-daily', portfolio.totals.dailyPnl, true],
+    ['#metric-unrealized', portfolio.totals.unrealizedPnl, true],
+    ['#metric-total', portfolio.totals.totalPnl, true]
+  ];
+  for (const [selector, value, isPnl] of metricMap) {
     const element = document.querySelector(selector);
     element.textContent = money(value || 0);
-    element.className = pnlClass(value);
+    element.className = isPnl ? pnlClass(value) : '';
   }
   const held = portfolio.positions.filter((position) => position.quantity > 0);
   document.querySelector('#positions-body').innerHTML = held.map((position) => `
@@ -237,6 +337,30 @@ document.querySelector('#watchlist-form').addEventListener('submit', async (even
 });
 
 document.querySelector('#watchlist-cancel-edit').addEventListener('click', resetWatchlistForm);
+
+document.querySelector('#sec-ticker').addEventListener('change', () => {
+  state.secLoadedTicker = null;
+  loadSelectedSecOverview(true).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#sync-sec').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#sec-ticker').value;
+  if (!ticker) return showToast('请先选择股票', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在同步…';
+  try {
+    await api('/api/sec/sync', { method: 'POST', body: JSON.stringify({ ticker }) });
+    await loadSelectedSecOverview(true);
+    showToast(`${ticker} SEC数据同步完成`);
+  } catch (error) {
+    showToast(error.message, true);
+    await loadSelectedSecOverview(true).catch(() => {});
+  } finally {
+    button.disabled = false;
+    button.textContent = '同步 SEC 数据';
+  }
+});
 
 document.querySelector('#transaction-form').addEventListener('submit', async (event) => {
   event.preventDefault();

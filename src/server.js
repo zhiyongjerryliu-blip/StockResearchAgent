@@ -4,10 +4,11 @@ import path from 'node:path';
 import { config } from './config.js';
 import { nowIso, openDatabase, toPlainRows } from './db.js';
 import { calculatePortfolio } from './portfolio.js';
-import { providerFromName, refreshWatchlistPrices } from './market.js';
+import { providerFromName } from './market.js';
 import { createNotification } from './notifications.js';
-import { generateDailyReviews } from './reviews.js';
-import { runDailyCycle, startScheduler } from './scheduler.js';
+import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
+import { runDailyCycle, runMarketRefreshCycle, startScheduler } from './scheduler.js';
+import { getSecOverview, SecEdgarProvider, syncSecCompany } from './sec.js';
 import {
   addTransaction,
   deleteWatchlistItem,
@@ -24,6 +25,7 @@ import {
 
 const db = openDatabase();
 const provider = providerFromName(config.marketDataProvider);
+const secProvider = new SecEdgarProvider(config.sec);
 const publicDir = path.join(config.projectRoot, 'public');
 const pidFile = path.join(config.projectRoot, 'data', 'server.pid');
 
@@ -82,7 +84,7 @@ async function apiRoute(request, response, url) {
       marketDataProvider: config.marketDataProvider,
       reliabilityGate: config.reliabilityGate,
       sec: {
-        configured: Boolean(config.sec.userAgent),
+        configured: /[^\s@]+@[^\s@]+\.[^\s@]+/.test(config.sec.userAgent),
         requestsPerSecond: config.sec.requestsPerSecond
       },
       notifications: {
@@ -133,7 +135,9 @@ async function apiRoute(request, response, url) {
   }
 
   if (method === 'POST' && url.pathname === '/api/prices/manual') {
-    return sendJson(response, 201, saveManualPrice(db, await readJson(request)));
+    const price = saveManualPrice(db, await readJson(request));
+    const reviewRepair = await refreshDailyReviewsIfNeeded(db, latestEtDate());
+    return sendJson(response, 201, { ...price, reviewRepair });
   }
   if (method === 'GET' && url.pathname === '/api/prices') {
     const ticker = url.searchParams.get('ticker');
@@ -143,7 +147,18 @@ async function apiRoute(request, response, url) {
     `).all(ticker.toUpperCase())));
   }
   if (method === 'POST' && url.pathname === '/api/market/refresh') {
-    return sendJson(response, 200, await refreshWatchlistPrices(db, provider));
+    return sendJson(response, 200, await runMarketRefreshCycle(db, provider));
+  }
+
+  if (method === 'GET' && url.pathname === '/api/sec/overview') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, getSecOverview(db, ticker));
+  }
+  if (method === 'POST' && url.pathname === '/api/sec/sync') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, await syncSecCompany(db, secProvider, body.ticker));
   }
 
   if (method === 'GET' && url.pathname === '/api/notifications') {
@@ -180,7 +195,7 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, await generateDailyReviews(db, latestEtDate()));
   }
   if (method === 'POST' && url.pathname === '/api/daily-cycle') {
-    return sendJson(response, 200, await runDailyCycle(db, provider));
+    return sendJson(response, 200, await runDailyCycle(db, provider, new Date(), secProvider));
   }
 
   return sendJson(response, 404, { error: '接口不存在' });
@@ -209,7 +224,7 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-const stopScheduler = startScheduler(db, provider, config);
+const stopScheduler = startScheduler(db, provider, config, secProvider);
 
 server.listen(config.port, config.host, () => {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });

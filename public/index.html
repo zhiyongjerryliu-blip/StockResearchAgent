@@ -19,6 +19,7 @@
       <nav id="nav">
         <button class="nav-item active" data-view="dashboard">总览</button>
         <button class="nav-item" data-view="watchlist">股票池</button>
+        <button class="nav-item" data-view="financials">财报分析</button>
         <button class="nav-item" data-view="transactions">交易流水</button>
         <button class="nav-item" data-view="reviews">每日复盘</button>
         <button class="nav-item" data-view="settings">系统状态</button>
@@ -78,6 +79,63 @@
           <div><p class="eyebrow">RELIABILITY GATE</p><h2>综合可靠度发布门槛：85分</h2></div>
           <p>方向准确率、概率校准、区间覆盖、相对基准能力、市场状态稳定性和数据质量共同决定预测能否发布。当前基础版本尚未训练预测模型，不会生成未经验证的目标价。</p>
         </article>
+      </section>
+
+      <section class="view" id="view-financials">
+        <article class="panel sec-toolbar-panel">
+          <div>
+            <p class="eyebrow">SEC EDGAR · US-GAAP</p>
+            <h2>公司财报与申报文件</h2>
+          </div>
+          <div class="sec-toolbar">
+            <select id="sec-ticker" aria-label="财报股票"></select>
+            <button id="sync-sec" class="button primary">同步 SEC 数据</button>
+          </div>
+          <p id="sec-sync-status" class="muted sec-sync-status">请选择股票并同步 SEC 数据。</p>
+        </article>
+
+        <div class="sec-metric-grid">
+          <article class="metric-card"><span>最新营业收入</span><strong id="sec-revenue">—</strong><small id="sec-revenue-period">尚无数据</small></article>
+          <article class="metric-card"><span>最新毛利润</span><strong id="sec-gross-profit">—</strong><small id="sec-gross-profit-period">尚无数据</small></article>
+          <article class="metric-card"><span>最新营业利润</span><strong id="sec-operating-income">—</strong><small id="sec-operating-income-period">尚无数据</small></article>
+          <article class="metric-card"><span>最新净利润</span><strong id="sec-net-income">—</strong><small id="sec-net-income-period">尚无数据</small></article>
+          <article class="metric-card"><span>最新摊薄 EPS</span><strong id="sec-eps-diluted">—</strong><small id="sec-eps-diluted-period">尚无数据</small></article>
+          <article class="metric-card"><span>现金及等价物</span><strong id="sec-cash">—</strong><small id="sec-cash-period">尚无数据</small></article>
+        </div>
+
+        <div id="sec-empty" class="panel empty">尚无 SEC 财报数据。选择股票后点击“同步 SEC 数据”。</div>
+
+        <div id="sec-content" class="stack hidden">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">ANNUAL FINANCIALS</p><h2>年度财务趋势</h2></div></div>
+            <div class="table-wrap">
+              <table class="financial-table">
+                <thead><tr><th>报告期</th><th>营业收入</th><th>毛利润</th><th>营业利润</th><th>净利润</th><th>摊薄EPS</th><th>经营现金流</th><th>总资产</th><th>总负债</th><th>股东权益</th></tr></thead>
+                <tbody id="sec-annual-body"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">QUARTERLY FINANCIALS</p><h2>季度财务趋势</h2></div></div>
+            <div class="table-wrap">
+              <table class="financial-table">
+                <thead><tr><th>报告期</th><th>营业收入</th><th>毛利润</th><th>营业利润</th><th>净利润</th><th>摊薄EPS</th></tr></thead>
+                <tbody id="sec-quarterly-body"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">RECENT FILINGS</p><h2>最新 SEC 文件</h2></div></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>表格</th><th>报告期</th><th>提交日期</th><th>说明 / 8-K事项</th><th>原文</th></tr></thead>
+                <tbody id="sec-filings-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="view" id="view-watchlist">

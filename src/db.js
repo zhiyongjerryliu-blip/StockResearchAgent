@@ -77,6 +77,65 @@ CREATE TABLE IF NOT EXISTS prices_daily (
 CREATE INDEX IF NOT EXISTS idx_prices_ticker_date
 ON prices_daily(ticker, trade_date DESC);
 
+CREATE TABLE IF NOT EXISTS sec_filings (
+  accession_number TEXT PRIMARY KEY,
+  ticker TEXT NOT NULL REFERENCES securities(ticker),
+  cik TEXT NOT NULL,
+  form TEXT NOT NULL,
+  filed_at TEXT NOT NULL,
+  report_date TEXT,
+  accepted_at TEXT,
+  primary_document TEXT,
+  primary_doc_description TEXT,
+  items TEXT,
+  filing_url TEXT NOT NULL,
+  is_xbrl INTEGER NOT NULL DEFAULT 0,
+  is_inline_xbrl INTEGER NOT NULL DEFAULT 0,
+  ingested_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sec_filings_ticker_filed
+ON sec_filings(ticker, filed_at DESC);
+
+CREATE TABLE IF NOT EXISTS financial_facts (
+  source_key TEXT PRIMARY KEY,
+  ticker TEXT NOT NULL REFERENCES securities(ticker),
+  cik TEXT NOT NULL,
+  metric_key TEXT NOT NULL,
+  tag_priority INTEGER NOT NULL DEFAULT 0,
+  taxonomy TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  label TEXT,
+  description TEXT,
+  unit TEXT NOT NULL,
+  period_start TEXT,
+  period_end TEXT NOT NULL,
+  period_type TEXT NOT NULL,
+  fiscal_year INTEGER,
+  fiscal_period TEXT,
+  form TEXT NOT NULL,
+  filed_at TEXT NOT NULL,
+  accession_number TEXT,
+  frame TEXT,
+  value REAL NOT NULL,
+  source_url TEXT,
+  ingested_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_facts_metric_period
+ON financial_facts(ticker, metric_key, period_type, period_end DESC, filed_at DESC);
+
+CREATE TABLE IF NOT EXISTS sec_sync_status (
+  ticker TEXT PRIMARY KEY REFERENCES securities(ticker) ON DELETE CASCADE,
+  cik TEXT,
+  entity_name TEXT,
+  last_synced_at TEXT,
+  filings_count INTEGER NOT NULL DEFAULT 0,
+  facts_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS daily_position_snapshots (
   ticker TEXT NOT NULL REFERENCES securities(ticker),
   snapshot_date TEXT NOT NULL,

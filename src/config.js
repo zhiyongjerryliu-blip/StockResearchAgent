@@ -30,7 +30,7 @@ export const config = Object.freeze({
   dailyReviewMinuteEt: intEnv('DAILY_REVIEW_MINUTE_ET', 15),
   sec: {
     userAgent: process.env.SEC_USER_AGENT || '',
-    requestsPerSecond: intEnv('SEC_REQUESTS_PER_SECOND', 5)
+    requestsPerSecond: Math.min(10, Math.max(1, intEnv('SEC_REQUESTS_PER_SECOND', 5)))
   },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {

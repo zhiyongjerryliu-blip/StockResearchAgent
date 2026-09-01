@@ -1,8 +1,9 @@
 import { nowIso } from './db.js';
 import { refreshWatchlistPrices } from './market.js';
 import { saveDailySnapshots } from './portfolio.js';
-import { generateDailyReviews } from './reviews.js';
+import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
 import { createNotification } from './notifications.js';
+import { syncSecWatchlist } from './sec.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -19,7 +20,7 @@ function etDate(date = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-export async function runDailyCycle(db, provider, date = new Date()) {
+export async function runDailyCycle(db, provider, date = new Date(), secProvider = null) {
   const startedAt = nowIso();
   const result = db.prepare(`
     INSERT INTO job_runs (job_name, started_at, status, details_json)
@@ -28,10 +29,11 @@ export async function runDailyCycle(db, provider, date = new Date()) {
   const jobId = Number(result.lastInsertRowid);
   try {
     const market = await refreshWatchlistPrices(db, provider);
+    const sec = await syncSecWatchlist(db, secProvider);
     const reviewDate = etDate(date);
     const portfolio = saveDailySnapshots(db, reviewDate);
     const reviews = await generateDailyReviews(db, reviewDate);
-    const details = { market, reviewDate, positions: portfolio.positions.length };
+    const details = { market, sec, reviewDate, positions: portfolio.positions.length };
     db.prepare(`
       UPDATE job_runs SET finished_at = ?, status = 'SUCCESS', details_json = ? WHERE id = ?
     `).run(nowIso(), JSON.stringify(details), jobId);
@@ -50,12 +52,19 @@ export async function runDailyCycle(db, provider, date = new Date()) {
   }
 }
 
-export function startScheduler(db, provider, options) {
+export async function runMarketRefreshCycle(db, provider, date = new Date()) {
+  const market = await refreshWatchlistPrices(db, provider);
+  const reviewDate = etDate(date);
+  const reviewRepair = await refreshDailyReviewsIfNeeded(db, reviewDate);
+  return { ...market, reviewRepair };
+}
+
+export function startScheduler(db, provider, options, secProvider = null) {
   const refreshMs = Math.max(5, options.marketRefreshIntervalMinutes) * 60_000;
   const timers = [];
 
   const refreshTimer = setInterval(() => {
-    refreshWatchlistPrices(db, provider).catch((error) => {
+    runMarketRefreshCycle(db, provider).catch((error) => {
       console.error('定时行情更新失败：', error.message);
     });
   }, refreshMs);
@@ -73,7 +82,7 @@ export function startScheduler(db, provider, options) {
       lastDailyDate !== currentDate
     ) {
       lastDailyDate = currentDate;
-      runDailyCycle(db, provider).catch((error) => {
+      runDailyCycle(db, provider, new Date(), secProvider).catch((error) => {
         console.error('日终任务失败：', error.message);
         lastDailyDate = null;
       });

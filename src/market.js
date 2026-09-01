@@ -1,4 +1,5 @@
 import { nowIso, toPlainRows } from './db.js';
+import { previousRegularUsTradingDate } from './trading-calendar.js';
 
 function yahooSymbol(ticker) {
   return ticker.replaceAll('.', '-');
@@ -10,9 +11,9 @@ export class YahooDailyProvider {
     this.name = 'yahoo';
   }
 
-  async fetchDaily(ticker) {
+  async fetchRange(ticker, range) {
     const symbol = encodeURIComponent(yahooSymbol(ticker));
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=10d&interval=1d&events=div%2Csplits`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=1d&events=div%2Csplits`;
     const response = await this.fetchImpl(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 Local Research Workbench' },
       signal: AbortSignal.timeout(15_000)
@@ -36,6 +37,21 @@ export class YahooDailyProvider {
       availableAt: new Date(timestamp * 1000).toISOString(),
       provider: this.name
     })).filter((bar) => Number.isFinite(bar.close));
+  }
+
+  async fetchDaily(ticker) {
+    let bars = await this.fetchRange(ticker, '10d');
+    const latest = [...bars].sort((left, right) => right.tradeDate.localeCompare(left.tradeDate))[0];
+    if (!latest) return bars;
+
+    const expectedPreviousDate = previousRegularUsTradingDate(latest.tradeDate);
+    if (!bars.some((bar) => bar.tradeDate === expectedPreviousDate)) {
+      const fallbackBars = await this.fetchRange(ticker, '1mo');
+      const merged = new Map(bars.map((bar) => [bar.tradeDate, bar]));
+      for (const bar of fallbackBars) merged.set(bar.tradeDate, bar);
+      bars = [...merged.values()];
+    }
+    return bars.sort((left, right) => left.tradeDate.localeCompare(right.tradeDate));
   }
 }
 

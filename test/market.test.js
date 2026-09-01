@@ -23,3 +23,37 @@ test('Yahoo Provider将返回值标准化为日线', async () => {
   assert.equal(bars[1].close, 105);
   assert.equal(bars[1].provider, 'yahoo');
 });
+
+test('Yahoo十日行情缺少上一交易日时自动用一个月行情补齐', async () => {
+  const requests = [];
+  const responseFor = (dates, closes) => ({
+    ok: true,
+    json: async () => ({
+      chart: {
+        result: [{
+          timestamp: dates.map((date) => Date.parse(`${date}T13:30:00Z`) / 1000),
+          indicators: {
+            quote: [{
+              open: closes, high: closes, low: closes, close: closes,
+              volume: closes.map(() => 1000)
+            }],
+            adjclose: [{ adjclose: closes }]
+          }
+        }]
+      }
+    })
+  });
+  const fakeFetch = async (url) => {
+    requests.push(url);
+    if (url.includes('range=10d')) {
+      return responseFor(['2026-08-27', '2026-08-31'], [956.14, 914.76]);
+    }
+    return responseFor(['2026-08-27', '2026-08-28', '2026-08-31'], [956.14, 895, 914.76]);
+  };
+
+  const provider = new YahooDailyProvider(fakeFetch);
+  const bars = await provider.fetchDaily('LITE');
+  assert.equal(requests.length, 2);
+  assert.match(requests[1], /range=1mo/);
+  assert.deepEqual(bars.map((bar) => bar.tradeDate), ['2026-08-27', '2026-08-28', '2026-08-31']);
+});
