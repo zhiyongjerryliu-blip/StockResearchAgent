@@ -86,7 +86,7 @@
             <div class="panel-head"><div><p class="eyebrow">WATCHLIST</p><h2>股票池</h2></div></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>代码</th><th>名称</th><th>市场基准</th><th>行业ETF</th><th>备注</th><th>状态</th></tr></thead>
+                <thead><tr><th>代码</th><th>名称</th><th>市场基准</th><th>行业ETF</th><th>备注</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody id="watchlist-body"></tbody>
               </table>
             </div>
@@ -94,7 +94,7 @@
           </article>
 
           <article class="panel form-panel">
-            <p class="eyebrow">ADD SECURITY</p><h2>添加股票</h2>
+            <p class="eyebrow" id="watchlist-form-eyebrow">ADD SECURITY</p><h2 id="watchlist-form-title">添加股票</h2>
             <form id="watchlist-form">
               <label>股票代码<input name="ticker" placeholder="例如 NVDA" required></label>
               <label>公司名称<input name="name" placeholder="可选"></label>
@@ -103,7 +103,8 @@
                 <label>行业ETF<input name="industryEtf" placeholder="例如 SMH"></label>
               </div>
               <label>关注事项<textarea name="note" placeholder="例如：关注数据中心收入和出口限制"></textarea></label>
-              <button class="button primary full" type="submit">加入股票池</button>
+              <button class="button primary full" id="watchlist-submit" type="submit">加入股票池</button>
+              <button class="button secondary full hidden" id="watchlist-cancel-edit" type="button">取消修改</button>
             </form>
           </article>
         </div>

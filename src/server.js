@@ -10,6 +10,7 @@ import { generateDailyReviews } from './reviews.js';
 import { runDailyCycle, startScheduler } from './scheduler.js';
 import {
   addTransaction,
+  deleteWatchlistItem,
   deleteTransaction,
   listReliability,
   listTransactions,
@@ -17,6 +18,7 @@ import {
   saveManualPrice,
   saveReliability,
   setWatchlistEnabled,
+  updateWatchlistItem,
   upsertWatchlistItem
 } from './repository.js';
 
@@ -105,7 +107,14 @@ async function apiRoute(request, response, url) {
   const watchlistMatch = url.pathname.match(/^\/api\/watchlist\/([^/]+)$/);
   if (watchlistMatch && method === 'PATCH') {
     const body = await readJson(request);
-    return sendJson(response, 200, setWatchlistEnabled(db, decodeURIComponent(watchlistMatch[1]), body.enabled));
+    const ticker = decodeURIComponent(watchlistMatch[1]);
+    if (Object.keys(body).length === 1 && Object.hasOwn(body, 'enabled')) {
+      return sendJson(response, 200, setWatchlistEnabled(db, ticker, body.enabled));
+    }
+    return sendJson(response, 200, updateWatchlistItem(db, ticker, body));
+  }
+  if (watchlistMatch && method === 'DELETE') {
+    return sendJson(response, 200, deleteWatchlistItem(db, decodeURIComponent(watchlistMatch[1])));
   }
 
   if (method === 'GET' && url.pathname === '/api/transactions') {

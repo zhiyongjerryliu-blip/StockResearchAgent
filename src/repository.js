@@ -82,6 +82,65 @@ export function setWatchlistEnabled(db, tickerValue, enabled) {
   return listWatchlist(db).find((item) => item.ticker === ticker);
 }
 
+export function updateWatchlistItem(db, tickerValue, input) {
+  const ticker = normalizeTicker(tickerValue);
+  const existing = listWatchlist(db).find((item) => item.ticker === ticker);
+  if (!existing) throw new Error('股票不在股票池中');
+
+  const has = (field) => Object.prototype.hasOwnProperty.call(input, field);
+  const name = has('name') ? input.name?.trim() || null : existing.name;
+  const benchmark = has('benchmark')
+    ? normalizeTicker(input.benchmark || 'SPY')
+    : existing.benchmark;
+  const industryEtf = has('industryEtf')
+    ? (input.industryEtf ? normalizeTicker(input.industryEtf) : null)
+    : existing.industry_etf;
+  const note = has('note') ? input.note?.trim() || null : existing.note;
+  const enabled = has('enabled') ? Boolean(input.enabled) : existing.enabled;
+  const timestamp = nowIso();
+
+  db.exec('BEGIN');
+  try {
+    db.prepare(`
+      UPDATE securities
+      SET name = ?, benchmark = ?, industry_etf = ?, updated_at = ?
+      WHERE ticker = ?
+    `).run(name, benchmark, industryEtf, timestamp, ticker);
+    db.prepare(`
+      UPDATE watchlist_items
+      SET note = ?, enabled = ?, updated_at = ?
+      WHERE ticker = ?
+    `).run(note, enabled ? 1 : 0, timestamp, ticker);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return listWatchlist(db).find((item) => item.ticker === ticker);
+}
+
+export function deleteWatchlistItem(db, tickerValue) {
+  const ticker = normalizeTicker(tickerValue);
+  const existing = listWatchlist(db).find((item) => item.ticker === ticker);
+  if (!existing) throw new Error('股票不在股票池中');
+
+  const position = calculatePosition(db, ticker);
+  if (position.quantity > 1e-8) {
+    throw new Error(`仍持有${position.quantity}股，清仓后才能从股票池删除`);
+  }
+
+  const transactionCount = Number(db.prepare(
+    'SELECT COUNT(*) AS count FROM transactions WHERE ticker = ?'
+  ).get(ticker).count);
+  db.prepare('DELETE FROM watchlist_items WHERE ticker = ?').run(ticker);
+  return {
+    ticker,
+    removed: true,
+    historyRetained: transactionCount > 0
+  };
+}
+
 export function listTransactions(db, tickerValue = null) {
   const ticker = tickerValue ? normalizeTicker(tickerValue) : null;
   const rows = ticker

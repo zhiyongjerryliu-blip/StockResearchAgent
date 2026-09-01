@@ -1,4 +1,7 @@
-const state = { watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null };
+const state = {
+  watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
+  editingWatchlistTicker: null
+};
 
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
@@ -62,6 +65,10 @@ function renderWatchlist() {
       <td>${escapeHtml(item.industry_etf || '—')}</td>
       <td>${escapeHtml(item.note || '—')}</td>
       <td><button class="badge ${item.enabled ? 'buy' : ''}" data-toggle-ticker="${item.ticker}" data-enabled="${item.enabled}">${item.enabled ? '监控中' : '已暂停'}</button></td>
+      <td><div class="row-actions">
+        <button class="edit-link" data-edit-watchlist="${item.ticker}">修改</button>
+        <button class="danger-link" data-delete-watchlist="${item.ticker}">删除</button>
+      </div></td>
     </tr>`).join('');
   document.querySelector('#watchlist-empty').classList.toggle('hidden', state.watchlist.length > 0);
 
@@ -152,6 +159,36 @@ function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function resetWatchlistForm() {
+  const form = document.querySelector('#watchlist-form');
+  form.reset();
+  form.elements.ticker.readOnly = false;
+  form.elements.benchmark.value = 'SPY';
+  state.editingWatchlistTicker = null;
+  document.querySelector('#watchlist-form-eyebrow').textContent = 'ADD SECURITY';
+  document.querySelector('#watchlist-form-title').textContent = '添加股票';
+  document.querySelector('#watchlist-submit').textContent = '加入股票池';
+  document.querySelector('#watchlist-cancel-edit').classList.add('hidden');
+}
+
+function editWatchlistItem(ticker) {
+  const item = state.watchlist.find((entry) => entry.ticker === ticker);
+  if (!item) return;
+  const form = document.querySelector('#watchlist-form');
+  state.editingWatchlistTicker = ticker;
+  form.elements.ticker.value = item.ticker;
+  form.elements.ticker.readOnly = true;
+  form.elements.name.value = item.name || '';
+  form.elements.benchmark.value = item.benchmark || 'SPY';
+  form.elements.industryEtf.value = item.industry_etf || '';
+  form.elements.note.value = item.note || '';
+  document.querySelector('#watchlist-form-eyebrow').textContent = 'EDIT SECURITY';
+  document.querySelector('#watchlist-form-title').textContent = `修改 ${item.ticker}`;
+  document.querySelector('#watchlist-submit').textContent = '保存修改';
+  document.querySelector('#watchlist-cancel-edit').classList.remove('hidden');
+  form.elements.name.focus();
+}
+
 document.querySelector('#nav').addEventListener('click', (event) => {
   const button = event.target.closest('[data-view]');
   if (button) showView(button.dataset.view);
@@ -166,6 +203,18 @@ document.body.addEventListener('click', async (event) => {
       await loadAll();
     } catch (error) { showToast(error.message, true); }
   }
+  const edit = event.target.closest('[data-edit-watchlist]');
+  if (edit) editWatchlistItem(edit.dataset.editWatchlist);
+
+  const removeWatchlist = event.target.closest('[data-delete-watchlist]');
+  if (removeWatchlist && confirm(`确定将 ${removeWatchlist.dataset.deleteWatchlist} 移出股票池吗？\n\n历史交易和研究数据会保留；如果仍有未清仓持仓，系统会拒绝删除。`)) {
+    try {
+      const ticker = removeWatchlist.dataset.deleteWatchlist;
+      await api(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+      if (state.editingWatchlistTicker === ticker) resetWatchlistForm();
+      await loadAll(); showToast(`${ticker} 已移出股票池`);
+    } catch (error) { showToast(error.message, true); }
+  }
   const remove = event.target.closest('[data-delete-transaction]');
   if (remove && confirm('确定删除这笔交易吗？后续持仓将重新计算。')) {
     try {
@@ -178,11 +227,16 @@ document.body.addEventListener('click', async (event) => {
 document.querySelector('#watchlist-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    await api('/api/watchlist', { method: 'POST', body: JSON.stringify(formData(event.target)) });
-    event.target.reset(); event.target.elements.benchmark.value = 'SPY';
-    await loadAll(); showToast('股票已加入股票池');
+    const payload = formData(event.target);
+    const editingTicker = state.editingWatchlistTicker;
+    const path = editingTicker ? `/api/watchlist/${encodeURIComponent(editingTicker)}` : '/api/watchlist';
+    await api(path, { method: editingTicker ? 'PATCH' : 'POST', body: JSON.stringify(payload) });
+    resetWatchlistForm();
+    await loadAll(); showToast(editingTicker ? `${editingTicker} 已更新` : '股票已加入股票池');
   } catch (error) { showToast(error.message, true); }
 });
+
+document.querySelector('#watchlist-cancel-edit').addEventListener('click', resetWatchlistForm);
 
 document.querySelector('#transaction-form').addEventListener('submit', async (event) => {
   event.preventDefault();

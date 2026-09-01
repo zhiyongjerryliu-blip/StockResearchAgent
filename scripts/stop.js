@@ -19,10 +19,14 @@ if (!Number.isInteger(pid) || pid <= 0) {
 
 try {
   process.kill(pid, 0);
-} catch {
-  fs.unlinkSync(pidFile);
-  console.log(`服务进程 ${pid} 已不存在，已清理旧记录。`);
-  process.exit(0);
+} catch (error) {
+  if (error.code === 'ESRCH') {
+    fs.unlinkSync(pidFile);
+    console.log(`服务进程 ${pid} 已不存在，已清理旧记录。`);
+    process.exit(0);
+  }
+  console.error(`无法检查服务进程 ${pid}：${error.message}`);
+  process.exit(1);
 }
 
 console.log(`正在停止服务进程 ${pid}…`);
@@ -33,10 +37,14 @@ while (Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, 100));
   try {
     process.kill(pid, 0);
-  } catch {
-    if (fs.existsSync(pidFile)) fs.unlinkSync(pidFile);
-    console.log('服务已停止。');
-    process.exit(0);
+  } catch (error) {
+    if (error.code === 'ESRCH') {
+      if (fs.existsSync(pidFile)) fs.unlinkSync(pidFile);
+      console.log('服务已停止。');
+      process.exit(0);
+    }
+    console.error(`检查服务进程状态失败：${error.message}`);
+    process.exit(1);
   }
 }
 
