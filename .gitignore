@@ -1,0 +1,7 @@
+.env
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
+coverage/

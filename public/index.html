@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>美股投研工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <div>
+          <strong>Research Desk</strong>
+          <span>个人美股投研工作台</span>
+        </div>
+      </div>
+      <nav id="nav">
+        <button class="nav-item active" data-view="dashboard">总览</button>
+        <button class="nav-item" data-view="watchlist">股票池</button>
+        <button class="nav-item" data-view="transactions">交易流水</button>
+        <button class="nav-item" data-view="reviews">每日复盘</button>
+        <button class="nav-item" data-view="settings">系统状态</button>
+      </nav>
+      <div class="sidebar-note">
+        <span class="status-dot"></span>
+        <div><strong>本地单用户</strong><small>数据保存在这台 Mac</small></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">US EQUITY RESEARCH</p>
+          <h1 id="page-title">投资组合总览</h1>
+        </div>
+        <div class="top-actions">
+          <span id="last-updated" class="muted">尚未更新</span>
+          <button id="refresh-market" class="button secondary">更新行情</button>
+          <button id="run-daily" class="button primary">执行日终任务</button>
+        </div>
+      </header>
+
+      <section id="toast" class="toast hidden"></section>
+
+      <section class="view active" id="view-dashboard">
+        <div class="metric-grid">
+          <article class="metric-card"><span>当前市值</span><strong id="metric-value">$0.00</strong><small>启用股票的期末市值</small></article>
+          <article class="metric-card"><span>今日盈亏</span><strong id="metric-daily">$0.00</strong><small>包含当日交易现金流调整</small></article>
+          <article class="metric-card"><span>未实现盈亏</span><strong id="metric-unrealized">$0.00</strong><small>当前持仓相对剩余成本</small></article>
+          <article class="metric-card"><span>累计总盈亏</span><strong id="metric-total">$0.00</strong><small>已实现与未实现合计</small></article>
+        </div>
+
+        <div class="content-grid wide-left">
+          <article class="panel">
+            <div class="panel-head">
+              <div><p class="eyebrow">POSITIONS</p><h2>当前持仓</h2></div>
+              <button class="text-button" data-go="transactions">录入交易 →</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>股票</th><th>股数</th><th>平均成本</th><th>当前价</th><th>今日盈亏</th><th>累计盈亏</th><th>总收益率</th></tr></thead>
+                <tbody id="positions-body"></tbody>
+              </table>
+            </div>
+            <div id="positions-empty" class="empty hidden">尚无持仓。先添加股票，再录入买入交易。</div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">ALERTS</p><h2>最新提醒</h2></div><button id="test-notification" class="text-button">测试通知</button></div>
+            <div id="notification-list" class="notification-list"></div>
+            <div id="notifications-empty" class="empty hidden">暂无提醒。</div>
+          </article>
+        </div>
+
+        <article class="panel callout">
+          <div><p class="eyebrow">RELIABILITY GATE</p><h2>综合可靠度发布门槛：85分</h2></div>
+          <p>方向准确率、概率校准、区间覆盖、相对基准能力、市场状态稳定性和数据质量共同决定预测能否发布。当前基础版本尚未训练预测模型，不会生成未经验证的目标价。</p>
+        </article>
+      </section>
+
+      <section class="view" id="view-watchlist">
+        <div class="content-grid form-layout">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">WATCHLIST</p><h2>股票池</h2></div></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>代码</th><th>名称</th><th>市场基准</th><th>行业ETF</th><th>备注</th><th>状态</th></tr></thead>
+                <tbody id="watchlist-body"></tbody>
+              </table>
+            </div>
+            <div id="watchlist-empty" class="empty hidden">尚未添加股票。</div>
+          </article>
+
+          <article class="panel form-panel">
+            <p class="eyebrow">ADD SECURITY</p><h2>添加股票</h2>
+            <form id="watchlist-form">
+              <label>股票代码<input name="ticker" placeholder="例如 NVDA" required></label>
+              <label>公司名称<input name="name" placeholder="可选"></label>
+              <div class="form-row">
+                <label>市场基准<input name="benchmark" value="SPY"></label>
+                <label>行业ETF<input name="industryEtf" placeholder="例如 SMH"></label>
+              </div>
+              <label>关注事项<textarea name="note" placeholder="例如：关注数据中心收入和出口限制"></textarea></label>
+              <button class="button primary full" type="submit">加入股票池</button>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-transactions">
+        <div class="content-grid form-layout">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">LEDGER</p><h2>交易流水</h2></div></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>时间</th><th>股票</th><th>方向</th><th>股数</th><th>价格</th><th>费用</th><th></th></tr></thead>
+                <tbody id="transactions-body"></tbody>
+              </table>
+            </div>
+            <div id="transactions-empty" class="empty hidden">尚无交易记录。</div>
+          </article>
+
+          <div class="stack">
+            <article class="panel form-panel">
+              <p class="eyebrow">NEW TRADE</p><h2>录入交易</h2>
+              <form id="transaction-form">
+                <div class="form-row">
+                  <label>股票<select name="ticker" id="trade-ticker" required></select></label>
+                  <label>方向<select name="side"><option value="BUY">买入</option><option value="SELL">卖出</option></select></label>
+                </div>
+                <label>交易时间<input name="tradeTime" type="datetime-local" required></label>
+                <div class="form-row">
+                  <label>股数<input name="quantity" type="number" min="0.000001" step="0.000001" required></label>
+                  <label>成交价<input name="price" type="number" min="0" step="0.0001" required></label>
+                </div>
+                <label>交易费用<input name="fee" type="number" min="0" step="0.01" value="0"></label>
+                <button class="button primary full" type="submit">保存交易</button>
+              </form>
+            </article>
+
+            <article class="panel form-panel">
+              <p class="eyebrow">MANUAL PRICE</p><h2>手动补录收盘价</h2>
+              <form id="price-form">
+                <div class="form-row">
+                  <label>股票<select name="ticker" id="price-ticker" required></select></label>
+                  <label>交易日期<input name="tradeDate" type="date" required></label>
+                </div>
+                <div class="form-row">
+                  <label>收盘价<input name="close" type="number" min="0.0001" step="0.0001" required></label>
+                  <label>成交量<input name="volume" type="number" min="0" step="1"></label>
+                </div>
+                <button class="button secondary full" type="submit">保存价格</button>
+              </form>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-reviews">
+        <article class="panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">DAILY REVIEWS</p><h2>收盘复盘</h2></div>
+            <button id="generate-reviews" class="button secondary">立即生成</button>
+          </div>
+          <div id="reviews-list" class="review-list"></div>
+          <div id="reviews-empty" class="empty hidden">尚无复盘记录。录入股票和价格后即可生成。</div>
+        </article>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="content-grid settings-grid">
+          <article class="panel"><p class="eyebrow">RUNTIME</p><h2>运行环境</h2><dl id="runtime-config"></dl></article>
+          <article class="panel"><p class="eyebrow">DATA POLICY</p><h2>数据与模型原则</h2><ul class="principle-list"><li>免费数据源优先，Provider可替换</li><li>所有预测和复盘保留历史版本</li><li>综合可靠度低于85分不发布正式预测</li><li>公开成交仅用于资金行为概率推断</li><li>云端LLM只解释结构化事实</li></ul></article>
+        </div>
+        <article class="panel setup-panel">
+          <p class="eyebrow">LOCAL CONFIGURATION</p><h2>配置说明</h2>
+          <p>复制 <code>.env.example</code> 为 <code>.env</code>，再配置云端LLM、SMTP和通知开关。密钥仅保存在本机，不通过界面回显。</p>
+        </article>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

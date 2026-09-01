@@ -1,0 +1,236 @@
+const state = { watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null };
+
+const titles = {
+  dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
+  reviews: '收盘复盘', settings: '系统状态'
+};
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || '请求失败');
+  return payload;
+}
+
+function money(value) {
+  if (value == null || Number.isNaN(Number(value))) return '—';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
+function percent(value) {
+  if (value == null || Number.isNaN(Number(value))) return '—';
+  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
+}
+
+function pnlClass(value) {
+  if (value == null || value === 0) return '';
+  return value > 0 ? 'positive' : 'negative';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[character]);
+}
+
+let toastTimer;
+function showToast(message, error = false) {
+  const toast = document.querySelector('#toast');
+  toast.textContent = message;
+  toast.classList.toggle('error', error);
+  toast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.add('hidden'), 3500);
+}
+
+function showView(view) {
+  document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === view));
+  document.querySelectorAll('.view').forEach((item) => item.classList.toggle('active', item.id === `view-${view}`));
+  document.querySelector('#page-title').textContent = titles[view];
+}
+
+function renderWatchlist() {
+  const body = document.querySelector('#watchlist-body');
+  body.innerHTML = state.watchlist.map((item) => `
+    <tr>
+      <td class="ticker">${escapeHtml(item.ticker)}</td>
+      <td>${escapeHtml(item.name || '—')}</td>
+      <td>${escapeHtml(item.benchmark)}</td>
+      <td>${escapeHtml(item.industry_etf || '—')}</td>
+      <td>${escapeHtml(item.note || '—')}</td>
+      <td><button class="badge ${item.enabled ? 'buy' : ''}" data-toggle-ticker="${item.ticker}" data-enabled="${item.enabled}">${item.enabled ? '监控中' : '已暂停'}</button></td>
+    </tr>`).join('');
+  document.querySelector('#watchlist-empty').classList.toggle('hidden', state.watchlist.length > 0);
+
+  const options = state.watchlist.filter((item) => item.enabled).map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
+  for (const id of ['#trade-ticker', '#price-ticker']) document.querySelector(id).innerHTML = options || '<option value="">请先添加股票</option>';
+}
+
+function renderPortfolio() {
+  const portfolio = state.portfolio || { positions: [], totals: {} };
+  const metricMap = {
+    '#metric-value': portfolio.totals.marketValue,
+    '#metric-daily': portfolio.totals.dailyPnl,
+    '#metric-unrealized': portfolio.totals.unrealizedPnl,
+    '#metric-total': portfolio.totals.totalPnl
+  };
+  for (const [selector, value] of Object.entries(metricMap)) {
+    const element = document.querySelector(selector);
+    element.textContent = money(value || 0);
+    element.className = pnlClass(value);
+  }
+  const held = portfolio.positions.filter((position) => position.quantity > 0);
+  document.querySelector('#positions-body').innerHTML = held.map((position) => `
+    <tr>
+      <td><span class="ticker">${position.ticker}</span><br><small class="muted">${escapeHtml(position.name || '')}</small></td>
+      <td>${position.quantity}</td><td>${money(position.averageCost)}</td><td>${money(position.currentPrice)}</td>
+      <td class="${pnlClass(position.dailyPnl)}">${money(position.dailyPnl)}</td>
+      <td class="${pnlClass(position.totalPnl)}">${money(position.totalPnl)}</td>
+      <td class="${pnlClass(position.totalReturn)}">${percent(position.totalReturn)}</td>
+    </tr>`).join('');
+  document.querySelector('#positions-empty').classList.toggle('hidden', held.length > 0);
+  document.querySelector('#last-updated').textContent = `更新于 ${new Date(portfolio.asOf || Date.now()).toLocaleString('zh-CN')}`;
+}
+
+function renderTransactions() {
+  document.querySelector('#transactions-body').innerHTML = state.transactions.map((tx) => `
+    <tr>
+      <td>${new Date(tx.trade_time).toLocaleString('zh-CN')}</td><td class="ticker">${tx.ticker}</td>
+      <td><span class="badge ${tx.side === 'BUY' ? 'buy' : 'sell'}">${tx.side === 'BUY' ? '买入' : '卖出'}</span></td>
+      <td>${tx.quantity}</td><td>${money(tx.price)}</td><td>${money(tx.fee)}</td>
+      <td><button class="danger-link" data-delete-transaction="${tx.id}">删除</button></td>
+    </tr>`).join('');
+  document.querySelector('#transactions-empty').classList.toggle('hidden', state.transactions.length > 0);
+}
+
+function renderNotifications() {
+  const recent = state.notifications.slice(0, 8);
+  document.querySelector('#notification-list').innerHTML = recent.map((notice) => `
+    <article class="notification ${notice.severity}">
+      <div class="notification-head"><strong>${escapeHtml(notice.title)}</strong><time>${new Date(notice.created_at).toLocaleString('zh-CN')}</time></div>
+      <p>${escapeHtml(notice.body)}</p>
+    </article>`).join('');
+  document.querySelector('#notifications-empty').classList.toggle('hidden', recent.length > 0);
+}
+
+function renderReviews() {
+  document.querySelector('#reviews-list').innerHTML = state.reviews.map((review) => `
+    <article class="review">
+      <div class="review-head"><strong>${review.review_type === 'PORTFOLIO' ? '股票池总复盘' : escapeHtml(review.ticker)}</strong><time>${escapeHtml(review.review_date)}</time></div>
+      <p>${escapeHtml(review.narrative)}</p>
+    </article>`).join('');
+  document.querySelector('#reviews-empty').classList.toggle('hidden', state.reviews.length > 0);
+}
+
+function renderConfig() {
+  const config = state.config;
+  if (!config) return;
+  const values = [
+    ['监听地址', `${config.host}:${config.port}`], ['时区', config.timezone],
+    ['行情数据源', config.marketDataProvider], ['可靠度门槛', `${config.reliabilityGate}分`],
+    ['SEC EDGAR', config.sec.configured ? `已配置（限速 ${config.sec.requestsPerSecond}/秒）` : '尚未配置联系邮箱'],
+    ['macOS通知', config.notifications.macosEnabled ? '已启用' : '未启用'],
+    ['邮件通知', config.notifications.emailEnabled ? (config.notifications.emailConfigured ? '已配置' : '缺少配置') : '未启用'],
+    ['云端LLM', config.llm.enabled ? (config.llm.configured ? config.llm.model : '缺少配置') : '未启用']
+  ];
+  document.querySelector('#runtime-config').innerHTML = values.map(([key, value]) => `<dt>${key}</dt><dd>${escapeHtml(value)}</dd>`).join('');
+}
+
+async function loadAll() {
+  const [watchlist, portfolio, transactions, notifications, reviews, config] = await Promise.all([
+    api('/api/watchlist'), api('/api/portfolio'), api('/api/transactions'),
+    api('/api/notifications'), api('/api/reviews'), api('/api/config')
+  ]);
+  Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config });
+  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderReviews(); renderConfig();
+}
+
+function formData(form) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+document.querySelector('#nav').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-view]');
+  if (button) showView(button.dataset.view);
+});
+document.body.addEventListener('click', async (event) => {
+  const go = event.target.closest('[data-go]');
+  if (go) showView(go.dataset.go);
+  const toggle = event.target.closest('[data-toggle-ticker]');
+  if (toggle) {
+    try {
+      await api(`/api/watchlist/${encodeURIComponent(toggle.dataset.toggleTicker)}`, { method: 'PATCH', body: JSON.stringify({ enabled: toggle.dataset.enabled !== 'true' }) });
+      await loadAll();
+    } catch (error) { showToast(error.message, true); }
+  }
+  const remove = event.target.closest('[data-delete-transaction]');
+  if (remove && confirm('确定删除这笔交易吗？后续持仓将重新计算。')) {
+    try {
+      await api(`/api/transactions/${remove.dataset.deleteTransaction}`, { method: 'DELETE' });
+      await loadAll(); showToast('交易已删除并重新计算持仓');
+    } catch (error) { showToast(error.message, true); }
+  }
+});
+
+document.querySelector('#watchlist-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api('/api/watchlist', { method: 'POST', body: JSON.stringify(formData(event.target)) });
+    event.target.reset(); event.target.elements.benchmark.value = 'SPY';
+    await loadAll(); showToast('股票已加入股票池');
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#transaction-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api('/api/transactions', { method: 'POST', body: JSON.stringify(formData(event.target)) });
+    event.target.reset(); event.target.elements.fee.value = '0';
+    await loadAll(); showToast('交易已保存，持仓已重新计算');
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#price-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api('/api/prices/manual', { method: 'POST', body: JSON.stringify(formData(event.target)) });
+    await loadAll(); showToast('收盘价已保存');
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#refresh-market').addEventListener('click', async () => {
+  try {
+    showToast('正在更新行情…');
+    const result = await api('/api/market/refresh', { method: 'POST' });
+    await loadAll();
+    const failed = result.results.filter((item) => !item.ok).length;
+    showToast(failed ? `行情更新完成，${failed}只股票失败` : '行情更新完成', failed > 0);
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#run-daily').addEventListener('click', async () => {
+  try {
+    showToast('正在执行日终任务…');
+    await api('/api/daily-cycle', { method: 'POST' });
+    await loadAll(); showToast('日终收益与复盘已完成');
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#generate-reviews').addEventListener('click', async () => {
+  try {
+    await api('/api/reviews/run', { method: 'POST' });
+    await loadAll(); showToast('复盘已生成');
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#test-notification').addEventListener('click', async () => {
+  try {
+    await api('/api/notifications/test', { method: 'POST' });
+    await loadAll(); showToast('测试通知已发送');
+  } catch (error) { showToast(error.message, true); }
+});
+
+loadAll().catch((error) => showToast(`加载失败：${error.message}`, true));
