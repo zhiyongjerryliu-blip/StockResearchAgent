@@ -99,6 +99,33 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .historical-valuation-summary strong { margin: 9px 0 6px; font-size: 21px; }
 .historical-valuation-summary small { color: #647285; font-size: 10px; }
 .valuation-history-methodology { margin: 12px 0 0; line-height: 1.6; }
+.event-metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.event-list { display: grid; gap: 11px; }
+.event-card { padding: 16px; border: 1px solid var(--line); border-left: 4px solid #526174; border-radius: 8px; background: #0d141d; }
+.event-card.P0 { border-left-color: #ff5264; background: #211116; }
+.event-card.P1 { border-left-color: #ff8b73; background: #1e1517; }
+.event-card.P2 { border-left-color: var(--warning); }
+.event-card.P3 { border-left-color: var(--accent-2); }
+.event-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.event-title-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.event-title-line strong { font-size: 14px; }
+.event-card time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.event-card p { margin: 11px 0; color: #b2bdca; font-size: 12px; line-height: 1.65; }
+.event-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 10px; }
+.event-policy-panel { margin-top: 16px; }
+.badge.source-sec { background: #12344a; color: #78c7ff; }
+.badge.source-news { background: #3c2b12; color: #ffc66d; }
+.badge.source-media { background: #12344a; color: #78c7ff; }
+.badge.source-social { background: #312453; color: #c4a8ff; }
+.sentiment-metric-grid { margin-top: 12px; }
+.sentiment-metric-grid .metric-card strong { font-size: 22px; }
+.news-panel { margin-top: 16px; }
+.news-list { display: grid; gap: 11px; }
+.news-card { padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0d141d; }
+.news-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.news-card-head strong { font-size: 14px; line-height: 1.5; }
+.news-card time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.news-card p { margin: 11px 0; color: #b2bdca; font-size: 12px; line-height: 1.65; }
 .form-help { margin: 14px 0 0; line-height: 1.6; }
 .methodology-card h2 { margin-bottom: 10px; }
 .peer-selection-card h2 { margin-bottom: 14px; }

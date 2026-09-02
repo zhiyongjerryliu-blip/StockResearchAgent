@@ -1,5 +1,7 @@
 const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
+  eventFeed: { events: [], counts: {}, total: 0 },
+  newsArticles: [], newsSentiment: null,
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
@@ -9,7 +11,8 @@ const state = {
 
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
-  financials: '财报分析', valuation: '估值与竞争对手', reviews: '收盘复盘', settings: '系统状态'
+  financials: '财报分析', valuation: '估值与竞争对手', events: '事件与风险',
+  reviews: '收盘复盘', settings: '系统状态'
 };
 
 async function api(path, options = {}) {
@@ -75,6 +78,7 @@ function showView(view) {
   document.querySelector('#page-title').textContent = titles[view];
   if (view === 'financials') loadSelectedSecOverview().catch((error) => showToast(error.message, true));
   if (view === 'valuation') loadSelectedValuation().catch((error) => showToast(error.message, true));
+  if (view === 'events') loadEventCenter().catch((error) => showToast(error.message, true));
 }
 
 function renderWatchlist() {
@@ -110,6 +114,13 @@ function renderWatchlist() {
   valuationSelect.innerHTML = secOptions || '<option value="">请先添加股票</option>';
   if (selectedValuationTicker && state.watchlist.some((item) => item.ticker === selectedValuationTicker)) {
     valuationSelect.value = selectedValuationTicker;
+  }
+
+  const eventSelect = document.querySelector('#event-ticker');
+  const selectedEventTicker = eventSelect.value;
+  eventSelect.innerHTML = `<option value="">全部股票</option>${secOptions}`;
+  if (selectedEventTicker && state.watchlist.some((item) => item.ticker === selectedEventTicker)) {
+    eventSelect.value = selectedEventTicker;
   }
 }
 
@@ -551,6 +562,107 @@ function renderNotifications() {
   document.querySelector('#notifications-empty').classList.toggle('hidden', recent.length > 0);
 }
 
+function renderEvents() {
+  const feed = state.eventFeed || { events: [], counts: {}, total: 0 };
+  for (const severity of ['P0', 'P1', 'P2', 'P3']) {
+    document.querySelector(`#event-count-${severity.toLowerCase()}`).textContent = feed.counts?.[severity] || 0;
+  }
+  document.querySelector('#event-list').innerHTML = feed.events.map((event) => {
+    const evidence = event.evidence?.[0] || {};
+    const isNews = event.source_type === 'NEWS_RISK';
+    const items = isNews
+      ? `待核实新闻 · ${escapeHtml(evidence.source || '未知来源')}`
+      : ((evidence.items || []).map((item) => `Item ${item.item}`).join('、') || '未标注Item');
+    const sourceDetail = isNews
+      ? `相关性 ${evidence.relevanceScore == null ? '—' : Number(evidence.relevanceScore).toFixed(2)} · 情绪 ${evidence.sentimentScore == null ? '—' : Number(evidence.sentimentScore).toFixed(2)}`
+      : `Accession ${escapeHtml(event.source_id)}`;
+    return `<article class="event-card ${escapeHtml(event.severity)}">
+      <div class="event-card-head">
+        <div class="event-title-line"><span class="badge ${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span>${isNews ? '<span class="badge source-news">待核实新闻</span>' : '<span class="badge source-sec">SEC官方</span>'}<strong>${escapeHtml(event.title)}</strong></div>
+        <time>${escapeHtml(event.event_date)}</time>
+      </div>
+      <p>${escapeHtml(event.summary)}</p>
+      <div class="event-meta">
+        <span>${escapeHtml(event.ticker)}${event.name ? ` · ${escapeHtml(event.name)}` : ''}</span>
+        <span>${items}</span>
+        <span>${sourceDetail}</span>
+        ${event.source_url ? `<a class="sec-link" href="${escapeHtml(event.source_url)}" target="_blank" rel="noreferrer">${isNews ? '查看新闻原文' : '查看 SEC 原文'} ↗</a>` : ''}
+      </div>
+    </article>`;
+  }).join('');
+  document.querySelector('#events-empty').classList.toggle('hidden', feed.events.length > 0);
+  const ticker = document.querySelector('#event-ticker').value;
+  const severity = document.querySelector('#event-severity').value;
+  document.querySelector('#event-status').textContent = `${ticker || '全部股票'} · ${severity === 'ALL' ? '全部等级' : severity} · 共${feed.total}条；SEC为官方事实来源，新闻为待核实规则信号，均不构成买卖建议。`;
+}
+
+function renderNews() {
+  const summary = state.newsSentiment || {};
+  document.querySelector('#sentiment-total').textContent = summary.total || 0;
+  document.querySelector('#sentiment-content-mix').textContent = `新闻${summary.newsCount || 0} · 讨论${summary.discussionCount || 0} · 风险${summary.riskSignals || 0}`;
+  document.querySelector('#sentiment-sources').textContent = summary.uniqueSources || 0;
+  document.querySelector('#sentiment-trend').textContent = summary.trend || '数据不足';
+  document.querySelector('#sentiment-score').textContent = summary.averageSentiment == null
+    ? '至少3条且2个来源才判断'
+    : `平均情绪 ${Number(summary.averageSentiment).toFixed(2)} · 负面占比 ${Math.round((summary.negativeRatio || 0) * 100)}%`;
+  document.querySelector('#sentiment-engagement').textContent = summary.engagementScore || 0;
+  document.querySelector('#sentiment-buzz').textContent = summary.buzzChange == null
+    ? `近24小时${summary.current24hCount || 0}条，历史不足`
+    : `近24小时较前24小时 ${summary.buzzChange >= 0 ? '+' : ''}${Math.round(summary.buzzChange * 100)}%`;
+  const providerLabels = {
+    alpha_vantage: 'Alpha Vantage', google_news: 'Google News',
+    yahoo_finance: 'Yahoo Finance', hacker_news: 'Hacker News'
+  };
+  document.querySelector('#news-list').innerHTML = state.newsArticles.map((article) => {
+    const published = new Date(article.published_at).toLocaleString('zh-CN', { hour12: false });
+    const sentiment = article.sentiment_score == null ? '—' : Number(article.sentiment_score).toFixed(2);
+    const relevance = article.relevance_score == null ? '—' : Number(article.relevance_score).toFixed(2);
+    return `<article class="news-card">
+      <div class="news-card-head">
+        <div class="event-title-line">${article.has_risk_event ? '<span class="badge P2">风险规则</span>' : ''}<span class="badge ${article.content_kind === 'DISCUSSION' ? 'source-social' : 'source-media'}">${article.content_kind === 'DISCUSSION' ? '公开讨论' : '媒体新闻'}</span><strong>${escapeHtml(article.title)}</strong></div>
+        <time>${escapeHtml(published)}</time>
+      </div>
+      ${article.summary ? `<p>${escapeHtml(article.summary)}</p>` : ''}
+      <div class="event-meta">
+        <span>${escapeHtml(article.ticker)}${article.name ? ` · ${escapeHtml(article.name)}` : ''}</span>
+        <span>${escapeHtml(article.source_name || article.source_domain || '未知来源')}</span>
+        <span>${escapeHtml(article.source_tier === 'TIER_1' ? '一线媒体' : article.source_tier === 'SOCIAL' ? '社区来源' : '一般媒体')}</span>
+        <span>${(article.providers || []).map((provider) => escapeHtml(providerLabels[provider] || provider)).join(' · ') || '未知采集通道'}${article.source_count > 1 ? ` · ${article.source_count}个独立来源佐证` : ''}</span>
+        <span>相关性 ${relevance} · 情绪 ${sentiment}${article.sentiment_label ? ` · ${escapeHtml(article.sentiment_label)}` : ''}</span>
+        <a class="sec-link" href="${escapeHtml(article.url)}" target="_blank" rel="noreferrer">查看新闻原文 ↗</a>
+      </div>
+    </article>`;
+  }).join('');
+  document.querySelector('#news-empty').classList.toggle('hidden', state.newsArticles.length > 0);
+}
+
+async function loadEvents() {
+  const ticker = document.querySelector('#event-ticker').value;
+  const severity = document.querySelector('#event-severity').value || 'ALL';
+  const query = new URLSearchParams({ severity, limit: '200' });
+  if (ticker) query.set('ticker', ticker);
+  state.eventFeed = await api(`/api/events?${query.toString()}`);
+  renderEvents();
+}
+
+async function loadNews() {
+  const ticker = document.querySelector('#event-ticker').value;
+  const query = new URLSearchParams({ limit: '100' });
+  if (ticker) query.set('ticker', ticker);
+  const sentimentQuery = new URLSearchParams();
+  if (ticker) sentimentQuery.set('ticker', ticker);
+  const [newsArticles, newsSentiment] = await Promise.all([
+    api(`/api/news?${query.toString()}`),
+    api(`/api/news/sentiment?${sentimentQuery.toString()}`)
+  ]);
+  Object.assign(state, { newsArticles, newsSentiment });
+  renderNews();
+}
+
+async function loadEventCenter() {
+  await Promise.all([loadEvents(), loadNews()]);
+}
+
 function renderReviews() {
   document.querySelector('#reviews-list').innerHTML = state.reviews.map((review) => `
     <article class="review">
@@ -576,13 +688,14 @@ function renderConfig() {
 }
 
 async function loadAll() {
-  const [watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance] = await Promise.all([
+  const [watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment] = await Promise.all([
     api('/api/watchlist'), api('/api/portfolio'), api('/api/transactions'),
     api('/api/notifications'), api('/api/reviews'), api('/api/config'),
-    api(`/api/performance/monthly?month=${currentEtMonth()}`)
+    api(`/api/performance/monthly?month=${currentEtMonth()}`), api('/api/events?severity=ALL&limit=200'),
+    api('/api/news?limit=100'), api('/api/news/sentiment')
   ]);
-  Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance });
-  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderReviews(); renderConfig();
+  Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
+  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderReviews(); renderConfig();
 }
 
 function formData(form) {
@@ -705,6 +818,56 @@ document.querySelector('#valuation-ticker').addEventListener('change', () => {
 document.querySelector('#valuation-history-years').addEventListener('change', () => {
   state.valuationLoadedTicker = null;
   loadSelectedValuation(true).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#event-ticker').addEventListener('change', () => {
+  loadEventCenter().catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#event-severity').addEventListener('change', () => {
+  loadEvents().catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#sync-event-sec').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#event-ticker').value;
+  if (!ticker) return showToast('请先选择一只股票再同步 SEC', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在同步…';
+  try {
+    const result = await api('/api/sec/sync', { method: 'POST', body: JSON.stringify({ ticker }) });
+    await loadAll();
+    document.querySelector('#event-ticker').value = ticker;
+    await loadEvents();
+    showToast(`${ticker} SEC事件同步完成，新增${result.events?.created || 0}条事件`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '同步所选 SEC';
+  }
+});
+
+document.querySelector('#sync-event-news').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#event-ticker').value;
+  if (!ticker) return showToast('请先选择一只股票再同步新闻', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在同步…';
+  try {
+    const result = await api('/api/news/sync', {
+      method: 'POST', body: JSON.stringify({ ticker, force: true })
+    });
+    await loadAll();
+    document.querySelector('#event-ticker').value = ticker;
+    await loadEventCenter();
+    showToast(`${ticker} 新闻同步完成，新增${result.newLinks || 0}篇，识别${result.riskEvents || 0}个风险信号`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '同步所选新闻';
+  }
 });
 
 document.querySelector('#sync-valuation').addEventListener('click', async (event) => {

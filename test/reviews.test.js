@@ -4,6 +4,7 @@ import { openDatabase } from '../src/db.js';
 import { saveDailySnapshots } from '../src/portfolio.js';
 import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from '../src/reviews.js';
+import { indexSecFilingEvents } from '../src/events.js';
 
 test('缺失行情补齐后自动重算快照和已有复盘', async () => {
   const db = openDatabase(':memory:');
@@ -34,5 +35,38 @@ test('缺失行情补齐后自动重算快照和已有复盘', async () => {
   const snapshot = db.prepare("SELECT previous_close, daily_pnl FROM daily_position_snapshots WHERE ticker = 'LITE'").get();
   assert.equal(snapshot.previous_close, 895);
   assert.equal(snapshot.daily_pnl, 1976);
+  db.close();
+});
+
+test('每日复盘纳入近7日研究事件并保留来源类型', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'RISK', name: 'Risk Corp' });
+  addTransaction(db, { ticker: 'RISK', side: 'BUY', tradeTime: '2026-08-01T15:00:00Z', quantity: 10, price: 10, fee: 0 });
+  saveManualPrice(db, { ticker: 'RISK', tradeDate: '2026-08-31', close: 9, volume: 1000 });
+  db.prepare(`
+    INSERT INTO sec_filings (
+      accession_number, ticker, cik, form, filed_at, report_date, accepted_at,
+      primary_document, items, filing_url, is_xbrl, is_inline_xbrl, ingested_at
+    ) VALUES (
+      '0000000001-26-000009', 'RISK', '0000000001', '8-K', '2026-08-31',
+      '2026-08-31', '2026-08-31T20:30:00.000Z', 'risk.htm', '3.01,9.01',
+      'https://www.sec.gov/risk', 1, 1, '2026-08-31T21:00:00.000Z'
+    )
+  `).run();
+  indexSecFilingEvents(db, 'RISK');
+
+  await generateDailyReviews(db, '2026-09-01');
+  const stock = db.prepare("SELECT structured_json, narrative FROM daily_reviews WHERE ticker = 'RISK'").get();
+  const structured = JSON.parse(stock.structured_json);
+  assert.equal(structured.events.length, 1);
+  assert.equal(structured.events[0].severity, 'P1');
+  assert.match(stock.narrative, /P0\/P1风险/);
+  assert.match(stock.narrative, /退市通知/);
+  assert.match(stock.narrative, /舆情样本不足/);
+
+  const portfolio = db.prepare("SELECT structured_json FROM daily_reviews WHERE review_type = 'PORTFOLIO'").get();
+  const portfolioStructured = JSON.parse(portfolio.structured_json);
+  assert.equal(portfolioStructured.recentEvents[0].ticker, 'RISK');
+  assert.equal(portfolioStructured.recentEvents[0].sourceType, 'SEC_8K');
   db.close();
 });

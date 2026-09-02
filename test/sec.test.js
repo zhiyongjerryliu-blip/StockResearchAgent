@@ -9,6 +9,7 @@ import {
   normalizeSubmissions,
   saveSecCompanyData,
   SecEdgarProvider,
+  syncSecCompany,
   syncSecWatchlist
 } from '../src/sec.js';
 
@@ -169,6 +170,23 @@ test('股票池SEC同步按股票隔离错误且未配置时安全跳过', async
   });
   assert.equal(skipped.skipped, true);
   assert.equal(skipped.reason, 'not-configured');
+  db.close();
+});
+
+test('股票首次SEC同步只回填历史风险事件而不补发通知', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'RISK' });
+  const riskSubmissions = structuredClone(submissions);
+  riskSubmissions.filings.recent.items[1] = '3.01,9.01';
+  const result = await syncSecCompany(db, {
+    async fetchCompanyData() {
+      return { company: { cik: '0000320193' }, submissions: riskSubmissions, companyFacts };
+    }
+  }, 'RISK');
+  assert.equal(result.initialFilingSync, true);
+  assert.equal(result.events.created, 1);
+  assert.equal(result.events.notified, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM notifications WHERE category = 'SEC_RISK_EVENT'").get().count, 0);
   db.close();
 });
 

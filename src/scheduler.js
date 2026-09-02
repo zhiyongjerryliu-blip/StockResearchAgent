@@ -5,6 +5,7 @@ import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js'
 import { createNotification } from './notifications.js';
 import { syncSecWatchlist } from './sec.js';
 import { syncWatchlistEarningsEstimates } from './earnings-estimates.js';
+import { syncWatchlistNews } from './news.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -22,7 +23,8 @@ function etDate(date = new Date()) {
 }
 
 export async function runDailyCycle(
-  db, provider, date = new Date(), secProvider = null, earningsProvider = null
+  db, provider, date = new Date(), secProvider = null, earningsProvider = null,
+  newsProvider = null
 ) {
   const startedAt = nowIso();
   const result = db.prepare(`
@@ -35,9 +37,10 @@ export async function runDailyCycle(
     const market = await refreshWatchlistPrices(db, provider);
     const reviewDate = etDate(date);
     const earnings = await syncWatchlistEarningsEstimates(db, earningsProvider, reviewDate);
+    const news = await syncWatchlistNews(db, newsProvider, reviewDate);
     const portfolio = saveDailySnapshots(db, reviewDate);
     const reviews = await generateDailyReviews(db, reviewDate);
-    const details = { market, sec, earnings, reviewDate, positions: portfolio.positions.length };
+    const details = { market, sec, earnings, news, reviewDate, positions: portfolio.positions.length };
     db.prepare(`
       UPDATE job_runs SET finished_at = ?, status = 'SUCCESS', details_json = ? WHERE id = ?
     `).run(nowIso(), JSON.stringify(details), jobId);
@@ -63,7 +66,9 @@ export async function runMarketRefreshCycle(db, provider, date = new Date()) {
   return { ...market, reviewRepair };
 }
 
-export function startScheduler(db, provider, options, secProvider = null, earningsProvider = null) {
+export function startScheduler(
+  db, provider, options, secProvider = null, earningsProvider = null, newsProvider = null
+) {
   const refreshMs = Math.max(5, options.marketRefreshIntervalMinutes) * 60_000;
   const timers = [];
 
@@ -86,7 +91,7 @@ export function startScheduler(db, provider, options, secProvider = null, earnin
       lastDailyDate !== currentDate
     ) {
       lastDailyDate = currentDate;
-      runDailyCycle(db, provider, new Date(), secProvider, earningsProvider).catch((error) => {
+      runDailyCycle(db, provider, new Date(), secProvider, earningsProvider, newsProvider).catch((error) => {
         console.error('日终任务失败：', error.message);
         lastDailyDate = null;
       });

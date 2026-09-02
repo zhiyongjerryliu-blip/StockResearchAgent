@@ -162,6 +162,102 @@ CREATE TABLE IF NOT EXISTS sec_filings (
 CREATE INDEX IF NOT EXISTS idx_sec_filings_ticker_filed
 ON sec_filings(ticker, filed_at DESC);
 
+CREATE TABLE IF NOT EXISTS research_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_key TEXT NOT NULL UNIQUE,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  event_date TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK(severity IN ('P0','P1','P2','P3')),
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_url TEXT,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  detected_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_events_ticker_date
+ON research_events(ticker, event_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_research_events_severity_date
+ON research_events(severity, event_date DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS news_articles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  article_key TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL,
+  canonical_url TEXT,
+  story_fingerprint TEXT,
+  content_kind TEXT NOT NULL DEFAULT 'NEWS',
+  source_tier TEXT NOT NULL DEFAULT 'TIER_2',
+  published_at TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT,
+  source_name TEXT,
+  source_domain TEXT,
+  url TEXT NOT NULL,
+  banner_image_url TEXT,
+  overall_sentiment_score REAL,
+  overall_sentiment_label TEXT,
+  engagement_score REAL NOT NULL DEFAULT 0,
+  raw_metrics_json TEXT NOT NULL DEFAULT '{}',
+  language TEXT,
+  topics_json TEXT NOT NULL DEFAULT '[]',
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_articles_published
+ON news_articles(published_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS news_article_sources (
+  article_id INTEGER NOT NULL REFERENCES news_articles(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  source_item_id TEXT NOT NULL,
+  publisher_name TEXT,
+  publisher_domain TEXT,
+  source_url TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY(article_id, provider, source_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_article_sources_article
+ON news_article_sources(article_id, provider);
+
+CREATE TABLE IF NOT EXISTS news_article_links (
+  article_id INTEGER NOT NULL REFERENCES news_articles(id) ON DELETE CASCADE,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  relevance_score REAL,
+  sentiment_score REAL,
+  sentiment_label TEXT,
+  PRIMARY KEY(article_id, ticker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_article_links_ticker
+ON news_article_links(ticker, article_id DESC);
+
+CREATE TABLE IF NOT EXISTS news_sync_status (
+  ticker TEXT PRIMARY KEY REFERENCES securities(ticker) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  last_as_of TEXT,
+  last_fetched_at TEXT,
+  last_published_at TEXT,
+  article_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS news_risk_alerts (
+  event_key TEXT PRIMARY KEY,
+  notified_at TEXT NOT NULL,
+  basis_json TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS financial_facts (
   source_key TEXT PRIMARY KEY,
   ticker TEXT NOT NULL REFERENCES securities(ticker),
@@ -355,6 +451,27 @@ export function openDatabase(databasePath = config.databasePath) {
   for (const [column, definition] of estimateMigrations) {
     if (!estimateColumns.has(column)) db.exec(`ALTER TABLE earnings_estimates ADD COLUMN ${column} ${definition}`);
   }
+  const newsColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(news_articles)').all()).map((column) => column.name)
+  );
+  const newsMigrations = [
+    ['canonical_url', 'TEXT'],
+    ['story_fingerprint', 'TEXT'],
+    ['content_kind', "TEXT NOT NULL DEFAULT 'NEWS'"],
+    ['source_tier', "TEXT NOT NULL DEFAULT 'TIER_2'"],
+    ['engagement_score', 'REAL NOT NULL DEFAULT 0'],
+    ['raw_metrics_json', "TEXT NOT NULL DEFAULT '{}'"],
+    ['language', 'TEXT']
+  ];
+  for (const [column, definition] of newsMigrations) {
+    if (!newsColumns.has(column)) db.exec(`ALTER TABLE news_articles ADD COLUMN ${column} ${definition}`);
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_news_articles_canonical
+    ON news_articles(canonical_url);
+    CREATE INDEX IF NOT EXISTS idx_news_articles_story
+    ON news_articles(story_fingerprint, published_at DESC)
+  `);
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_earnings_estimates_provider_snapshot
     ON earnings_estimates(ticker, estimate_type, as_of, provider)

@@ -12,6 +12,14 @@ import { getSecOverview, SecEdgarProvider, syncSecCompany } from './sec.js';
 import { commitTransactionImport, validateTransactionImport } from './transaction-import.js';
 import { configureAutomaticPeers } from './peer-selection.js';
 import { AlphaVantageEarningsProvider, syncEarningsEstimate } from './earnings-estimates.js';
+import { backfillSecFilingEvents, listResearchEvents } from './events.js';
+import {
+  AlphaVantageNewsProvider, getNewsSentimentSummary, listNewsArticles, syncNewsForTicker
+} from './news.js';
+import {
+  CompositeNewsProvider, GoogleNewsRssProvider, HackerNewsDiscussionProvider,
+  YahooFinanceNewsProvider
+} from './news-sources.js';
 import {
   addPeer,
   deleteEarningsEstimate,
@@ -35,9 +43,16 @@ import {
 } from './repository.js';
 
 const db = openDatabase();
+backfillSecFilingEvents(db);
 const provider = providerFromName(config.marketDataProvider);
 const secProvider = new SecEdgarProvider(config.sec);
 const earningsProvider = new AlphaVantageEarningsProvider(config.alphaVantage);
+const newsProvider = new CompositeNewsProvider([
+  new AlphaVantageNewsProvider(config.alphaVantage),
+  new GoogleNewsRssProvider(),
+  new YahooFinanceNewsProvider(),
+  new HackerNewsDiscussionProvider()
+]);
 const publicDir = path.join(config.projectRoot, 'public');
 const pidFile = path.join(config.projectRoot, 'data', 'server.pid');
 
@@ -292,6 +307,32 @@ async function apiRoute(request, response, url) {
       SELECT * FROM notifications ORDER BY created_at DESC LIMIT 100
     `).all()));
   }
+
+  if (method === 'GET' && url.pathname === '/api/events') {
+    return sendJson(response, 200, listResearchEvents(db, {
+      ticker: url.searchParams.get('ticker'),
+      severity: url.searchParams.get('severity'),
+      limit: url.searchParams.get('limit')
+    }));
+  }
+  if (method === 'GET' && url.pathname === '/api/news') {
+    return sendJson(response, 200, listNewsArticles(db, {
+      ticker: url.searchParams.get('ticker'),
+      limit: url.searchParams.get('limit')
+    }));
+  }
+  if (method === 'GET' && url.pathname === '/api/news/sentiment') {
+    return sendJson(response, 200, getNewsSentimentSummary(db, {
+      ticker: url.searchParams.get('ticker')
+    }));
+  }
+  if (method === 'POST' && url.pathname === '/api/news/sync') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, await syncNewsForTicker(
+      db, newsProvider, body.ticker, latestEtDate(), { force: Boolean(body.force) }
+    ));
+  }
   if (method === 'POST' && url.pathname === '/api/notifications/test') {
     return sendJson(response, 201, await createNotification(db, {
       severity: 'INFO', category: 'TEST', title: '通知测试', body: '美股投研工作台通知功能正常。'
@@ -322,7 +363,7 @@ async function apiRoute(request, response, url) {
   }
   if (method === 'POST' && url.pathname === '/api/daily-cycle') {
     return sendJson(response, 200, await runDailyCycle(
-      db, provider, new Date(), secProvider, earningsProvider
+      db, provider, new Date(), secProvider, earningsProvider, newsProvider
     ));
   }
 
@@ -352,7 +393,7 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-const stopScheduler = startScheduler(db, provider, config, secProvider, earningsProvider);
+const stopScheduler = startScheduler(db, provider, config, secProvider, earningsProvider, newsProvider);
 
 server.listen(config.port, config.host, () => {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });

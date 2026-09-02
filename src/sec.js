@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { nowIso, toPlain, toPlainRows } from './db.js';
 import { normalizeTicker } from './domain.js';
 import { configureAutomaticPeers } from './peer-selection.js';
+import { syncSecFilingEvents } from './events.js';
 
 const SEC_BASE = 'https://www.sec.gov';
 const SEC_DATA_BASE = 'https://data.sec.gov';
@@ -240,6 +241,11 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
   const sic = submissions?.sic ? String(submissions.sic) : null;
   const sicDescription = submissions?.sicDescription || null;
   const ingestedAt = nowIso();
+  const existingFilings = new Set(toPlainRows(db.prepare(
+    'SELECT accession_number FROM sec_filings WHERE ticker = ?'
+  ).all(ticker)).map((filing) => filing.accession_number));
+  const initialFilingSync = existingFilings.size === 0;
+  const newFilingAccessions = [];
 
   const filingStatement = db.prepare(`
     INSERT INTO sec_filings (
@@ -271,6 +277,7 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
       WHERE ticker = ?
     `).run(cik, entityName, sic, sicDescription, ingestedAt, ticker);
     for (const filing of filings) {
+      if (!existingFilings.has(filing.accessionNumber)) newFilingAccessions.push(filing.accessionNumber);
       filingStatement.run(
         filing.accessionNumber, ticker, cik, filing.form, filing.filedAt,
         filing.reportDate, filing.acceptedAt, filing.primaryDocument,
@@ -301,7 +308,11 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
         facts_count = excluded.facts_count, last_error = NULL, updated_at = excluded.updated_at
     `).run(ticker, cik, entityName, ingestedAt, filingCount, factCount, ingestedAt);
     db.exec('COMMIT');
-    return { ticker, cik, entityName, sic, sicDescription, filingsReceived: filings.length, factsReceived: facts.length, insertedFacts, filingCount, factCount, syncedAt: ingestedAt };
+    return {
+      ticker, cik, entityName, sic, sicDescription,
+      filingsReceived: filings.length, newFilingAccessions, initialFilingSync,
+      factsReceived: facts.length, insertedFacts, filingCount, factCount, syncedAt: ingestedAt
+    };
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
@@ -323,7 +334,11 @@ export async function syncSecCompany(db, provider, tickerValue) {
   if (!security) throw new Error('请先将股票加入股票池');
   try {
     const data = await provider.fetchCompanyData(ticker, security.cik);
-    return saveSecCompanyData(db, ticker, data.company.cik, data.submissions, data.companyFacts);
+    const saved = saveSecCompanyData(db, ticker, data.company.cik, data.submissions, data.companyFacts);
+    const events = await syncSecFilingEvents(db, ticker, {
+      notifyAccessions: saved.initialFilingSync ? [] : saved.newFilingAccessions
+    });
+    return { ...saved, events };
   } catch (error) {
     recordSecSyncError(db, ticker, error);
     throw error;

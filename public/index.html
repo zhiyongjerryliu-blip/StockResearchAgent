@@ -21,6 +21,7 @@
         <button class="nav-item" data-view="watchlist">股票池</button>
         <button class="nav-item" data-view="financials">财报分析</button>
         <button class="nav-item" data-view="valuation">估值与同业</button>
+        <button class="nav-item" data-view="events">事件与风险</button>
         <button class="nav-item" data-view="transactions">交易流水</button>
         <button class="nav-item" data-view="reviews">每日复盘</button>
         <button class="nav-item" data-view="settings">系统状态</button>
@@ -243,6 +244,65 @@
             </article>
           </div>
         </div>
+      </section>
+
+      <section class="view" id="view-events">
+        <article class="panel sec-toolbar-panel">
+          <div>
+            <p class="eyebrow">SEC 8-K · NEWS SENTIMENT · RISK EVENTS</p>
+            <h2>事件与风险中心</h2>
+          </div>
+          <div class="sec-toolbar">
+            <select id="event-ticker" aria-label="事件股票"><option value="">全部股票</option></select>
+            <select id="event-severity" aria-label="事件等级">
+              <option value="ALL">全部等级</option>
+              <option value="P0">P0 紧急</option>
+              <option value="P1">P1 高风险</option>
+              <option value="P2">P2 重要</option>
+              <option value="P3">P3 一般</option>
+            </select>
+            <button id="sync-event-sec" class="button primary">同步所选 SEC</button>
+            <button id="sync-event-news" class="button">同步所选新闻</button>
+          </div>
+          <p id="event-status" class="muted sec-sync-status">SEC事件来自官方8-K；新闻风险来自Alpha Vantage聚合数据并标记为待核实信号。</p>
+        </article>
+
+        <div class="sec-metric-grid event-metric-grid">
+          <article class="metric-card"><span>P0 紧急事件</span><strong id="event-count-p0">0</strong><small>破产或接管等价值重大改变</small></article>
+          <article class="metric-card"><span>P1 高风险事件</span><strong id="event-count-p1">0</strong><small>退市、报表不可信、重大义务等</small></article>
+          <article class="metric-card"><span>P2 重要事件</span><strong id="event-count-p2">0</strong><small>业绩、融资、并购及管理层变化</small></article>
+          <article class="metric-card"><span>P3 一般事件</span><strong id="event-count-p3">0</strong><small>常规协议、FD披露及附件</small></article>
+        </div>
+
+        <div class="sec-metric-grid sentiment-metric-grid">
+          <article class="metric-card"><span>近7日内容</span><strong id="sentiment-total">0</strong><small id="sentiment-content-mix">新闻0 · 讨论0</small></article>
+          <article class="metric-card"><span>独立来源</span><strong id="sentiment-sources">0</strong><small>按媒体或社区域名去重</small></article>
+          <article class="metric-card"><span>综合情绪</span><strong id="sentiment-trend">数据不足</strong><small id="sentiment-score">至少3条且2个来源才判断</small></article>
+          <article class="metric-card"><span>讨论热度</span><strong id="sentiment-engagement">0</strong><small id="sentiment-buzz">近24小时变化待积累</small></article>
+        </div>
+
+        <article class="panel">
+          <div class="panel-head"><div><p class="eyebrow">EVENT TIMELINE</p><h2>研究事件时间线</h2></div></div>
+          <div id="event-list" class="event-list"></div>
+          <div id="events-empty" class="empty hidden">当前筛选条件下没有研究事件。</div>
+        </article>
+
+        <article class="panel news-panel">
+          <div class="panel-head"><div><p class="eyebrow">MULTI-SOURCE INTELLIGENCE</p><h2>新闻与公开讨论</h2></div><small class="muted">Alpha Vantage · Google News · Yahoo Finance · Hacker News</small></div>
+          <div id="news-list" class="news-list"></div>
+          <div id="news-empty" class="empty hidden">当前股票暂无已入库新闻。</div>
+        </article>
+
+        <article class="panel event-policy-panel">
+          <p class="eyebrow">RISK POLICY</p><h2>分级与提醒原则</h2>
+          <ul class="principle-list">
+            <li>P0只允许由SEC官方事件产生；新闻规则永远不会把未经核实的内容升级为P0。</li>
+            <li>新的SEC P0/P1事件可触发通知；新闻仅在新增高风险P1信号时提醒，历史回填不会补发提醒。</li>
+            <li>同一 SEC accession number 幂等入库，不重复生成事件或通知。</li>
+            <li>系统只依据 8-K Item 分类判断风险优先级，不推断文件正文中未披露的事实。</li>
+            <li>新闻信号保留来源、发布时间、股票相关性、情绪、命中规则和原文链接，并始终标注“待核实”。</li>
+          </ul>
+        </article>
       </section>
 
       <section class="view" id="view-watchlist">

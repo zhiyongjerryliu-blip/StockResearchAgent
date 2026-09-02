@@ -2,6 +2,7 @@ import { nowIso, toPlainRows } from './db.js';
 import { calculatePortfolio, saveDailySnapshots } from './portfolio.js';
 import { explainStructuredReview } from './llm.js';
 import { parseJson, round } from './domain.js';
+import { getNewsSentimentSummary } from './news.js';
 
 function volumeContext(db, ticker) {
   const rows = toPlainRows(db.prepare(`
@@ -54,8 +55,24 @@ function latestPredictions(db, ticker) {
   }));
 }
 
+function recentResearchEvents(db, ticker, reviewDate, lookbackDays = 7) {
+  const start = new Date(`${reviewDate}T00:00:00.000Z`);
+  start.setUTCDate(start.getUTCDate() - (lookbackDays - 1));
+  const startDate = start.toISOString().slice(0, 10);
+  return toPlainRows(db.prepare(`
+    SELECT id, event_date, event_type, title, summary, severity, status,
+           source_type, source_id, source_url, evidence_json
+    FROM research_events
+    WHERE ticker = ? AND event_date BETWEEN ? AND ?
+    ORDER BY event_date DESC, id DESC
+  `).all(ticker, startDate, reviewDate)).map((event) => ({
+    ...event,
+    evidence: parseJson(event.evidence_json, [])
+  }));
+}
+
 function deterministicStockNarrative(review) {
-  const { position, market, predictions } = review;
+  const { position, market, predictions, events, sentiment } = review;
   const pieces = [];
   if (position.currentPrice == null) {
     pieces.push(`${position.ticker} 暂无有效收盘行情，今日无法完成收益和走势判断。`);
@@ -77,13 +94,31 @@ function deterministicStockNarrative(review) {
   if (market.relativeVolume != null) {
     pieces.push(`成交量为近20日均量的 ${market.relativeVolume.toFixed(2)} 倍。`);
   }
+  const secEvents = events.filter((event) => event.source_type === 'SEC_8K');
+  const newsRisks = events.filter((event) => event.source_type === 'NEWS_RISK');
+  const officialHighRisk = secEvents.filter((event) => ['P0', 'P1'].includes(event.severity));
+  pieces.push(
+    `近7日有 ${secEvents.length} 个已入库SEC 8-K事件` +
+    `${officialHighRisk.length ? `，其中${officialHighRisk.length}个为P0/P1风险` : ''}；` +
+    `${newsRisks.length} 个待核实新闻风险信号。`
+  );
+  if (events.length) pieces.push(`最新事项为“${events[0].title}”。`);
+  if (sentiment.sufficient) {
+    pieces.push(
+      `近7日纳入${sentiment.newsCount}条新闻、${sentiment.discussionCount}条公开讨论，` +
+      `覆盖${sentiment.uniqueSources}个独立来源，综合情绪为${sentiment.trend}` +
+      `（平均${sentiment.averageSentiment.toFixed(2)}，负面占比${(sentiment.negativeRatio * 100).toFixed(0)}%）。`
+    );
+  } else {
+    pieces.push(`近7日舆情样本不足，当前不输出多空趋势。`);
+  }
   const published = predictions.filter((prediction) => prediction.publicationStatus === 'PUBLISHED');
   if (published.length) {
     pieces.push(`有 ${published.length} 个期限通过综合可靠度发布门槛。`);
   } else {
     pieces.push('当前没有通过综合可靠度门槛的正式预测。');
   }
-  pieces.push('本复盘仅陈述已入库数据；尚未接入的新闻、财报和资金行为不会被推测补全。');
+  pieces.push('新闻风险仅是规则初筛，必须核实原文及官方披露；公开成交数据不能确认最终交易账户身份。');
   return pieces.join('');
 }
 
@@ -118,6 +153,8 @@ export async function generateDailyReviews(db, reviewDate) {
       type: 'STOCK',
       position,
       market: volumeContext(db, position.ticker),
+      events: recentResearchEvents(db, position.ticker, reviewDate),
+      sentiment: getNewsSentimentSummary(db, { ticker: position.ticker, asOf: reviewDate }),
       predictions: latestPredictions(db, position.ticker),
       limitations: [
         '公开成交数据不能确认最终交易账户身份',
@@ -148,10 +185,36 @@ export async function generateDailyReviews(db, reviewDate) {
       dailyPnl: position.dailyPnl,
       totalPnl: position.totalPnl,
       totalReturn: position.totalReturn
+    })),
+    recentEvents: stockReviews.flatMap((review) => review.structured.events.map((event) => ({
+      ticker: review.ticker,
+      eventDate: event.event_date,
+      title: event.title,
+      severity: event.severity,
+      sourceType: event.source_type,
+      status: event.status,
+      sourceUrl: event.source_url
+    }))),
+    sentiment: stockReviews.map((review) => ({
+      ticker: review.ticker,
+      trend: review.structured.sentiment.trend,
+      sufficient: review.structured.sentiment.sufficient,
+      total: review.structured.sentiment.total,
+      uniqueSources: review.structured.sentiment.uniqueSources,
+      averageSentiment: review.structured.sentiment.averageSentiment
     }))
   };
+  const portfolioSecEvents = portfolioStructured.recentEvents.filter(
+    (event) => event.sourceType === 'SEC_8K'
+  );
+  const portfolioNewsRisks = portfolioStructured.recentEvents.filter(
+    (event) => event.sourceType === 'NEWS_RISK'
+  );
+  const portfolioRiskCount = portfolioSecEvents.filter(
+    (event) => ['P0', 'P1'].includes(event.severity)
+  ).length;
   const portfolioNarrative = portfolio.positions.length
-    ? `股票池共 ${portfolio.positions.length} 只股票，当前总市值 $${portfolio.totals.marketValue.toFixed(2)}，今日盈亏 $${portfolio.totals.dailyPnl.toFixed(2)}，累计总盈亏 $${portfolio.totals.totalPnl.toFixed(2)}。`
+    ? `股票池共 ${portfolio.positions.length} 只股票，当前总市值 $${portfolio.totals.marketValue.toFixed(2)}，今日盈亏 $${portfolio.totals.dailyPnl.toFixed(2)}，累计总盈亏 $${portfolio.totals.totalPnl.toFixed(2)}。近7日有 ${portfolioSecEvents.length} 个SEC 8-K事件${portfolioRiskCount ? `，其中${portfolioRiskCount}个为P0/P1风险` : ''}，以及${portfolioNewsRisks.length}个待核实新闻风险信号。`
     : '股票池为空，请先录入测试股票和交易。';
   await saveReview(db, reviewDate, null, 'PORTFOLIO', portfolioStructured, portfolioNarrative, 'review-v1');
 
