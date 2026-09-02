@@ -21,6 +21,15 @@ import {
   YahooFinanceNewsProvider
 } from './news-sources.js';
 import {
+  configureStockConcepts, configureWatchlistConcepts, listStockConcepts
+} from './concepts.js';
+import { getExternalDriversOverview } from './external-drivers.js';
+import { getMarketContext, syncMarketContext } from './market-context.js';
+import { buildInvestmentAdvice, saveInvestmentAdvice } from './advice.js';
+import {
+  analyzeCapitalFlow, listCapitalFlowHistory, notifyVolumeAnomalies, saveCapitalFlow
+} from './capital-flow.js';
+import {
   addPeer,
   deleteEarningsEstimate,
   getValuationOverview,
@@ -41,9 +50,11 @@ import {
   updateWatchlistItem,
   upsertWatchlistItem
 } from './repository.js';
+import { latestStableUsMarketDate } from './trading-calendar.js';
 
 const db = openDatabase();
 backfillSecFilingEvents(db);
+configureWatchlistConcepts(db);
 const provider = providerFromName(config.marketDataProvider);
 const secProvider = new SecEdgarProvider(config.sec);
 const earningsProvider = new AlphaVantageEarningsProvider(config.alphaVantage);
@@ -146,6 +157,12 @@ function latestEtDate() {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function latestStableMarketDate() {
+  return latestStableUsMarketDate(
+    new Date(), config.dailyReviewHourEt, config.dailyReviewMinuteEt
+  );
+}
+
 function valuationHistoryStart() {
   const date = new Date(`${latestEtDate()}T00:00:00.000Z`);
   date.setUTCFullYear(date.getUTCFullYear() - 5);
@@ -193,7 +210,9 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, listWatchlist(db));
   }
   if (method === 'POST' && url.pathname === '/api/watchlist') {
-    return sendJson(response, 201, upsertWatchlistItem(db, await readJson(request)));
+    const item = upsertWatchlistItem(db, await readJson(request));
+    configureStockConcepts(db, item.ticker);
+    return sendJson(response, 201, item);
   }
   const watchlistMatch = url.pathname.match(/^\/api\/watchlist\/([^/]+)$/);
   if (watchlistMatch && method === 'PATCH') {
@@ -202,7 +221,9 @@ async function apiRoute(request, response, url) {
     if (Object.keys(body).length === 1 && Object.hasOwn(body, 'enabled')) {
       return sendJson(response, 200, setWatchlistEnabled(db, ticker, body.enabled));
     }
-    return sendJson(response, 200, updateWatchlistItem(db, ticker, body));
+    const item = updateWatchlistItem(db, ticker, body);
+    configureStockConcepts(db, item.ticker);
+    return sendJson(response, 200, item);
   }
   if (watchlistMatch && method === 'DELETE') {
     return sendJson(response, 200, deleteWatchlistItem(db, decodeURIComponent(watchlistMatch[1])));
@@ -248,6 +269,69 @@ async function apiRoute(request, response, url) {
   }
   if (method === 'POST' && url.pathname === '/api/market/refresh') {
     return sendJson(response, 200, await runMarketRefreshCycle(db, provider));
+  }
+  if (method === 'GET' && url.pathname === '/api/market/context') {
+    return sendJson(response, 200, getMarketContext(
+      db, url.searchParams.get('asOf') || latestStableMarketDate()
+    ));
+  }
+  if (method === 'POST' && url.pathname === '/api/market/context/sync') {
+    return sendJson(response, 200, await syncMarketContext(db, provider, latestStableMarketDate()));
+  }
+
+  if (method === 'GET' && url.pathname === '/api/concepts') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, listStockConcepts(db, ticker));
+  }
+  if (method === 'POST' && url.pathname === '/api/concepts/sync') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, configureStockConcepts(db, body.ticker));
+  }
+  if (method === 'GET' && url.pathname === '/api/drivers') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, getExternalDriversOverview(
+      db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
+    ));
+  }
+  if (method === 'GET' && url.pathname === '/api/advice') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, buildInvestmentAdvice(
+      db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
+    ));
+  }
+  if (method === 'POST' && url.pathname === '/api/advice/run') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, saveInvestmentAdvice(
+      db, body.ticker, body.asOf || latestStableMarketDate()
+    ));
+  }
+  if (method === 'GET' && url.pathname === '/api/capital-flow') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, analyzeCapitalFlow(
+      db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
+    ));
+  }
+  if (method === 'GET' && url.pathname === '/api/capital-flow/history') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, listCapitalFlowHistory(
+      db, ticker, url.searchParams.get('limit')
+    ));
+  }
+  if (method === 'POST' && url.pathname === '/api/capital-flow/run') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    const analysis = saveCapitalFlow(
+      db, body.ticker, body.asOf || latestStableMarketDate()
+    );
+    analysis.volumeNotifications = await notifyVolumeAnomalies(db, analysis);
+    return sendJson(response, 200, analysis);
   }
 
   if (method === 'GET' && url.pathname === '/api/sec/overview') {

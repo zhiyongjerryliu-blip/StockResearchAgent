@@ -107,3 +107,18 @@ export function nextRegularUsTradingDate(tradeDate) {
   } while (!isRegularUsTradingDay(formatDate(date)));
   return formatDate(date);
 }
+
+export function latestStableUsMarketDate(
+  date = new Date(), stableHourEt = 18, stableMinuteEt = 15
+) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const currentDate = `${values.year}-${values.month}-${values.day}`;
+  const minutes = Number(values.hour) * 60 + Number(values.minute);
+  const stableMinutes = stableHourEt * 60 + stableMinuteEt;
+  if (isRegularUsTradingDay(currentDate) && minutes >= stableMinutes) return currentDate;
+  return previousRegularUsTradingDate(currentDate);
+}

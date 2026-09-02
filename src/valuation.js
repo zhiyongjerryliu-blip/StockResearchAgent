@@ -127,7 +127,7 @@ export function deleteEarningsEstimate(db, idValue) {
   return estimate;
 }
 
-function latestPrice(db, ticker) {
+function latestPrice(db, ticker, asOf = null) {
   return toPlain(db.prepare(`
     SELECT trade_date, close, provider
     FROM (
@@ -136,19 +136,20 @@ function latestPrice(db, ticker) {
                PARTITION BY trade_date
                ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
              ) AS row_number
-      FROM prices_daily WHERE ticker = ?
+      FROM prices_daily WHERE ticker = ? ${asOf ? 'AND trade_date <= ?' : ''}
     )
     WHERE row_number = 1
     ORDER BY trade_date DESC LIMIT 1
-  `).get(ticker)) || null;
+  `).get(...(asOf ? [ticker, asOf] : [ticker]))) || null;
 }
 
-function latestEstimate(db, ticker) {
+function latestEstimate(db, ticker, asOf = null) {
   return toPlain(db.prepare(`
     SELECT * FROM earnings_estimates
     WHERE ticker = ? AND estimate_type = 'NTM_EPS'
+      ${asOf ? 'AND as_of <= ?' : ''}
     ORDER BY as_of DESC, CASE WHEN provider = 'manual' THEN 1 ELSE 0 END DESC, id DESC LIMIT 1
-  `).get(ticker)) || null;
+  `).get(...(asOf ? [ticker, asOf] : [ticker]))) || null;
 }
 
 function allEstimates(db, ticker) {
@@ -352,13 +353,14 @@ export function calculateTtmEps(db, tickerValue, asOf = null) {
   return calculateTtmFromFacts(epsFacts(db, ticker, asOf));
 }
 
-function annualMetricRows(db, ticker, metricKey) {
+function annualMetricRows(db, ticker, metricKey, asOf = null) {
   const rows = toPlainRows(db.prepare(`
     SELECT value, period_end, filed_at, tag_priority
     FROM financial_facts
     WHERE ticker = ? AND metric_key = ? AND period_type = 'annual'
+      ${asOf ? 'AND filed_at < ?' : ''}
     ORDER BY period_end DESC, filed_at DESC, tag_priority ASC
-  `).all(ticker, metricKey));
+  `).all(...(asOf ? [ticker, metricKey, asOf] : [ticker, metricKey])));
   const distinct = new Map();
   for (const row of rows) {
     if (!distinct.has(row.period_end)) distinct.set(row.period_end, row);
@@ -366,20 +368,20 @@ function annualMetricRows(db, ticker, metricKey) {
   return [...distinct.values()];
 }
 
-function companyValuation(db, ticker) {
+function companyValuation(db, ticker, asOf = null) {
   const security = toPlain(db.prepare(`
     SELECT ticker, name, sector, industry FROM securities WHERE ticker = ?
   `).get(ticker));
   if (!security) throw new Error('股票不存在');
-  const price = latestPrice(db, ticker);
-  const ttm = calculateTtmEps(db, ticker);
+  const price = latestPrice(db, ticker, asOf);
+  const ttm = calculateTtmEps(db, ticker, asOf);
   const ttmEps = ttm.value;
-  const estimate = latestEstimate(db, ticker);
+  const estimate = latestEstimate(db, ticker, asOf);
   const estimateRevisionSummary = estimateRevision(db, estimate);
   const staticPe = price && ttmEps > 0 ? Number(price.close) / ttmEps : null;
   const forwardPe = price && estimate?.eps_value > 0 ? Number(price.close) / Number(estimate.eps_value) : null;
-  const annualRevenue = annualMetricRows(db, ticker, 'revenue');
-  const annualGrossProfit = annualMetricRows(db, ticker, 'grossProfit');
+  const annualRevenue = annualMetricRows(db, ticker, 'revenue', asOf);
+  const annualGrossProfit = annualMetricRows(db, ticker, 'grossProfit', asOf);
   const latestRevenue = annualRevenue[0] || null;
   const previousRevenue = annualRevenue[1] || null;
   const matchingGrossProfit = latestRevenue
@@ -594,12 +596,12 @@ function buildHistoricalForwardPeSeries(db, ticker, startDate) {
 export function getHistoricalValuation(db, tickerValue, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const years = [1, 3, 5].includes(Number(options.lookbackYears)) ? Number(options.lookbackYears) : 5;
-  const latest = latestPrice(db, ticker);
+  const latest = latestPrice(db, ticker, options.asOf || null);
   if (!latest) {
     return { lookbackYears: years, startDate: null, staticPe: distribution([], null, 60), forwardPe: distribution([], null, 20) };
   }
   const startDate = dateYearsBefore(latest.trade_date, years);
-  const current = companyValuation(db, ticker);
+  const current = companyValuation(db, ticker, options.asOf || null);
   const staticSeries = buildHistoricalStaticPeSeries(db, ticker, startDate);
   const forwardSeries = buildHistoricalForwardPeSeries(db, ticker, startDate);
   return {
@@ -615,10 +617,10 @@ export function getHistoricalValuation(db, tickerValue, options = {}) {
 
 export function getValuationOverview(db, tickerValue, options = {}) {
   const ticker = normalizeTicker(tickerValue);
-  const target = companyValuation(db, ticker);
+  const target = companyValuation(db, ticker, options.asOf || null);
   const peerRelationships = listPeers(db, ticker);
   const peers = peerRelationships.map((peer) => ({
-    ...companyValuation(db, peer.ticker),
+    ...companyValuation(db, peer.ticker, options.asOf || null),
     relationship: { source: peer.source, activeFrom: peer.active_from }
   }));
   const peerMedian = {

@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS company_relationships (
 CREATE INDEX IF NOT EXISTS idx_company_relationships_active
 ON company_relationships(ticker, relationship_type, active_to);
 
+CREATE TABLE IF NOT EXISTS stock_concepts (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  concept_key TEXT NOT NULL,
+  concept_name TEXT NOT NULL,
+  concept_type TEXT NOT NULL,
+  search_query TEXT NOT NULL,
+  related_entities_json TEXT NOT NULL DEFAULT '[]',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  source TEXT NOT NULL,
+  source_url TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, concept_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_concepts_active
+ON stock_concepts(ticker, active, concept_type);
+
 CREATE TABLE IF NOT EXISTS earnings_estimates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
@@ -235,6 +253,8 @@ CREATE TABLE IF NOT EXISTS news_article_links (
   relevance_score REAL,
   sentiment_score REAL,
   sentiment_label TEXT,
+  relation_type TEXT NOT NULL DEFAULT 'DIRECT',
+  relation_label TEXT,
   PRIMARY KEY(article_id, ticker)
 );
 
@@ -257,6 +277,48 @@ CREATE TABLE IF NOT EXISTS news_risk_alerts (
   notified_at TEXT NOT NULL,
   basis_json TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS macro_market_bars (
+  indicator_key TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  close REAL NOT NULL,
+  provider TEXT NOT NULL,
+  available_at TEXT NOT NULL,
+  ingested_at TEXT NOT NULL,
+  PRIMARY KEY(indicator_key, trade_date, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_macro_market_bars_latest
+ON macro_market_bars(indicator_key, trade_date DESC);
+
+CREATE TABLE IF NOT EXISTS macro_market_snapshots (
+  as_of TEXT PRIMARY KEY,
+  regime TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  metrics_json TEXT NOT NULL,
+  signals_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS market_events (
+  event_key TEXT PRIMARY KEY,
+  event_date TEXT NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_url TEXT,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  detected_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_events_date
+ON market_events(event_date DESC, severity);
 
 CREATE TABLE IF NOT EXISTS financial_facts (
   source_key TEXT PRIMARY KEY,
@@ -316,6 +378,52 @@ CREATE TABLE IF NOT EXISTS daily_position_snapshots (
   PRIMARY KEY(ticker, snapshot_date)
 );
 
+CREATE TABLE IF NOT EXISTS capital_flow_snapshots (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  price_date TEXT,
+  signal TEXT NOT NULL,
+  score REAL NOT NULL,
+  confidence REAL NOT NULL,
+  data_level TEXT NOT NULL,
+  close REAL,
+  volume REAL,
+  daily_return REAL,
+  average_volume_5d REAL,
+  average_volume_20d REAL,
+  volume_trend TEXT,
+  volume_trend_pct REAL,
+  relative_volume REAL,
+  directional_notional_ratio REAL,
+  cmf_20 REAL,
+  mfi_14 REAL,
+  up_down_volume_imbalance_20 REAL,
+  obv_slope_20 REAL,
+  close_location REAL,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  anomalies_json TEXT NOT NULL DEFAULT '[]',
+  limitations_json TEXT NOT NULL DEFAULT '[]',
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_capital_flow_ticker_asof
+ON capital_flow_snapshots(ticker, as_of DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS volume_alerts (
+  event_key TEXT PRIMARY KEY,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  trade_date TEXT NOT NULL,
+  alert_type TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  notified_at TEXT NOT NULL,
+  basis_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_volume_alerts_ticker_date
+ON volume_alerts(ticker, trade_date DESC, alert_type);
+
 CREATE TABLE IF NOT EXISTS predictions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT NOT NULL REFERENCES securities(ticker),
@@ -340,6 +448,27 @@ CREATE TABLE IF NOT EXISTS predictions (
 
 CREATE INDEX IF NOT EXISTS idx_predictions_ticker_horizon_asof
 ON predictions(ticker, horizon_days, as_of DESC);
+
+CREATE TABLE IF NOT EXISTS investment_advice_snapshots (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  stance TEXT NOT NULL,
+  impact_score REAL NOT NULL,
+  confidence_score REAL NOT NULL,
+  publication_status TEXT NOT NULL,
+  current_price REAL,
+  target_price REAL,
+  stop_price REAL,
+  rationale_json TEXT NOT NULL DEFAULT '{}',
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, horizon_days, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_advice_ticker_asof
+ON investment_advice_snapshots(ticker, as_of DESC, horizon_days);
 
 CREATE TABLE IF NOT EXISTS reliability_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -466,6 +595,15 @@ export function openDatabase(databasePath = config.databasePath) {
   for (const [column, definition] of newsMigrations) {
     if (!newsColumns.has(column)) db.exec(`ALTER TABLE news_articles ADD COLUMN ${column} ${definition}`);
   }
+  const newsLinkColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(news_article_links)').all()).map((column) => column.name)
+  );
+  if (!newsLinkColumns.has('relation_type')) {
+    db.exec("ALTER TABLE news_article_links ADD COLUMN relation_type TEXT NOT NULL DEFAULT 'DIRECT'");
+  }
+  if (!newsLinkColumns.has('relation_label')) {
+    db.exec('ALTER TABLE news_article_links ADD COLUMN relation_label TEXT');
+  }
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_news_articles_canonical
     ON news_articles(canonical_url);
@@ -477,6 +615,21 @@ export function openDatabase(databasePath = config.databasePath) {
     ON earnings_estimates(ticker, estimate_type, as_of, provider)
     WHERE provider <> 'manual'
   `);
+  const capitalFlowColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(capital_flow_snapshots)').all()).map((column) => column.name)
+  );
+  const capitalFlowMigrations = [
+    ['volume', 'REAL'],
+    ['average_volume_5d', 'REAL'],
+    ['average_volume_20d', 'REAL'],
+    ['volume_trend', 'TEXT'],
+    ['volume_trend_pct', 'REAL']
+  ];
+  for (const [column, definition] of capitalFlowMigrations) {
+    if (!capitalFlowColumns.has(column)) {
+      db.exec(`ALTER TABLE capital_flow_snapshots ADD COLUMN ${column} ${definition}`);
+    }
+  }
   return db;
 }
 

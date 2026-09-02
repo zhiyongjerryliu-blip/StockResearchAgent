@@ -4,6 +4,7 @@ import { openDatabase } from '../src/db.js';
 import { upsertWatchlistItem } from '../src/repository.js';
 import {
   AlphaVantageNewsProvider,
+  classifyNewsImpact,
   classifyNewsRisk,
   getNewsSentimentSummary,
   listNewsArticles,
@@ -68,6 +69,34 @@ test('新闻分类不会生成P0且低相关内容不触发风险', () => {
   );
   assert.equal(social.severity, 'P2');
   assert.match(social.category, /^SOCIAL_/);
+});
+
+test('回购、扩产和重大投资新闻生成独立外部驱动分类', () => {
+  const buyback = article({
+    key: 'buyback', publishedAt: '2026-09-01T12:00:00.000Z',
+    title: 'Company expands $500 million share repurchase program', sentiment: 0.3
+  });
+  const impact = classifyNewsImpact(buyback, buyback.tickerSentiments[0]);
+  assert.equal(impact.category, 'BUYBACK_AUTHORIZATION');
+  assert.equal(impact.direction, 'POSITIVE');
+  assert.notEqual(impact.severity, 'P0');
+});
+
+test('新闻同步将外部驱动事件幂等入库并在文章上标记', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'RISK', name: 'Risk Corp' });
+  const investment = article({
+    key: 'investment', publishedAt: '2026-09-01T12:00:00.000Z',
+    title: 'Company invests $2 billion in a new factory', sentiment: 0.2
+  });
+  const provider = { name: 'test', async fetchNews() { return { articles: [investment] }; } };
+  const first = await syncNewsForTicker(db, provider, 'RISK', '2026-09-01');
+  const second = await syncNewsForTicker(db, provider, 'RISK', '2026-09-01', { force: true });
+  assert.equal(first.impactEvents, 1);
+  assert.equal(second.impactEvents, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM research_events WHERE source_type = 'NEWS_IMPACT'").get().count, 1);
+  assert.equal(listNewsArticles(db, { ticker: 'RISK' })[0].has_impact_event, true);
+  db.close();
 });
 
 test('Alpha Vantage每秒频率提示会等待后自动重试一次', async () => {

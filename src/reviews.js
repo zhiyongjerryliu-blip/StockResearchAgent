@@ -3,6 +3,10 @@ import { calculatePortfolio, saveDailySnapshots } from './portfolio.js';
 import { explainStructuredReview } from './llm.js';
 import { parseJson, round } from './domain.js';
 import { getNewsSentimentSummary } from './news.js';
+import { getExternalDriversOverview } from './external-drivers.js';
+import { getMarketContext } from './market-context.js';
+import { buildInvestmentAdvice } from './advice.js';
+import { analyzeCapitalFlow } from './capital-flow.js';
 
 function volumeContext(db, ticker) {
   const rows = toPlainRows(db.prepare(`
@@ -72,7 +76,9 @@ function recentResearchEvents(db, ticker, reviewDate, lookbackDays = 7) {
 }
 
 function deterministicStockNarrative(review) {
-  const { position, market, predictions, events, sentiment } = review;
+  const {
+    position, market, predictions, events, sentiment, externalDrivers, investmentAdvice, capitalFlow
+  } = review;
   const pieces = [];
   if (position.currentPrice == null) {
     pieces.push(`${position.ticker} 暂无有效收盘行情，今日无法完成收益和走势判断。`);
@@ -94,13 +100,22 @@ function deterministicStockNarrative(review) {
   if (market.relativeVolume != null) {
     pieces.push(`成交量为近20日均量的 ${market.relativeVolume.toFixed(2)} 倍。`);
   }
+  if (capitalFlow?.signal && capitalFlow.signal !== 'INSUFFICIENT') {
+    pieces.push(
+      `日线资金行为为${capitalFlow.signalLabel}（评分${capitalFlow.score >= 0 ? '+' : ''}${capitalFlow.score.toFixed(1)}，` +
+      `证据置信${capitalFlow.confidence.toFixed(1)}分）；该结论是公开量价代理，不能确认机构账户身份。`
+    );
+  } else {
+    pieces.push('资金行为有效成交量历史不足，暂不判断建仓或派发。');
+  }
   const secEvents = events.filter((event) => event.source_type === 'SEC_8K');
   const newsRisks = events.filter((event) => event.source_type === 'NEWS_RISK');
+  const newsImpacts = events.filter((event) => event.source_type === 'NEWS_IMPACT');
   const officialHighRisk = secEvents.filter((event) => ['P0', 'P1'].includes(event.severity));
   pieces.push(
     `近7日有 ${secEvents.length} 个已入库SEC 8-K事件` +
     `${officialHighRisk.length ? `，其中${officialHighRisk.length}个为P0/P1风险` : ''}；` +
-    `${newsRisks.length} 个待核实新闻风险信号。`
+    `${newsRisks.length} 个待核实新闻风险信号，${newsImpacts.length} 个待核实外部驱动信号。`
   );
   if (events.length) pieces.push(`最新事项为“${events[0].title}”。`);
   if (sentiment.sufficient) {
@@ -111,6 +126,39 @@ function deterministicStockNarrative(review) {
     );
   } else {
     pieces.push(`近7日舆情样本不足，当前不输出多空趋势。`);
+  }
+  const repurchases = externalDrivers?.corporateActions?.shareRepurchases;
+  const capex = externalDrivers?.corporateActions?.capitalExpenditure;
+  if (repurchases?.available) {
+    pieces.push(
+      `SEC披露的最近一期普通股回购现金支出为 $${Number(repurchases.value).toFixed(0)}` +
+      `（${repurchases.periodStart || '期初未知'}至${repurchases.periodEnd}，${repurchases.periodType}口径）；` +
+      '该金额不等同于剩余回购授权额度。'
+    );
+  }
+  if (capex?.available) {
+    pieces.push(
+      `SEC披露的最近一期资本开支为 $${Number(capex.value).toFixed(0)}` +
+      `（${capex.periodStart || '期初未知'}至${capex.periodEnd}，${capex.periodType}口径）；` +
+      '资本开支只是投资代理，不能单独证明产能已经增加。'
+    );
+  }
+  const macro = externalDrivers?.macro;
+  if (macro?.available) {
+    const tenYear = macro.metrics?.US10Y_YIELD;
+    const expectedRate = macro.metrics?.FED_FUNDS_FUTURES;
+    const metricParts = [];
+    if (Number.isFinite(tenYear?.changeBps)) metricParts.push(`10年期收益率单日变动${tenYear.changeBps >= 0 ? '+' : ''}${tenYear.changeBps.toFixed(1)}bp`);
+    if (Number.isFinite(expectedRate?.changeBps)) metricParts.push(`联邦基金期货隐含利率变动${expectedRate.changeBps >= 0 ? '+' : ''}${expectedRate.changeBps.toFixed(1)}bp`);
+    pieces.push(`利率与美债环境为${macro.regime}${metricParts.length ? `（${metricParts.join('，')}）` : ''}；这些是免费市场代理，不代表个股确定方向。`);
+  }
+  if (investmentAdvice?.advice?.length) {
+    pieces.push(`条件式研究建议：${investmentAdvice.advice.map((item) => (
+      `${item.horizonLabel}${item.actionLabel}（影响分${item.impactScore >= 0 ? '+' : ''}${item.impactScore.toFixed(1)}，${item.publicationStatus}）`
+    )).join('；')}。`);
+    if (!investmentAdvice.advice.some((item) => item.formalReady)) {
+      pieces.push('当前没有期限通过预测可靠度闸门，以上只用于观察或风险复核，不作为正式买卖指令。');
+    }
   }
   const published = predictions.filter((prediction) => prediction.publicationStatus === 'PUBLISHED');
   if (published.length) {
@@ -153,11 +201,15 @@ export async function generateDailyReviews(db, reviewDate) {
       type: 'STOCK',
       position,
       market: volumeContext(db, position.ticker),
+      capitalFlow: analyzeCapitalFlow(db, position.ticker, reviewDate),
       events: recentResearchEvents(db, position.ticker, reviewDate),
       sentiment: getNewsSentimentSummary(db, { ticker: position.ticker, asOf: reviewDate }),
+      externalDrivers: getExternalDriversOverview(db, position.ticker, reviewDate),
+      investmentAdvice: buildInvestmentAdvice(db, position.ticker, reviewDate),
       predictions: latestPredictions(db, position.ticker),
       limitations: [
         '公开成交数据不能确认最终交易账户身份',
+        '当前资金行为来自日线量价代理，不是逐笔主动买卖金额',
         '未达到综合可靠度门槛的预测不得作为正式预测发布',
         ...(position.priceDataStatus === 'MISSING_PREVIOUS'
           ? [`前一交易日 ${position.expectedPreviousPriceDate} 的收盘行情缺失，不得计算当日涨跌和当日盈亏`]
@@ -178,6 +230,7 @@ export async function generateDailyReviews(db, reviewDate) {
     reviewDate,
     type: 'PORTFOLIO',
     totals: portfolio.totals,
+    macro: getMarketContext(db, reviewDate),
     positions: portfolio.positions.map((position) => ({
       ticker: position.ticker,
       quantity: position.quantity,

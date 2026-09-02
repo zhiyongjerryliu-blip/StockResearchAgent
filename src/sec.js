@@ -31,6 +31,10 @@ export const secMetricDefinitions = [
     key: 'capitalExpenditure', label: '资本开支', unit: 'USD', balance: false,
     tags: ['PaymentsToAcquirePropertyPlantAndEquipment']
   },
+  {
+    key: 'shareRepurchases', label: '普通股回购现金支出', unit: 'USD', balance: false,
+    tags: ['PaymentsForRepurchaseOfCommonStock']
+  },
   { key: 'assets', label: '总资产', unit: 'USD', balance: true, tags: ['Assets'] },
   { key: 'liabilities', label: '总负债', unit: 'USD', balance: true, tags: ['Liabilities'] },
   {

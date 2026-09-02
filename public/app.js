@@ -1,7 +1,8 @@
 const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
   eventFeed: { events: [], counts: {}, total: 0 },
-  newsArticles: [], newsSentiment: null,
+  newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
+  capitalFlow: null, capitalLoadedTicker: null,
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
@@ -11,7 +12,7 @@ const state = {
 
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
-  financials: '财报分析', valuation: '估值与竞争对手', events: '事件与风险',
+  financials: '财报分析', valuation: '估值与竞争对手', capital: '资金与成交量', events: '事件与风险',
   reviews: '收盘复盘', settings: '系统状态'
 };
 
@@ -78,6 +79,7 @@ function showView(view) {
   document.querySelector('#page-title').textContent = titles[view];
   if (view === 'financials') loadSelectedSecOverview().catch((error) => showToast(error.message, true));
   if (view === 'valuation') loadSelectedValuation().catch((error) => showToast(error.message, true));
+  if (view === 'capital') loadCapitalFlow().catch((error) => showToast(error.message, true));
   if (view === 'events') loadEventCenter().catch((error) => showToast(error.message, true));
 }
 
@@ -121,6 +123,13 @@ function renderWatchlist() {
   eventSelect.innerHTML = `<option value="">全部股票</option>${secOptions}`;
   if (selectedEventTicker && state.watchlist.some((item) => item.ticker === selectedEventTicker)) {
     eventSelect.value = selectedEventTicker;
+  }
+
+  const capitalSelect = document.querySelector('#capital-ticker');
+  const selectedCapitalTicker = capitalSelect.value || state.capitalLoadedTicker || state.watchlist.find((item) => item.enabled)?.ticker;
+  capitalSelect.innerHTML = `<option value="">请选择股票</option>${options}`;
+  if (selectedCapitalTicker && state.watchlist.some((item) => item.ticker === selectedCapitalTicker && item.enabled)) {
+    capitalSelect.value = selectedCapitalTicker;
   }
 }
 
@@ -569,7 +578,9 @@ function renderEvents() {
   }
   document.querySelector('#event-list').innerHTML = feed.events.map((event) => {
     const evidence = event.evidence?.[0] || {};
-    const isNews = event.source_type === 'NEWS_RISK';
+    const isNewsRisk = event.source_type === 'NEWS_RISK';
+    const isNewsImpact = event.source_type === 'NEWS_IMPACT';
+    const isNews = isNewsRisk || isNewsImpact;
     const items = isNews
       ? `待核实新闻 · ${escapeHtml(evidence.source || '未知来源')}`
       : ((evidence.items || []).map((item) => `Item ${item.item}`).join('、') || '未标注Item');
@@ -578,7 +589,7 @@ function renderEvents() {
       : `Accession ${escapeHtml(event.source_id)}`;
     return `<article class="event-card ${escapeHtml(event.severity)}">
       <div class="event-card-head">
-        <div class="event-title-line"><span class="badge ${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span>${isNews ? '<span class="badge source-news">待核实新闻</span>' : '<span class="badge source-sec">SEC官方</span>'}<strong>${escapeHtml(event.title)}</strong></div>
+        <div class="event-title-line"><span class="badge ${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span>${isNewsImpact ? '<span class="badge impact">外部驱动</span>' : (isNewsRisk ? '<span class="badge source-news">待核实新闻</span>' : '<span class="badge source-sec">SEC官方</span>')}<strong>${escapeHtml(event.title)}</strong></div>
         <time>${escapeHtml(event.event_date)}</time>
       </div>
       <p>${escapeHtml(event.summary)}</p>
@@ -619,7 +630,7 @@ function renderNews() {
     const relevance = article.relevance_score == null ? '—' : Number(article.relevance_score).toFixed(2);
     return `<article class="news-card">
       <div class="news-card-head">
-        <div class="event-title-line">${article.has_risk_event ? '<span class="badge P2">风险规则</span>' : ''}<span class="badge ${article.content_kind === 'DISCUSSION' ? 'source-social' : 'source-media'}">${article.content_kind === 'DISCUSSION' ? '公开讨论' : '媒体新闻'}</span><strong>${escapeHtml(article.title)}</strong></div>
+        <div class="event-title-line">${article.has_risk_event ? '<span class="badge P2">风险规则</span>' : ''}${article.has_impact_event ? '<span class="badge impact">外部驱动</span>' : ''}<span class="badge ${article.content_kind === 'DISCUSSION' ? 'source-social' : 'source-media'}">${article.content_kind === 'DISCUSSION' ? '公开讨论' : '媒体新闻'}</span><strong>${escapeHtml(article.title)}</strong></div>
         <time>${escapeHtml(published)}</time>
       </div>
       ${article.summary ? `<p>${escapeHtml(article.summary)}</p>` : ''}
@@ -627,6 +638,7 @@ function renderNews() {
         <span>${escapeHtml(article.ticker)}${article.name ? ` · ${escapeHtml(article.name)}` : ''}</span>
         <span>${escapeHtml(article.source_name || article.source_domain || '未知来源')}</span>
         <span>${escapeHtml(article.source_tier === 'TIER_1' ? '一线媒体' : article.source_tier === 'SOCIAL' ? '社区来源' : '一般媒体')}</span>
+        ${article.relation_type !== 'DIRECT' ? `<span>${escapeHtml(article.relation_label || '行业关联')} · 关联代理</span>` : '<span>公司直接相关新闻</span>'}
         <span>${(article.providers || []).map((provider) => escapeHtml(providerLabels[provider] || provider)).join(' · ') || '未知采集通道'}${article.source_count > 1 ? ` · ${article.source_count}个独立来源佐证` : ''}</span>
         <span>相关性 ${relevance} · 情绪 ${sentiment}${article.sentiment_label ? ` · ${escapeHtml(article.sentiment_label)}` : ''}</span>
         <a class="sec-link" href="${escapeHtml(article.url)}" target="_blank" rel="noreferrer">查看新闻原文 ↗</a>
@@ -634,6 +646,181 @@ function renderNews() {
     </article>`;
   }).join('');
   document.querySelector('#news-empty').classList.toggle('hidden', state.newsArticles.length > 0);
+}
+
+function compactUsd(value) {
+  if (!Number.isFinite(Number(value))) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2
+  }).format(Number(value));
+}
+
+function renderExternalDrivers() {
+  const overview = state.externalDrivers;
+  const content = document.querySelector('#drivers-content');
+  const empty = document.querySelector('#drivers-empty');
+  if (!overview) {
+    content.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const repurchase = overview.corporateActions?.shareRepurchases || {};
+  const capex = overview.corporateActions?.capitalExpenditure || {};
+  const tenYear = overview.macro?.metrics?.US10Y_YIELD || {};
+  const fedFunds = overview.macro?.metrics?.FED_FUNDS_FUTURES || {};
+  const treasuryFuture = overview.macro?.metrics?.US10Y_FUTURES || {};
+  const treasuryEtf = overview.macro?.metrics?.LONG_TREASURY_ETF || {};
+  const relationEntities = (concept) => (concept.related_entities || []).map((entity) => {
+    const relationClass = entity.verifiedDirectRelationship ? 'verified-relation' : 'proxy-relation';
+    const relationText = entity.verifiedDirectRelationship ? '已核实关系' : entity.role || '行业代理';
+    return `<span class="badge ${relationClass}" title="${escapeHtml(relationText)}">${escapeHtml(entity.ticker || entity.name)} · ${escapeHtml(relationText)}</span>`;
+  }).join('') || '<span class="muted">尚无关联实体</span>';
+  const concepts = (overview.concepts || []).map((concept) => `
+    <article class="concept-card">
+      <h3>${escapeHtml(concept.concept_name)} <span class="badge proxy-relation">${escapeHtml(concept.concept_type)}</span></h3>
+      <div class="entity-list">${relationEntities(concept)}</div>
+      <p>相关度 ${Math.round(Number(concept.confidence || 0) * 100)}% · 用于检索行业和产业链信息；关系状态以每个实体标签为准。</p>
+    </article>`).join('');
+  const events = (overview.events || []).slice(0, 8).map((event) => `
+    <article class="driver-event"><div><strong><span class="badge ${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span> ${escapeHtml(event.title)}</strong><p>${escapeHtml(event.summary)}</p></div><time>${escapeHtml(event.event_date)}</time></article>
+  `).join('');
+  const macroLabel = {
+    RATE_HEADWIND: '利率逆风', RATE_TAILWIND: '利率顺风', MIXED: '信号分化', NEUTRAL: '中性'
+  }[overview.macro?.regime] || '数据不足';
+  content.innerHTML = `
+    <div class="drivers-grid">
+      <article class="driver-card"><span>回购执行（SEC现金支出）</span><strong>${repurchase.available ? compactUsd(repurchase.value) : '—'}</strong><small>${repurchase.available ? `${escapeHtml(repurchase.periodType)} · 截至${escapeHtml(repurchase.periodEnd)}` : '尚无可用XBRL事实'}</small></article>
+      <article class="driver-card"><span>资本开支（投资代理）</span><strong>${capex.available ? compactUsd(capex.value) : '—'}</strong><small>${capex.available ? `${escapeHtml(capex.periodType)} · 截至${escapeHtml(capex.periodEnd)}` : '尚无可用XBRL事实'}</small></article>
+      <article class="driver-card"><span>美债价格与收益率代理</span><strong>${tenYear.available ? `${Number(tenYear.value).toFixed(3)}%` : '—'}</strong><small>${Number.isFinite(tenYear.changeBps) ? `10Y收益率${tenYear.changeBps >= 0 ? '+' : ''}${Number(tenYear.changeBps).toFixed(1)}bp` : '10Y收益率待积累'}${Number.isFinite(treasuryFuture.changePct) ? ` · ZN期货${percent(treasuryFuture.changePct)}` : ''}${Number.isFinite(treasuryEtf.changePct) ? ` · TLT${percent(treasuryEtf.changePct)}` : ''}</small></article>
+      <article class="driver-card"><span>利率预期环境</span><strong>${escapeHtml(macroLabel)}</strong><small>${Number.isFinite(fedFunds.changeBps) ? `期货隐含利率${fedFunds.changeBps >= 0 ? '+' : ''}${Number(fedFunds.changeBps).toFixed(1)}bp` : 'ZQ=F免费代理待积累'}</small></article>
+    </div>
+    <div class="concept-grid">${concepts || '<div class="empty">尚未配置个股概念。</div>'}</div>
+    ${events ? `<div class="driver-events">${events}</div>` : ''}
+    <p class="driver-disclaimer">回购现金支出不等于剩余授权额度；资本开支不自动等于扩产；代理公司不等于已确认客户或供应商。美债及联邦基金期货来自免费行情代理，不构成个股涨跌因果或交易建议。</p>`;
+}
+
+function renderInvestmentAdvice() {
+  const overview = state.investmentAdvice;
+  const content = document.querySelector('#advice-content');
+  const empty = document.querySelector('#advice-empty');
+  if (!overview) {
+    content.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const componentLabels = {
+    price: '价格趋势', capitalFlow: '资金行为', events: '事件影响', macro: '美债/利率',
+    valuation: '估值', earnings: 'EPS修订', fundamentals: '基本面'
+  };
+  content.innerHTML = `<div class="advice-grid">${(overview.advice || []).map((item) => {
+    const factors = Object.entries(item.components || {}).map(([key, value]) => `
+      <div class="factor-row"><span>${escapeHtml(componentLabels[key] || key)}${value.available ? '' : '（缺失）'}</span><strong class="${pnlClass(value.score)}">${Number.isFinite(value.score) ? `${value.score >= 0 ? '+' : ''}${Number(value.score).toFixed(1)}` : '—'}</strong></div>`).join('');
+    const statusLabel = item.publicationStatus === 'PUBLISHED'
+      ? '正式候选' : item.publicationStatus === 'RISK_OVERRIDE' ? '风险优先' : '观察输出';
+    return `<article class="advice-card ${escapeHtml(item.stance)}">
+      <div class="advice-card-head"><strong>${escapeHtml(item.horizonLabel)}</strong><span class="badge ${item.publicationStatus === 'PUBLISHED' ? 'PUBLISHED' : item.publicationStatus === 'RISK_OVERRIDE' ? 'P1' : 'P2'}">${escapeHtml(statusLabel)}</span></div>
+      <h3>${escapeHtml(item.actionLabel)}</h3>
+      <div class="advice-score">影响分 <strong class="${pnlClass(item.impactScore)}">${item.impactScore >= 0 ? '+' : ''}${Number(item.impactScore).toFixed(1)}</strong> · 证据置信 ${Number(item.confidenceScore).toFixed(1)} · 因子覆盖 ${Number(item.factorCoverage).toFixed(0)}%</div>
+      <p>${escapeHtml(item.advice)}</p>
+      <div class="factor-list">${factors}</div>
+      <div class="advice-levels">现价 ${money(item.currentPrice)}${item.targetPrice != null ? ` · 模型中位目标 ${money(item.targetPrice)}` : ' · 目标位未获准发布'}${item.stopPrice != null ? ` · 模型失效参考 ${money(item.stopPrice)}` : ''}</div>
+    </article>`;
+  }).join('')}</div>
+  <div class="advice-policy"><strong>发布纪律：</strong>${escapeHtml(overview.policy?.formalGate || '')} ${escapeHtml(overview.policy?.riskOverride || '')} ${escapeHtml(overview.policy?.personalization || '')}</div>`;
+}
+
+function renderCapitalFlow() {
+  const analysis = state.capitalFlow;
+  const content = document.querySelector('#capital-flow-content');
+  const empty = document.querySelector('#capital-flow-empty');
+  if (!analysis) {
+    content.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const metrics = analysis.metrics || {};
+  const flowPercent = (value) => Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%` : '—';
+  const compactVolume = (value) => Number.isFinite(value)
+    ? new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+    : '—';
+  const evidence = (analysis.evidence || []).map((item) => {
+    const directionClass = item.direction === 'INFLOW' ? 'positive' : item.direction === 'OUTFLOW' ? 'negative' : '';
+    const value = item.key === 'relativeVolume'
+      ? `${Number(item.value).toFixed(2)}倍`
+      : Number.isFinite(item.value) ? Number(item.value).toFixed(3) : '—';
+    return `<div class="flow-evidence-row"><span>${escapeHtml(item.label)}</span><strong class="${directionClass}">${escapeHtml(value)}</strong></div>`;
+  }).join('');
+  const anomalies = (analysis.anomalies || []).map((item) =>
+    `<span class="badge ${item.direction === 'OUTFLOW' ? 'P1' : 'impact'}">${escapeHtml(item.label)}</span>`
+  ).join('');
+  const volumeHistory = (analysis.history || []).slice(0, 10).map((row) => `
+    <tr>
+      <td>${escapeHtml(row.priceDate || row.asOf)}</td>
+      <td>${compactVolume(row.volume)}</td>
+      <td>${Number.isFinite(row.averageVolume5d) ? compactVolume(row.averageVolume5d) : '—'}</td>
+      <td>${Number.isFinite(row.averageVolume20d) ? compactVolume(row.averageVolume20d) : '—'}</td>
+      <td>${Number.isFinite(row.relativeVolume) ? `${Number(row.relativeVolume).toFixed(2)}倍` : '—'}</td>
+      <td class="${pnlClass(row.dailyReturn)}">${flowPercent(row.dailyReturn)}</td>
+      <td>${escapeHtml(row.volumeTrendLabel || '—')}</td>
+    </tr>`).join('');
+  content.innerHTML = `
+    <div class="capital-flow-summary ${escapeHtml(analysis.signal)}">
+      <article class="flow-primary">
+        <span>${escapeHtml(analysis.priceDate || analysis.asOf)} · ${escapeHtml(analysis.dataLevel === 'DAILY_PROXY' ? '日线代理' : analysis.dataLevel)}</span>
+        <strong class="${pnlClass(analysis.score)}">${escapeHtml(analysis.signalLabel)}</strong>
+        <div>行为评分 <b class="${pnlClass(analysis.score)}">${analysis.score >= 0 ? '+' : ''}${Number(analysis.score).toFixed(1)}</b> · 证据置信 ${Number(analysis.confidence).toFixed(1)}分</div>
+      </article>
+      <div class="flow-metrics">
+        <article><span>当日成交量</span><strong>${compactVolume(metrics.volume)}</strong></article>
+        <article><span>5日均量</span><strong>${compactVolume(metrics.averageVolume5d)}</strong></article>
+        <article><span>20日均量</span><strong>${compactVolume(metrics.averageVolume20d)}</strong></article>
+        <article><span>成交量趋势</span><strong class="${pnlClass(metrics.volumeTrendPct)}">${escapeHtml(metrics.volumeTrendLabel || '数据不足')} ${flowPercent(metrics.volumeTrendPct)}</strong></article>
+        <article><span>方向性成交额代理</span><strong class="${pnlClass(metrics.directionalNotionalRatio20d)}">${flowPercent(metrics.directionalNotionalRatio20d)}</strong></article>
+        <article><span>相对20日均量</span><strong>${Number.isFinite(metrics.relativeVolume) ? `${Number(metrics.relativeVolume).toFixed(2)}倍` : '—'}</strong></article>
+        <article><span>CMF 20日</span><strong class="${pnlClass(metrics.cmf20)}">${Number.isFinite(metrics.cmf20) ? Number(metrics.cmf20).toFixed(3) : '—'}</strong></article>
+        <article><span>MFI 14日</span><strong>${Number.isFinite(metrics.mfi14) ? Number(metrics.mfi14).toFixed(1) : '—'}</strong></article>
+      </div>
+    </div>
+    <p class="flow-explanation">${escapeHtml(analysis.explanation)}</p>
+    ${anomalies ? `<div class="flow-anomalies"><strong>异常信号</strong>${anomalies}</div>` : ''}
+    <div class="flow-evidence">${evidence}</div>
+    <div class="table-wrap volume-history-wrap">
+      <table class="volume-history-table">
+        <thead><tr><th>交易日</th><th>成交量</th><th>5日均量</th><th>20日均量</th><th>量比</th><th>涨跌</th><th>趋势</th></tr></thead>
+        <tbody>${volumeHistory}</tbody>
+      </table>
+      ${volumeHistory ? '' : '<div class="empty">成交量趋势快照将从首次运行开始逐日积累。</div>'}
+    </div>
+    <p class="driver-disclaimer">当前不是逐笔主动买卖统计，不显示虚构的“主力净流入金额”。公开成交无法确认最终账户身份；评分需通过后续价格表现持续验证。</p>`;
+}
+
+async function loadExternalDrivers() {
+  const ticker = document.querySelector('#event-ticker').value;
+  state.externalDrivers = ticker ? await api(`/api/drivers?ticker=${encodeURIComponent(ticker)}`) : null;
+  renderExternalDrivers();
+}
+
+async function loadInvestmentAdvice() {
+  const ticker = document.querySelector('#event-ticker').value;
+  state.investmentAdvice = ticker ? await api(`/api/advice?ticker=${encodeURIComponent(ticker)}`) : null;
+  renderInvestmentAdvice();
+}
+
+async function loadCapitalFlow() {
+  const ticker = document.querySelector('#capital-ticker').value;
+  if (!ticker) state.capitalFlow = null;
+  else {
+    const [analysis, history] = await Promise.all([
+      api(`/api/capital-flow?ticker=${encodeURIComponent(ticker)}`),
+      api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=60`)
+    ]);
+    state.capitalFlow = { ...analysis, history };
+    state.capitalLoadedTicker = ticker;
+  }
+  renderCapitalFlow();
 }
 
 async function loadEvents() {
@@ -660,7 +847,7 @@ async function loadNews() {
 }
 
 async function loadEventCenter() {
-  await Promise.all([loadEvents(), loadNews()]);
+  await Promise.all([loadEvents(), loadNews(), loadExternalDrivers(), loadInvestmentAdvice()]);
 }
 
 function renderReviews() {
@@ -695,7 +882,7 @@ async function loadAll() {
     api('/api/news?limit=100'), api('/api/news/sentiment')
   ]);
   Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
-  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderReviews(); renderConfig();
+  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderInvestmentAdvice(); renderReviews(); renderConfig();
 }
 
 function formData(form) {
@@ -824,6 +1011,10 @@ document.querySelector('#event-ticker').addEventListener('change', () => {
   loadEventCenter().catch((error) => showToast(error.message, true));
 });
 
+document.querySelector('#capital-ticker').addEventListener('change', () => {
+  loadCapitalFlow().catch((error) => showToast(error.message, true));
+});
+
 document.querySelector('#event-severity').addEventListener('change', () => {
   loadEvents().catch((error) => showToast(error.message, true));
 });
@@ -861,12 +1052,72 @@ document.querySelector('#sync-event-news').addEventListener('click', async (even
     await loadAll();
     document.querySelector('#event-ticker').value = ticker;
     await loadEventCenter();
-    showToast(`${ticker} 新闻同步完成，新增${result.newLinks || 0}篇，识别${result.riskEvents || 0}个风险信号`);
+    showToast(`${ticker} 新闻同步完成，新增${result.newLinks || 0}篇，识别${result.riskEvents || 0}个风险及${result.impactEvents || 0}个驱动信号`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
     button.disabled = false;
     button.textContent = '同步所选新闻';
+  }
+});
+
+document.querySelector('#sync-market-context').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在同步…';
+  try {
+    const result = await api('/api/market/context/sync', { method: 'POST', body: '{}' });
+    await loadExternalDrivers();
+    const failed = (result.results || []).filter((item) => !item.ok).length;
+    showToast(failed ? `美债/利率代理已更新，${failed}项失败` : '美债/利率代理已更新', failed > 0);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '同步美债/利率';
+  }
+});
+
+document.querySelector('#run-capital-flow').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#capital-ticker').value;
+  if (!ticker) return showToast('请先选择一只股票', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在识别…';
+  try {
+    state.capitalFlow = await api('/api/capital-flow/run', {
+      method: 'POST', body: JSON.stringify({ ticker })
+    });
+    state.capitalFlow.history = await api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=60`);
+    renderCapitalFlow();
+    await loadInvestmentAdvice();
+    const notified = state.capitalFlow.volumeNotifications?.length || 0;
+    showToast(`${ticker} 资金行为识别已更新：${state.capitalFlow.signalLabel}${notified ? `，已发送${notified}条放量提醒` : ''}`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '识别资金行为';
+  }
+});
+
+document.querySelector('#run-investment-advice').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#event-ticker').value;
+  if (!ticker) return showToast('请先选择一只股票', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在计算…';
+  try {
+    state.investmentAdvice = await api('/api/advice/run', {
+      method: 'POST', body: JSON.stringify({ ticker })
+    });
+    renderInvestmentAdvice();
+    showToast(`${ticker} 的1、3、6个月条件式建议已更新`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '计算投资建议';
   }
 });
 

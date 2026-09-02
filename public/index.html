@@ -21,6 +21,7 @@
         <button class="nav-item" data-view="watchlist">股票池</button>
         <button class="nav-item" data-view="financials">财报分析</button>
         <button class="nav-item" data-view="valuation">估值与同业</button>
+        <button class="nav-item" data-view="capital">资金与成交量</button>
         <button class="nav-item" data-view="events">事件与风险</button>
         <button class="nav-item" data-view="transactions">交易流水</button>
         <button class="nav-item" data-view="reviews">每日复盘</button>
@@ -246,6 +247,28 @@
         </div>
       </section>
 
+      <section class="view" id="view-capital">
+        <article class="panel analysis-toolbar-panel">
+          <div>
+            <p class="eyebrow">VOLUME · CAPITAL FLOW BEHAVIOR</p>
+            <h2>资金与成交量</h2>
+            <p class="muted analysis-toolbar-note">查看每日成交量、5/20日趋势、量价异常和建仓/派发代理信号。</p>
+          </div>
+          <div class="analysis-toolbar-actions">
+            <label class="inline-select">股票
+              <select id="capital-ticker" aria-label="资金分析股票"><option value="">请选择股票</option></select>
+            </label>
+            <button id="run-capital-flow" class="button primary">识别资金行为</button>
+          </div>
+        </article>
+
+        <article class="panel capital-flow-panel">
+          <div class="panel-head"><div><p class="eyebrow">CAPITAL FLOW BEHAVIOR</p><h2>成交量趋势与资金行为</h2></div><small class="muted">日线量价代理 · 建仓/派发概率信号</small></div>
+          <div id="capital-flow-content"></div>
+          <div id="capital-flow-empty" class="empty">请选择一只股票查看成交量和资金行为。</div>
+        </article>
+      </section>
+
       <section class="view" id="view-events">
         <article class="panel sec-toolbar-panel">
           <div>
@@ -263,6 +286,8 @@
             </select>
             <button id="sync-event-sec" class="button primary">同步所选 SEC</button>
             <button id="sync-event-news" class="button">同步所选新闻</button>
+            <button id="sync-market-context" class="button">同步美债/利率</button>
+            <button id="run-investment-advice" class="button">计算投资建议</button>
           </div>
           <p id="event-status" class="muted sec-sync-status">SEC事件来自官方8-K；新闻风险来自Alpha Vantage聚合数据并标记为待核实信号。</p>
         </article>
@@ -280,6 +305,18 @@
           <article class="metric-card"><span>综合情绪</span><strong id="sentiment-trend">数据不足</strong><small id="sentiment-score">至少3条且2个来源才判断</small></article>
           <article class="metric-card"><span>讨论热度</span><strong id="sentiment-engagement">0</strong><small id="sentiment-buzz">近24小时变化待积累</small></article>
         </div>
+
+        <article class="panel drivers-panel">
+          <div class="panel-head"><div><p class="eyebrow">EXTERNAL PRICE DRIVERS</p><h2>股价外部驱动</h2></div><small class="muted">SEC公司事实 · 行业与产业链代理 · 美债及利率预期</small></div>
+          <div id="drivers-content"></div>
+          <div id="drivers-empty" class="empty">请选择一只股票查看外部驱动。</div>
+        </article>
+
+        <article class="panel advice-panel">
+          <div class="panel-head"><div><p class="eyebrow">EVIDENCE-WEIGHTED ADVICE</p><h2>影响判断与条件式投资建议</h2></div><small class="muted">1个月 · 3个月 · 6个月</small></div>
+          <div id="advice-content"></div>
+          <div id="advice-empty" class="empty">请选择一只股票计算投资建议。</div>
+        </article>
 
         <article class="panel">
           <div class="panel-head"><div><p class="eyebrow">EVENT TIMELINE</p><h2>研究事件时间线</h2></div></div>
@@ -301,6 +338,8 @@
             <li>同一 SEC accession number 幂等入库，不重复生成事件或通知。</li>
             <li>系统只依据 8-K Item 分类判断风险优先级，不推断文件正文中未披露的事实。</li>
             <li>新闻信号保留来源、发布时间、股票相关性、情绪、命中规则和原文链接，并始终标注“待核实”。</li>
+            <li>行业龙头、客户需求方和产业链公司默认只作代理观察；除非公开文件明确披露，否则不标记为已确认客户或供应商。</li>
+            <li>联邦基金期货按100减价格换算隐含利率，仅用于观察预期变化，不等同于FedWatch概率。</li>
           </ul>
         </article>
       </section>

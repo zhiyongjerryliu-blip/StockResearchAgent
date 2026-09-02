@@ -3,17 +3,20 @@ import { nowIso, toPlain, toPlainRows } from './db.js';
 import { normalizeTicker, parseJson, round } from './domain.js';
 import { createNotification } from './notifications.js';
 import { sourceTier } from './news-sources.js';
+import { listStockConcepts } from './concepts.js';
 
 const ALPHA_VANTAGE_URL = 'https://www.alphavantage.co/query';
 const NEWS_DOCUMENTATION = 'https://www.alphavantage.co/documentation/#news-sentiment';
-const NEWS_CLASSIFIER_VERSION = 'news-risk-keywords-v2-2026-09-02';
+const NEWS_CLASSIFIER_VERSION = 'news-risk-and-impact-keywords-v3-2026-09-02';
 
 const P1_RULES = [
   ['BANKRUPTCY', '破产或偿付能力风险', /\b(bankrupt(?:cy)?|chapter\s*11|insolven(?:t|cy)|receivership)\b/i],
   ['DELISTING', '退市或上市资格风险', /\b(delist(?:ed|ing)?|listing deficiency|noncompliance notice)\b/i],
   ['DEFAULT', '债务违约风险', /\b(debt default|defaulted on|covenant breach|payment default)\b/i],
   ['FRAUD', '欺诈或重大会计风险', /\b(fraud|accounting irregularit|financial statements? should no longer be relied|restatement)\b/i],
-  ['ENFORCEMENT', '重大执法或刑事调查风险', /\b(sec investigation|doj investigation|criminal investigation|indict(?:ed|ment))\b/i]
+  ['ENFORCEMENT', '重大执法或刑事调查风险', /\b(sec investigation|doj investigation|criminal investigation|indict(?:ed|ment))\b/i],
+  ['BUYBACK_STOP', '股票回购计划暂停或终止', /\b(suspend(?:s|ed|ing)?|terminate(?:s|d|ing)?|cancel(?:s|led|ing)?)\b.{0,45}\b(share repurchase|stock buyback)\b/i],
+  ['CUSTOMER_LOSS', '重大客户或合同流失', /\b(loses? (?:a )?(?:major|key) customer|customer cancels?|contract termination|terminates? (?:the )?supply agreement)\b/i]
 ];
 
 const P2_RULES = [
@@ -23,7 +26,18 @@ const P2_RULES = [
   ['RECALL', '产品召回或安全风险', /\b(product recall|safety recall|recalls? .* product)\b/i],
   ['LITIGATION', '重大诉讼风险', /\b(class action lawsuit|major lawsuit|patent infringement lawsuit)\b/i],
   ['GUIDANCE', '业绩预警或指引下调', /\b(profit warning|cuts? (?:its )?guidance|lowers? (?:its )?outlook|withdraws? guidance)\b/i],
-  ['LAYOFF', '重大裁员或重组风险', /\b(mass layoffs?|workforce reduction|restructuring charges?)\b/i]
+  ['LAYOFF', '重大裁员或重组风险', /\b(mass layoffs?|workforce reduction|restructuring charges?)\b/i],
+  ['CAPACITY_CUT', '减产、停产或工厂关闭风险', /\b(cuts? (?:production|output|capacity)|production halt|idles? (?:a )?(?:plant|factory|fab)|closes? (?:a )?(?:plant|factory|fab))\b/i]
+];
+
+const IMPACT_RULES = [
+  ['BUYBACK_AUTHORIZATION', '股票回购计划新增或扩大', 'POSITIVE', 'P2', /\b(authoriz(?:e|es|ed|ing)|launch(?:es|ed|ing)|increase(?:s|d|ing)|expand(?:s|ed|ing)|resume(?:s|d|ing))\b.{0,55}\b(share repurchase|stock buyback|repurchase program)\b/i],
+  ['BUYBACK_ACTIVITY', '股票回购执行进展', 'POSITIVE', 'P3', /\b(repurchase(?:d|s|ing)?|buy(?:s|ing|back))\b.{0,35}\b(shares?|common stock)\b/i],
+  ['CAPACITY_EXPANSION', '新增或扩张产能', 'MIXED', 'P2', /\b(expand(?:s|ed|ing)? capacity|capacity expansion|new (?:plant|factory|fab)|opens? (?:a )?(?:plant|factory|fab)|production ramp|ramps? production)\b/i],
+  ['CAPACITY_REDUCTION', '产能收缩或项目延期', 'NEGATIVE', 'P2', /\b(capacity reduction|cuts? (?:production|output|capacity)|delays? (?:a )?(?:plant|factory|fab|expansion)|idles? (?:a )?(?:plant|factory|fab))\b/i],
+  ['MAJOR_INVESTMENT', '重大资本投资或项目', 'MIXED', 'P2', /\b(invest(?:s|ed|ing|ment)?|capital expenditure|capex)\b.{0,55}\b(?:\$|usd\s*)?\d+(?:\.\d+)?\s*(?:billion|million|bn|mn)\b/i],
+  ['SUPPLY_AGREEMENT', '重大供应、客户或长期合同', 'POSITIVE', 'P2', /\b(supply agreement|long[- ]term contract|multi[- ]year contract|strategic customer|design win|purchase commitment)\b/i],
+  ['INDUSTRY_PRICING', '行业价格与供需变化', 'MIXED', 'P2', /\b(price increase|price cut|pricing pressure|supply shortage|oversupply|inventory correction|demand recovery|demand slowdown)\b/i]
 ];
 
 function numberOrNull(value) {
@@ -116,6 +130,8 @@ export function normalizeAlphaNews(payload) {
       })).filter((topic) => topic.topic) : [],
       engagementScore: 0,
       rawMetrics: {},
+      relationType: 'DIRECT',
+      relationLabel: null,
       tickerSentiments: Array.isArray(row.ticker_sentiment) ? row.ticker_sentiment.map((item) => ({
         ticker: String(item.ticker || '').trim().toUpperCase(),
         relevanceScore: numberOrNull(item.relevance_score),
@@ -151,6 +167,22 @@ export function classifyNewsRisk(article, tickerLink) {
     return {
       severity: 'P2', category: 'NEGATIVE_SENTIMENT', label: '高相关强负面新闻',
       matchedTerm: null, classifierVersion: NEWS_CLASSIFIER_VERSION
+    };
+  }
+  return null;
+}
+
+export function classifyNewsImpact(article, tickerLink) {
+  const relevance = Number(tickerLink?.relevanceScore);
+  if (!Number.isFinite(relevance) || relevance < 0.4) return null;
+  const text = `${article.title}\n${article.summary || ''}`;
+  for (const [category, label, direction, severity, pattern] of IMPACT_RULES) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    return {
+      category, label, direction,
+      severity: article.contentKind === 'DISCUSSION' && severity === 'P2' ? 'P3' : severity,
+      matchedTerm: match[0], classifierVersion: NEWS_CLASSIFIER_VERSION
     };
   }
   return null;
@@ -284,13 +316,23 @@ function saveArticle(db, article, ticker, link, timestamp) {
   ).get(articleId, ticker);
   db.prepare(`
     INSERT INTO news_article_links (
-      article_id, ticker, relevance_score, sentiment_score, sentiment_label
-    ) VALUES (?, ?, ?, ?, ?)
+      article_id, ticker, relevance_score, sentiment_score, sentiment_label,
+      relation_type, relation_label
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(article_id, ticker) DO UPDATE SET
       relevance_score = excluded.relevance_score,
       sentiment_score = excluded.sentiment_score,
-      sentiment_label = excluded.sentiment_label
-  `).run(articleId, ticker, link.relevanceScore, link.sentimentScore, link.sentimentLabel);
+      sentiment_label = excluded.sentiment_label,
+      relation_type = CASE
+        WHEN news_article_links.relation_type = 'DIRECT' OR excluded.relation_type <> 'DIRECT'
+          THEN news_article_links.relation_type ELSE 'DIRECT' END,
+      relation_label = CASE
+        WHEN news_article_links.relation_type = 'DIRECT' THEN news_article_links.relation_label
+        ELSE excluded.relation_label END
+  `).run(
+    articleId, ticker, link.relevanceScore, link.sentimentScore, link.sentimentLabel,
+    article.relationType || 'DIRECT', article.relationLabel || null
+  );
   const publisherCount = Number(db.prepare(`
     SELECT COUNT(DISTINCT COALESCE(NULLIF(publisher_domain, ''), NULLIF(publisher_name, ''), provider)) AS count
     FROM news_article_sources WHERE article_id = ?
@@ -337,12 +379,58 @@ function saveNewsRiskEvent(
   };
 }
 
+function saveNewsImpactEvent(
+  db, ticker, article, link, impact, timestamp, publisherCount = 1,
+  storedArticleKey = article.articleKey
+) {
+  const eventKey = `NEWS_IMPACT:${storedArticleKey}:${ticker}:${impact.category}`;
+  const existing = db.prepare('SELECT id FROM research_events WHERE event_key = ?').get(eventKey);
+  const relationType = article.relationType || 'DIRECT';
+  const relationLabel = article.relationLabel || (relationType === 'DIRECT' ? '公司直接相关新闻' : '外部关联信息');
+  const evidence = [{
+    source: article.sourceName || article.provider || '未知来源', provider: article.provider,
+    sourceTier: article.sourceTier || 'TIER_2', contentKind: article.contentKind || 'NEWS',
+    corroboratingPublishers: publisherCount,
+    articleKey: storedArticleKey, publishedAt: article.publishedAt,
+    relevanceScore: link.relevanceScore, sentimentScore: link.sentimentScore,
+    relationType, relationLabel, direction: impact.direction,
+    matchedTerm: impact.matchedTerm, classifierVersion: impact.classifierVersion,
+    sourceUrl: article.url,
+    providerDocumentation: article.provider === 'alpha_vantage' ? NEWS_DOCUMENTATION : null
+  }];
+  const relationText = relationType === 'DIRECT'
+    ? '公司直接相关新闻'
+    : `${relationLabel}关联信息`;
+  const summary = `“${article.title}”命中“${impact.label}”规则，方向标记为${impact.direction}。这是${relationText}，仅表示可能的股价驱动，待核实且不等于已确认因果。`;
+  db.prepare(`
+    INSERT INTO research_events (
+      event_key, ticker, event_date, event_type, title, summary, severity,
+      source_type, source_id, source_url, evidence_json, status, detected_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'NEWS_IMPACT', ?, ?, ?, 'UNVERIFIED', ?, ?)
+    ON CONFLICT(event_key) DO UPDATE SET
+      title = excluded.title, summary = excluded.summary, severity = excluded.severity,
+      source_url = excluded.source_url, evidence_json = excluded.evidence_json,
+      updated_at = excluded.updated_at
+  `).run(
+    eventKey, ticker, article.publishedAt.slice(0, 10), `NEWS_${impact.category}`,
+    `${ticker} 外部驱动：${impact.label}`, summary, impact.severity,
+    storedArticleKey, article.url, JSON.stringify(evidence), timestamp, timestamp
+  );
+  return {
+    created: !existing,
+    event: toPlain(db.prepare('SELECT * FROM research_events WHERE event_key = ?').get(eventKey))
+  };
+}
+
 export async function syncNewsForTicker(db, provider, tickerValue, asOf, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const providerName = provider.name || 'custom';
   const status = toPlain(db.prepare('SELECT * FROM news_sync_status WHERE ticker = ?').get(ticker));
   if (!options.force && status?.last_as_of === asOf) {
-    return { ticker, ok: true, cached: true, articles: 0, newLinks: 0, riskEvents: 0, notified: 0 };
+    return {
+      ticker, ok: true, cached: true, articles: 0, newLinks: 0,
+      riskEvents: 0, impactEvents: 0, notified: 0
+    };
   }
   const initialSync = !status || status.provider !== providerName;
   const defaultFrom = `${daysBefore(asOf, 7)}T00:00:00.000Z`;
@@ -351,7 +439,8 @@ export async function syncNewsForTicker(db, provider, tickerValue, asOf, options
   try {
     const security = toPlain(db.prepare('SELECT name FROM securities WHERE ticker = ?').get(ticker));
     payload = await provider.fetchNews(ticker, {
-      timeFrom, limit: 200, companyName: security?.name || ''
+      timeFrom, limit: 200, companyName: security?.name || '',
+      concepts: listStockConcepts(db, ticker)
     });
   } catch (error) {
     if (status) db.prepare(`
@@ -363,6 +452,7 @@ export async function syncNewsForTicker(db, provider, tickerValue, asOf, options
   const notifier = options.notifier || createNotification;
   let newLinks = 0;
   let riskEvents = 0;
+  let impactEvents = 0;
   let notified = 0;
   let latestPublishedAt = status?.last_published_at || null;
   for (const article of payload.articles) {
@@ -372,42 +462,50 @@ export async function syncNewsForTicker(db, provider, tickerValue, asOf, options
     if (saved.newLink) newLinks += 1;
     if (!latestPublishedAt || article.publishedAt > latestPublishedAt) latestPublishedAt = article.publishedAt;
     const risk = classifyNewsRisk(article, link);
-    if (!risk) continue;
-    const riskEvent = saveNewsRiskEvent(
-      db, ticker, article, link, risk, timestamp, saved.publisherCount, saved.storedArticleKey
-    );
-    if (riskEvent.created) riskEvents += 1;
-    const recentThreshold = daysBefore(asOf, 3);
-    const categoryPublisherCount = Number(db.prepare(`
-      SELECT COUNT(DISTINCT json_extract(evidence_json, '$[0].source')) AS count
-      FROM research_events
-      WHERE ticker = ? AND event_type = ? AND source_type = 'NEWS_RISK'
-        AND date(event_date) BETWEEN date(?, '-2 days') AND date(?, '+2 days')
-    `).get(ticker, riskEvent.event.event_type, riskEvent.event.event_date, riskEvent.event.event_date).count);
-    const corroboratingPublishers = Math.max(saved.publisherCount, categoryPublisherCount);
-    const alertEligible = article.contentKind !== 'DISCUSSION' && (
-      article.sourceTier === 'TIER_1' || corroboratingPublishers >= 2
-    );
-    const alreadyAlerted = db.prepare(
-      'SELECT 1 FROM news_risk_alerts WHERE event_key = ?'
-    ).get(riskEvent.event.event_key);
-    if (
-      !initialSync && (saved.newLink || saved.newSource) && risk.severity === 'P1'
-      && alertEligible && !alreadyAlerted
-      && article.publishedAt.slice(0, 10) >= recentThreshold
-    ) {
-      await notifier(db, {
-        ticker, severity: 'P1', category: 'NEWS_RISK_SIGNAL',
-        title: `${ticker} 待核实新闻风险：${risk.label}`,
-        body: `新闻“${article.title}”触发风险规则。请先核实原文和官方信息，不构成买卖建议。`,
-        evidence: parseJson(riskEvent.event.evidence_json, [])
-      });
-      db.prepare(`
-        INSERT INTO news_risk_alerts (event_key, notified_at, basis_json) VALUES (?, ?, ?)
-      `).run(riskEvent.event.event_key, timestamp, JSON.stringify({
-        sourceTier: article.sourceTier, corroboratingPublishers
-      }));
-      notified += 1;
+    if (risk) {
+      const riskEvent = saveNewsRiskEvent(
+        db, ticker, article, link, risk, timestamp, saved.publisherCount, saved.storedArticleKey
+      );
+      if (riskEvent.created) riskEvents += 1;
+      const recentThreshold = daysBefore(asOf, 3);
+      const categoryPublisherCount = Number(db.prepare(`
+        SELECT COUNT(DISTINCT json_extract(evidence_json, '$[0].source')) AS count
+        FROM research_events
+        WHERE ticker = ? AND event_type = ? AND source_type = 'NEWS_RISK'
+          AND date(event_date) BETWEEN date(?, '-2 days') AND date(?, '+2 days')
+      `).get(ticker, riskEvent.event.event_type, riskEvent.event.event_date, riskEvent.event.event_date).count);
+      const corroboratingPublishers = Math.max(saved.publisherCount, categoryPublisherCount);
+      const alertEligible = article.contentKind !== 'DISCUSSION' && (
+        article.sourceTier === 'TIER_1' || corroboratingPublishers >= 2
+      );
+      const alreadyAlerted = db.prepare(
+        'SELECT 1 FROM news_risk_alerts WHERE event_key = ?'
+      ).get(riskEvent.event.event_key);
+      if (
+        !initialSync && (saved.newLink || saved.newSource) && risk.severity === 'P1'
+        && alertEligible && !alreadyAlerted
+        && article.publishedAt.slice(0, 10) >= recentThreshold
+      ) {
+        await notifier(db, {
+          ticker, severity: 'P1', category: 'NEWS_RISK_SIGNAL',
+          title: `${ticker} 待核实新闻风险：${risk.label}`,
+          body: `新闻“${article.title}”触发风险规则。请先核实原文和官方信息，不构成买卖建议。`,
+          evidence: parseJson(riskEvent.event.evidence_json, [])
+        });
+        db.prepare(`
+          INSERT INTO news_risk_alerts (event_key, notified_at, basis_json) VALUES (?, ?, ?)
+        `).run(riskEvent.event.event_key, timestamp, JSON.stringify({
+          sourceTier: article.sourceTier, corroboratingPublishers
+        }));
+        notified += 1;
+      }
+    }
+    const impact = classifyNewsImpact(article, link);
+    if (impact) {
+      const impactEvent = saveNewsImpactEvent(
+        db, ticker, article, link, impact, timestamp, saved.publisherCount, saved.storedArticleKey
+      );
+      if (impactEvent.created) impactEvents += 1;
     }
   }
   const articleCount = Number(db.prepare(
@@ -425,7 +523,8 @@ export async function syncNewsForTicker(db, provider, tickerValue, asOf, options
       article_count = excluded.article_count, last_error = NULL, updated_at = excluded.updated_at
   `).run(ticker, providerName, asOf, timestamp, latestPublishedAt, articleCount, timestamp);
   return {
-    ticker, ok: true, initialSync, articles: payload.articles.length, newLinks, riskEvents, notified,
+    ticker, ok: true, initialSync, articles: payload.articles.length, newLinks,
+    riskEvents, impactEvents, notified,
     sources: payload.sourceResults || [{ provider: providerName, ok: true, count: payload.articles.length }]
   };
 }
@@ -460,6 +559,7 @@ export function listNewsArticles(db, options = {}) {
   const params = ticker ? [ticker, limit] : [limit];
   const rows = toPlainRows(db.prepare(`
     SELECT a.*, l.ticker, l.relevance_score, l.sentiment_score, l.sentiment_label,
+           l.relation_type, l.relation_label,
            s.name,
            (SELECT COUNT(DISTINCT COALESCE(NULLIF(ns.publisher_domain, ''), NULLIF(ns.publisher_name, ''), ns.provider))
             FROM news_article_sources ns WHERE ns.article_id = a.id) AS source_count,
@@ -468,7 +568,12 @@ export function listNewsArticles(db, options = {}) {
            EXISTS (
              SELECT 1 FROM research_events e
              WHERE e.event_key = ('NEWS_RISK:' || a.article_key || ':' || l.ticker)
-           ) AS has_risk_event
+           ) AS has_risk_event,
+           EXISTS (
+             SELECT 1 FROM research_events e
+             WHERE e.source_type = 'NEWS_IMPACT' AND e.source_id = a.article_key
+               AND e.ticker = l.ticker
+           ) AS has_impact_event
     FROM news_articles a
     JOIN news_article_links l ON l.article_id = a.id
     JOIN securities s ON s.ticker = l.ticker
@@ -479,6 +584,7 @@ export function listNewsArticles(db, options = {}) {
   return rows.map((row) => ({
     ...row,
     has_risk_event: Boolean(row.has_risk_event),
+    has_impact_event: Boolean(row.has_impact_event),
     topics: parseJson(row.topics_json, []),
     raw_metrics: parseJson(row.raw_metrics_json, {}),
     providers: parseJson(row.providers_json, []),

@@ -120,6 +120,8 @@ function articleFromSource(input) {
     topics: input.topics || [],
     engagementScore: input.engagementScore || 0,
     rawMetrics: input.rawMetrics || {},
+    relationType: input.relationType || 'DIRECT',
+    relationLabel: input.relationLabel || null,
     tickerSentiments: [{
       ticker: input.ticker,
       relevanceScore: input.relevance,
@@ -144,7 +146,7 @@ async function fetchWithTimeout(fetchImpl, url, label) {
   return response;
 }
 
-export function normalizeGoogleNewsRss(xml, tickerValue, companyName = '') {
+export function normalizeGoogleNewsRss(xml, tickerValue, companyName = '', options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const items = String(xml || '').match(/<item>[\s\S]*?<\/item>/gi) || [];
   return items.flatMap((block) => {
@@ -157,12 +159,15 @@ export function normalizeGoogleNewsRss(xml, tickerValue, companyName = '') {
     const url = validUrl(tagValue(block, 'link'));
     const publishedDate = new Date(tagValue(block, 'pubDate'));
     const publishedAt = Number.isNaN(publishedDate.getTime()) ? null : publishedDate.toISOString();
-    const relevance = relevanceFor(`${title}\n${url || ''}`, ticker, companyName);
+    const relevance = options.contextType
+      ? Math.max(0.45, Math.min(0.75, Number(options.contextRelevance) || 0.55))
+      : relevanceFor(`${title}\n${url || ''}`, ticker, companyName);
     if (!title || !url || !publishedAt || relevance < 0.35) return [];
     return [articleFromSource({
       provider: 'google_news', sourceItemId: tagValue(block, 'guid') || url,
       ticker, companyName, publishedAt, title, url, sourceName, sourceDomain, relevance,
-      rawMetrics: { channel: 'Google News RSS' }
+      relationType: options.contextType || 'DIRECT', relationLabel: options.contextLabel || null,
+      rawMetrics: { channel: 'Google News RSS', contextKey: options.contextKey || null }
     })];
   });
 }
@@ -178,7 +183,28 @@ export class GoogleNewsRssProvider {
     url.searchParams.set('q', query);
     url.searchParams.set('hl', 'en-US'); url.searchParams.set('gl', 'US'); url.searchParams.set('ceid', 'US:en');
     const response = await fetchWithTimeout(this.fetchImpl, url, 'Google News');
-    return { ticker, articles: normalizeGoogleNewsRss(await response.text(), ticker, companyName) };
+    const articles = normalizeGoogleNewsRss(await response.text(), ticker, companyName);
+    for (const concept of (options.concepts || []).slice(0, 2)) {
+      const conceptUrl = new URL(GOOGLE_NEWS_RSS_URL);
+      conceptUrl.searchParams.set('q', `${concept.search_query} when:7d`);
+      conceptUrl.searchParams.set('hl', 'en-US');
+      conceptUrl.searchParams.set('gl', 'US');
+      conceptUrl.searchParams.set('ceid', 'US:en');
+      try {
+        const conceptResponse = await fetchWithTimeout(this.fetchImpl, conceptUrl, 'Google News行业信息');
+        articles.push(...normalizeGoogleNewsRss(
+          await conceptResponse.text(), ticker, companyName, {
+            contextType: concept.concept_type,
+            contextLabel: concept.concept_name,
+            contextKey: concept.concept_key,
+            contextRelevance: concept.confidence * 0.7
+          }
+        ));
+      } catch {
+        // 单个概念检索失败不影响公司新闻和其他概念。
+      }
+    }
+    return { ticker, articles };
   }
 }
 

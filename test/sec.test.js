@@ -69,6 +69,11 @@ const companyFacts = {
         label: 'Cash', units: { USD: [
           { end: '2025-06-28', val: 50, accn: 'quarter-1', fy: 2025, fp: 'Q3', form: '10-Q', filed: '2025-08-01' }
         ] }
+      },
+      PaymentsForRepurchaseOfCommonStock: {
+        label: 'Payments for repurchase of common stock', units: { USD: [
+          { start: '2025-03-30', end: '2025-06-28', val: 1000, accn: 'quarter-1', fy: 2025, fp: 'Q3', form: '10-Q', filed: '2025-08-01' }
+        ] }
       }
     }
   }
@@ -95,6 +100,7 @@ test('Company Facts标准化核心指标并保留来源', () => {
   assert.equal(revenue[0].periodType, 'annual');
   assert.equal(revenue[1].periodType, 'quarter');
   assert.match(revenue[1].sourceUrl, /quarter-1-index\.html$/);
+  assert.equal(facts.find((fact) => fact.metricKey === 'shareRepurchases').value, 1000);
 });
 
 test('SEC数据保存幂等且可生成年度、季度和最新指标概览', () => {

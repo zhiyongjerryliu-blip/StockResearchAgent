@@ -6,6 +6,10 @@ import { createNotification } from './notifications.js';
 import { syncSecWatchlist } from './sec.js';
 import { syncWatchlistEarningsEstimates } from './earnings-estimates.js';
 import { syncWatchlistNews } from './news.js';
+import { syncMarketContext } from './market-context.js';
+import { latestStableUsMarketDate } from './trading-calendar.js';
+import { saveWatchlistAdvice } from './advice.js';
+import { notifyVolumeAnomalies, saveWatchlistCapitalFlow } from './capital-flow.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -35,12 +39,22 @@ export async function runDailyCycle(
   try {
     const sec = await syncSecWatchlist(db, secProvider);
     const market = await refreshWatchlistPrices(db, provider);
-    const reviewDate = etDate(date);
+    const reviewDate = latestStableUsMarketDate(date);
+    const marketContext = await syncMarketContext(db, provider, reviewDate);
     const earnings = await syncWatchlistEarningsEstimates(db, earningsProvider, reviewDate);
     const news = await syncWatchlistNews(db, newsProvider, reviewDate);
+    const capitalFlow = saveWatchlistCapitalFlow(db, reviewDate);
+    for (const result of capitalFlow) {
+      if (!result.ok) continue;
+      result.volumeNotifications = await notifyVolumeAnomalies(db, result.analysis);
+    }
+    const advice = saveWatchlistAdvice(db, reviewDate);
     const portfolio = saveDailySnapshots(db, reviewDate);
     const reviews = await generateDailyReviews(db, reviewDate);
-    const details = { market, sec, earnings, news, reviewDate, positions: portfolio.positions.length };
+    const details = {
+      market, marketContext, sec, earnings, news, capitalFlow, advice, reviewDate,
+      positions: portfolio.positions.length
+    };
     db.prepare(`
       UPDATE job_runs SET finished_at = ?, status = 'SUCCESS', details_json = ? WHERE id = ?
     `).run(nowIso(), JSON.stringify(details), jobId);

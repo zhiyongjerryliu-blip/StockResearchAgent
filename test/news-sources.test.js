@@ -25,6 +25,22 @@ test('Google News RSS保留实际媒体来源并过滤无关结果', () => {
   assert.equal(rows[0].provider, 'google_news');
 });
 
+test('概念检索结果保留产业链关联标签且不伪装成公司直接新闻', () => {
+  const xml = `<?xml version="1.0"?><rss><channel><item>
+    <title>NAND flash prices rise on tighter supply - Reuters</title>
+    <link>https://news.google.com/rss/articles/nand?oc=5</link><guid>nand</guid>
+    <pubDate>Wed, 02 Sep 2026 01:00:00 GMT</pubDate>
+    <source url="https://www.reuters.com">Reuters</source></item></channel></rss>`;
+  const rows = normalizeGoogleNewsRss(xml, 'SNDK', 'Sandisk', {
+    contextType: 'INDUSTRY_TREND', contextLabel: 'NAND闪存供需与价格周期',
+    contextKey: 'nand_supply_pricing', contextRelevance: 0.66
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].relationType, 'INDUSTRY_TREND');
+  assert.equal(rows[0].relationLabel, 'NAND闪存供需与价格周期');
+  assert.equal(rows[0].tickerSentiments[0].relevanceScore, 0.66);
+});
+
 test('Yahoo Finance新闻必须与目标ticker关联', () => {
   const rows = normalizeYahooFinanceNews({ news: [{
     uuid: 'one', title: 'Analyst updates Lumentum outlook', publisher: 'Example',
