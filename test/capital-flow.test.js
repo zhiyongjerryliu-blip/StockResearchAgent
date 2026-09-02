@@ -4,7 +4,7 @@ import { openDatabase } from '../src/db.js';
 import { saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import {
   analyzeCapitalFlow, CAPITAL_FLOW_MODEL_VERSION, listCapitalFlowHistory,
-  notifyVolumeAnomalies, saveCapitalFlow
+  listRecentCapitalFlowDays, notifyVolumeAnomalies, saveCapitalFlow
 } from '../src/capital-flow.js';
 
 function seedTrend(db, ticker, direction = 1, count = 45) {
@@ -67,6 +67,20 @@ test('资金行为快照按股票日期和模型版本幂等保存且不读取�
     WHERE ticker = 'SAFE' AND as_of = '2026-06-30' AND model_version = ?
   `).get(CAPITAL_FLOW_MODEL_VERSION).count, 1);
   assert.equal(listCapitalFlowHistory(db, 'SAFE').length, 1);
+  db.close();
+});
+
+test('成交量与资金行为明细直接列出最近10个交易日且按日期倒序', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEN' });
+  seedTrend(db, 'TEN', 1, 15);
+  const rows = listRecentCapitalFlowDays(db, 'TEN', '2026-06-15', 10);
+  assert.equal(rows.length, 10);
+  assert.equal(rows[0].priceDate, '2026-06-15');
+  assert.equal(rows.at(-1).priceDate, '2026-06-06');
+  assert.ok(rows.every((row) => Number.isFinite(row.close)));
+  assert.ok(rows.every((row) => Number.isFinite(row.volume)));
+  assert.equal(new Set(rows.map((row) => row.priceDate)).size, 10);
   db.close();
 });
 

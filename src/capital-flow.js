@@ -377,6 +377,41 @@ export function listCapitalFlowHistory(db, tickerValue, limit = 60) {
   }));
 }
 
+export function listRecentCapitalFlowDays(db, tickerValue, asOf, limit = 10) {
+  const ticker = normalizeTicker(tickerValue);
+  const boundedLimit = Math.min(20, Math.max(1, Number.parseInt(limit, 10) || 10));
+  const tradeDates = toPlainRows(db.prepare(`
+    SELECT DISTINCT trade_date
+    FROM prices_daily
+    WHERE ticker = ? AND trade_date <= ?
+    ORDER BY trade_date DESC
+    LIMIT ?
+  `).all(ticker, asOf, boundedLimit));
+
+  return tradeDates.map(({ trade_date: tradeDate }) => {
+    const analysis = analyzeCapitalFlow(db, ticker, tradeDate);
+    return {
+      ticker: analysis.ticker,
+      asOf: tradeDate,
+      priceDate: analysis.priceDate,
+      close: analysis.close,
+      signal: analysis.signal,
+      signalLabel: analysis.signalLabel,
+      score: analysis.score,
+      confidence: analysis.confidence,
+      volume: analysis.metrics.volume,
+      dailyReturn: analysis.metrics.dailyReturn,
+      averageVolume5d: analysis.metrics.averageVolume5d,
+      averageVolume20d: analysis.metrics.averageVolume20d,
+      relativeVolume: analysis.metrics.relativeVolume,
+      volumeTrend: analysis.metrics.volumeTrend,
+      volumeTrendLabel: analysis.metrics.volumeTrendLabel,
+      volumeTrendPct: analysis.metrics.volumeTrendPct,
+      anomalies: analysis.anomalies
+    };
+  });
+}
+
 export async function notifyVolumeAnomalies(db, analysis, options = {}) {
   const notifier = options.notifier || createNotification;
   if (!analysis?.priceDate || analysis.signal === 'INSUFFICIENT') return [];

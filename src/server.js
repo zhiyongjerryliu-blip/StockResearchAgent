@@ -27,7 +27,8 @@ import { getExternalDriversOverview } from './external-drivers.js';
 import { getMarketContext, syncMarketContext } from './market-context.js';
 import { buildInvestmentAdvice, saveInvestmentAdvice } from './advice.js';
 import {
-  analyzeCapitalFlow, listCapitalFlowHistory, notifyVolumeAnomalies, saveCapitalFlow
+  analyzeCapitalFlow, listRecentCapitalFlowDays,
+  notifyVolumeAnomalies, saveCapitalFlow
 } from './capital-flow.js';
 import {
   addPeer,
@@ -320,8 +321,11 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/capital-flow/history') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
-    return sendJson(response, 200, listCapitalFlowHistory(
-      db, ticker, url.searchParams.get('limit')
+    return sendJson(response, 200, listRecentCapitalFlowDays(
+      db,
+      ticker,
+      url.searchParams.get('asOf') || latestStableMarketDate(),
+      url.searchParams.get('limit')
     ));
   }
   if (method === 'POST' && url.pathname === '/api/capital-flow/run') {

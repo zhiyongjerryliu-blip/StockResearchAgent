@@ -3,6 +3,7 @@ const state = {
   eventFeed: { events: [], counts: {}, total: 0 },
   newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
   capitalFlow: null, capitalLoadedTicker: null,
+  capitalChartVisible: new Set(['volume', 'averageVolume5d', 'averageVolume20d']),
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
@@ -731,6 +732,76 @@ function renderInvestmentAdvice() {
   <div class="advice-policy"><strong>发布纪律：</strong>${escapeHtml(overview.policy?.formalGate || '')} ${escapeHtml(overview.policy?.riskOverride || '')} ${escapeHtml(overview.policy?.personalization || '')}</div>`;
 }
 
+const CAPITAL_CHART_SERIES = [
+  { key: 'volume', label: '成交量', color: '#6fb1ff', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
+  { key: 'averageVolume5d', label: '5日均量', color: '#54d6c5', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
+  { key: 'averageVolume20d', label: '20日均量', color: '#8a7dff', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) }
+];
+
+function renderCapitalFlowChart(history) {
+  const rows = [...(history || [])].sort((left, right) =>
+    String(left.priceDate || left.asOf).localeCompare(String(right.priceDate || right.asOf))
+  );
+  const controls = CAPITAL_CHART_SERIES.map((series) => `
+    <label class="capital-chart-toggle" style="--series-color:${series.color}">
+      <input type="checkbox" data-capital-chart-series="${series.key}" ${state.capitalChartVisible.has(series.key) ? 'checked' : ''}>
+      <span></span>${escapeHtml(series.label)}
+    </label>`).join('');
+  const selected = CAPITAL_CHART_SERIES.filter((series) => state.capitalChartVisible.has(series.key));
+  if (!rows.length || !selected.length) {
+    return `<section id="capital-flow-chart" class="capital-chart">
+      <div class="capital-chart-head"><div><strong>10日成交量趋势</strong><span>纵轴为实际成交股数。</span></div><div class="capital-chart-controls">${controls}</div></div>
+      <div class="capital-chart-empty">${rows.length ? '请至少选择一个指标。' : '暂无可绘制的交易日数据。'}</div>
+    </section>`;
+  }
+
+  const width = 1080;
+  const height = 360;
+  const margin = { top: 22, right: 24, bottom: 48, left: 54 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const xAt = (index) => margin.left + (rows.length === 1 ? plotWidth / 2 : (index / (rows.length - 1)) * plotWidth);
+  const selectedValues = selected.flatMap((series) => rows.map((row) =>
+    row[series.key] == null ? Number.NaN : Number(row[series.key])
+  )).filter(Number.isFinite);
+  const axisMaximum = Math.max(...selectedValues, 1) * 1.08;
+  const yAt = (value) => margin.top + ((1 - (value / axisMaximum)) * plotHeight);
+  const formatAxisVolume = (value) => new Intl.NumberFormat('zh-CN', {
+    notation: 'compact', maximumFractionDigits: 1
+  }).format(value);
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const y = margin.top + (ratio * plotHeight);
+    return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" class="capital-chart-grid" />
+      <text x="${margin.left - 10}" y="${y + 4}" text-anchor="end" class="capital-chart-axis-label">${formatAxisVolume(axisMaximum * (1 - ratio))}</text>`;
+  }).join('');
+  const dates = rows.map((row, index) => {
+    const date = String(row.priceDate || row.asOf || '');
+    return `<text x="${xAt(index)}" y="${height - 17}" text-anchor="middle" class="capital-chart-date">${escapeHtml(date.slice(5))}</text>`;
+  }).join('');
+  const lines = selected.map((series) => {
+    const observations = rows.map((row, index) => ({
+      index,
+      value: row[series.key] == null ? Number.NaN : Number(row[series.key]),
+      date: row.priceDate || row.asOf
+    }))
+      .filter((item) => Number.isFinite(item.value));
+    if (!observations.length) return '';
+    const points = observations.map((item) => `${xAt(item.index)},${yAt(item.value)}`).join(' ');
+    const circles = observations.map((item) => `<circle cx="${xAt(item.index)}" cy="${yAt(item.value)}" r="4" fill="${series.color}" class="capital-chart-point"><title>${escapeHtml(item.date)} · ${escapeHtml(series.label)}：${escapeHtml(series.format(item.value))}</title></circle>`).join('');
+    return `<polyline points="${points}" fill="none" stroke="${series.color}" class="capital-chart-line" />${circles}`;
+  }).join('');
+
+  return `<section id="capital-flow-chart" class="capital-chart">
+    <div class="capital-chart-head"><div><strong>10日成交量趋势</strong><span>纵轴为实际成交股数，悬停数据点查看精确数值。</span></div><div class="capital-chart-controls">${controls}</div></div>
+    <div class="capital-chart-canvas">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="最近10个交易日成交量趋势折线图">
+        ${grid}<text x="17" y="${margin.top + (plotHeight / 2)}" transform="rotate(-90 17 ${margin.top + (plotHeight / 2)})" text-anchor="middle" class="capital-chart-axis-title">成交量（股）</text>
+        ${dates}${lines}
+      </svg>
+    </div>
+  </section>`;
+}
+
 function renderCapitalFlow() {
   const analysis = state.capitalFlow;
   const content = document.querySelector('#capital-flow-content');
@@ -756,15 +827,18 @@ function renderCapitalFlow() {
   const anomalies = (analysis.anomalies || []).map((item) =>
     `<span class="badge ${item.direction === 'OUTFLOW' ? 'P1' : 'impact'}">${escapeHtml(item.label)}</span>`
   ).join('');
-  const volumeHistory = (analysis.history || []).slice(0, 10).map((row) => `
+  const volumeHistory = (analysis.history || []).map((row) => `
     <tr>
       <td>${escapeHtml(row.priceDate || row.asOf)}</td>
+      <td>${money(row.close)}</td>
+      <td class="${pnlClass(row.dailyReturn)}">${flowPercent(row.dailyReturn)}</td>
       <td>${compactVolume(row.volume)}</td>
       <td>${Number.isFinite(row.averageVolume5d) ? compactVolume(row.averageVolume5d) : '—'}</td>
       <td>${Number.isFinite(row.averageVolume20d) ? compactVolume(row.averageVolume20d) : '—'}</td>
       <td>${Number.isFinite(row.relativeVolume) ? `${Number(row.relativeVolume).toFixed(2)}倍` : '—'}</td>
-      <td class="${pnlClass(row.dailyReturn)}">${flowPercent(row.dailyReturn)}</td>
       <td>${escapeHtml(row.volumeTrendLabel || '—')}</td>
+      <td class="${pnlClass(row.score)}">${escapeHtml(row.signalLabel || '—')}</td>
+      <td class="${pnlClass(row.score)}">${Number.isFinite(row.score) ? `${row.score >= 0 ? '+' : ''}${Number(row.score).toFixed(1)}` : '—'}</td>
     </tr>`).join('');
   content.innerHTML = `
     <div class="capital-flow-summary ${escapeHtml(analysis.signal)}">
@@ -787,13 +861,15 @@ function renderCapitalFlow() {
     <p class="flow-explanation">${escapeHtml(analysis.explanation)}</p>
     ${anomalies ? `<div class="flow-anomalies"><strong>异常信号</strong>${anomalies}</div>` : ''}
     <div class="flow-evidence">${evidence}</div>
+    <div class="volume-history-head"><strong>最近10个交易日</strong><span>按交易日倒序 · 每日基于当时可获得的日线数据回算</span></div>
     <div class="table-wrap volume-history-wrap">
       <table class="volume-history-table">
-        <thead><tr><th>交易日</th><th>成交量</th><th>5日均量</th><th>20日均量</th><th>量比</th><th>涨跌</th><th>趋势</th></tr></thead>
+        <thead><tr><th>交易日</th><th>收盘价</th><th>涨跌</th><th>成交量</th><th>5日均量</th><th>20日均量</th><th>量比</th><th>成交量趋势</th><th>资金行为</th><th>评分</th></tr></thead>
         <tbody>${volumeHistory}</tbody>
       </table>
-      ${volumeHistory ? '' : '<div class="empty">成交量趋势快照将从首次运行开始逐日积累。</div>'}
+      ${volumeHistory ? '' : '<div class="empty">尚无可展示的日线成交数据。</div>'}
     </div>
+    ${renderCapitalFlowChart(analysis.history || [])}
     <p class="driver-disclaimer">当前不是逐笔主动买卖统计，不显示虚构的“主力净流入金额”。公开成交无法确认最终账户身份；评分需通过后续价格表现持续验证。</p>`;
 }
 
@@ -815,7 +891,7 @@ async function loadCapitalFlow() {
   else {
     const [analysis, history] = await Promise.all([
       api(`/api/capital-flow?ticker=${encodeURIComponent(ticker)}`),
-      api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=60`)
+      api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`)
     ]);
     state.capitalFlow = { ...analysis, history };
     state.capitalLoadedTicker = ticker;
@@ -1088,7 +1164,7 @@ document.querySelector('#run-capital-flow').addEventListener('click', async (eve
     state.capitalFlow = await api('/api/capital-flow/run', {
       method: 'POST', body: JSON.stringify({ ticker })
     });
-    state.capitalFlow.history = await api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=60`);
+    state.capitalFlow.history = await api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`);
     renderCapitalFlow();
     await loadInvestmentAdvice();
     const notified = state.capitalFlow.volumeNotifications?.length || 0;
@@ -1099,6 +1175,14 @@ document.querySelector('#run-capital-flow').addEventListener('click', async (eve
     button.disabled = false;
     button.textContent = '识别资金行为';
   }
+});
+
+document.querySelector('#capital-flow-content').addEventListener('change', (event) => {
+  const key = event.target.dataset.capitalChartSeries;
+  if (!key) return;
+  if (event.target.checked) state.capitalChartVisible.add(key);
+  else state.capitalChartVisible.delete(key);
+  renderCapitalFlow();
 });
 
 document.querySelector('#run-investment-advice').addEventListener('click', async (event) => {
