@@ -150,6 +150,11 @@
           </div>
           <div class="sec-toolbar">
             <select id="valuation-ticker" aria-label="估值股票"></select>
+            <select id="valuation-history-years" aria-label="历史估值区间">
+              <option value="1">近1年</option>
+              <option value="3">近3年</option>
+              <option value="5" selected>近5年</option>
+            </select>
             <button id="sync-valuation" class="button primary">自动匹配并同步同业</button>
           </div>
           <p id="valuation-status" class="muted sec-sync-status">请选择股票。静态PE使用SEC GAAP摊薄EPS，动态PE每日同步Alpha Vantage分析师一致预期。</p>
@@ -162,9 +167,30 @@
           <article class="metric-card"><span>NTM 预期 EPS</span><strong id="valuation-forward-eps">—</strong><small id="valuation-forward-note">尚未录入</small></article>
           <article class="metric-card"><span>动态 PE</span><strong id="valuation-forward-pe">—</strong><small>股价 ÷ NTM预期EPS</small></article>
           <article class="metric-card"><span>同业静态 PE 中位数</span><strong id="valuation-peer-pe">—</strong><small id="valuation-peer-note">尚无有效同业样本</small></article>
+          <article class="metric-card"><span>同业动态 PE 中位数</span><strong id="valuation-peer-forward-pe">—</strong><small id="valuation-peer-forward-note">尚无有效同业样本</small></article>
+          <article class="metric-card"><span>相对同业动态 PE</span><strong id="valuation-forward-premium">—</strong><small id="valuation-forward-premium-note">等待目标公司与同业数据</small></article>
+          <article class="metric-card"><span>NTM EPS 30日修订</span><strong id="valuation-eps-revision">—</strong><small id="valuation-eps-revision-note">等待一致预期修订数据</small></article>
         </div>
 
         <article id="valuation-issues" class="panel valuation-issues hidden"></article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">POINT-IN-TIME VALUATION</p><h2>历史估值分位</h2></div>
+            <small id="valuation-history-range" class="muted">等待历史数据</small>
+          </div>
+          <div class="historical-valuation-summary">
+            <div><span>静态 PE 当前分位</span><strong id="valuation-static-percentile">—</strong><small id="valuation-static-percentile-note">等待有效历史样本</small></div>
+            <div><span>动态 PE 当前分位</span><strong id="valuation-forward-percentile">—</strong><small id="valuation-forward-percentile-note">正在积累每日预期快照</small></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>口径</th><th>当前值</th><th>P10</th><th>历史中位数</th><th>P90</th><th>有效样本</th><th>覆盖期间</th><th>数据状态</th></tr></thead>
+              <tbody id="valuation-history-body"></tbody>
+            </table>
+          </div>
+          <p id="valuation-history-methodology" class="muted valuation-history-methodology"></p>
+        </article>
 
         <div class="content-grid form-layout valuation-layout">
           <div class="stack">
@@ -183,7 +209,7 @@
               <div class="panel-head"><div><p class="eyebrow">ESTIMATE HISTORY</p><h2>NTM预期EPS历史快照</h2></div></div>
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th>基准日</th><th>预测期末</th><th>预期EPS</th><th>来源</th><th>备注</th><th></th></tr></thead>
+                  <thead><tr><th>基准日</th><th>预测期末</th><th>预期EPS</th><th>7日修订</th><th>30日修订</th><th>来源</th><th>备注</th><th></th></tr></thead>
                   <tbody id="valuation-estimate-body"></tbody>
                 </table>
               </div>

@@ -80,6 +80,7 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .sec-toolbar-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px 24px; }
 .sec-toolbar { display: flex; align-items: center; gap: 10px; }
 .sec-toolbar select { min-width: 220px; }
+#valuation-history-years { min-width: 100px; }
 .sec-sync-status { grid-column: 1 / -1; margin: 0; line-height: 1.6; }
 .financial-table { min-width: 1060px; }
 .valuation-table { min-width: 1180px; }
@@ -91,6 +92,13 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .valuation-issues { margin: 0 0 16px; border-color: #594820; background: #221d12; color: var(--warning); }
 .valuation-issues strong { font-size: 12px; }
 .valuation-issues ul { margin: 10px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
+.historical-valuation-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.historical-valuation-summary > div { padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #0d141d; }
+.historical-valuation-summary span, .historical-valuation-summary strong, .historical-valuation-summary small { display: block; }
+.historical-valuation-summary span { color: var(--muted); font-size: 11px; }
+.historical-valuation-summary strong { margin: 9px 0 6px; font-size: 21px; }
+.historical-valuation-summary small { color: #647285; font-size: 10px; }
+.valuation-history-methodology { margin: 12px 0 0; line-height: 1.6; }
 .form-help { margin: 14px 0 0; line-height: 1.6; }
 .methodology-card h2 { margin-bottom: 10px; }
 .peer-selection-card h2 { margin-bottom: 14px; }
@@ -184,7 +192,7 @@ code { color: var(--accent); background: #09110d; padding: 2px 5px; border-radiu
   main { padding: 20px 14px 45px; }
   .topbar { align-items: flex-start; flex-direction: column; }
   .top-actions { flex-wrap: wrap; }
-  .metric-grid, .sec-metric-grid, .settings-grid { grid-template-columns: 1fr; }
+  .metric-grid, .sec-metric-grid, .settings-grid, .historical-valuation-summary { grid-template-columns: 1fr; }
   .sec-toolbar-panel { grid-template-columns: 1fr; }
   .sec-toolbar { align-items: stretch; flex-direction: column; }
   .sec-sync-status { grid-column: auto; }

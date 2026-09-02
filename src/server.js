@@ -90,7 +90,14 @@ async function syncValuationGroup(ticker) {
       result.market = { ok: false, skipped: true, error: '当前为手动行情模式' };
     } else {
       try {
-        const bars = await provider.fetchDaily(currentTicker);
+        const desiredHistoryStart = valuationHistoryStart();
+        const earliestPrice = db.prepare(
+          'SELECT MIN(trade_date) AS trade_date FROM prices_daily WHERE ticker = ?'
+        ).get(currentTicker)?.trade_date;
+        const historyStart = !earliestPrice || earliestPrice > desiredHistoryStart
+          ? desiredHistoryStart
+          : null;
+        const bars = await provider.fetchDaily(currentTicker, { historyStart });
         result.market = { ok: true, count: upsertDailyBars(db, bars) };
       } catch (error) {
         result.market = { ok: false, error: error.message };
@@ -122,6 +129,12 @@ function latestEtDate() {
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function valuationHistoryStart() {
+  const date = new Date(`${latestEtDate()}T00:00:00.000Z`);
+  date.setUTCFullYear(date.getUTCFullYear() - 5);
+  return date.toISOString().slice(0, 10);
 }
 
 async function apiRoute(request, response, url) {
@@ -236,7 +249,9 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/valuation/overview') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
-    return sendJson(response, 200, getValuationOverview(db, ticker));
+    const lookbackYears = Number(url.searchParams.get('years') || 5);
+    if (![1, 3, 5].includes(lookbackYears)) throw new Error('历史估值区间仅支持1、3或5年');
+    return sendJson(response, 200, getValuationOverview(db, ticker, { lookbackYears }));
   }
   if (method === 'POST' && url.pathname === '/api/valuation/sync') {
     const body = await readJson(request);

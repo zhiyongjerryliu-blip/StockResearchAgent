@@ -218,6 +218,14 @@ function ratioPercent(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : `${value >= 0 ? '+' : ''}${(Number(value) * 100).toFixed(2)}%`;
 }
 
+function estimateRevisionCell(revision) {
+  if (!revision) return '—';
+  const activity = revision.revisionsUp || revision.revisionsDown
+    ? `<br><small class="muted">上调${revision.revisionsUp} / 下调${revision.revisionsDown}</small>`
+    : '';
+  return `<span class="${pnlClass(revision.change)}">${ratioPercent(revision.changePct)}</span>${activity}`;
+}
+
 function valuationCompanyRow(company, isTarget = false) {
   const issues = company.issues.length ? company.issues.join('；') : '数据完整';
   return `<tr class="${isTarget ? 'valuation-target-row' : ''}">
@@ -230,11 +238,57 @@ function valuationCompanyRow(company, isTarget = false) {
   </tr>`;
 }
 
+function valuationHistoryStatus(distribution) {
+  if (distribution?.qualityStatus === 'complete') return '样本充足';
+  if (distribution?.qualityStatus === 'limited_history') return '历史较短';
+  return `样本不足（至少${distribution?.minimumSamples || '—'}）`;
+}
+
+function valuationHistoryRow(label, distribution) {
+  return `<tr>
+    <td><strong>${escapeHtml(label)}</strong></td>
+    <td>${multiple(distribution?.current)}</td>
+    <td>${multiple(distribution?.p10)}</td>
+    <td>${multiple(distribution?.median)}</td>
+    <td>${multiple(distribution?.p90)}</td>
+    <td>${distribution?.sampleCount || 0}</td>
+    <td>${distribution?.from && distribution?.to ? `${escapeHtml(distribution.from)} 至 ${escapeHtml(distribution.to)}` : '—'}</td>
+    <td><span class="badge ${distribution?.qualityStatus === 'complete' ? 'buy' : 'P2'}">${escapeHtml(valuationHistoryStatus(distribution))}</span></td>
+  </tr>`;
+}
+
+function renderValuationHistory(history) {
+  const staticPe = history?.staticPe;
+  const forwardPe = history?.forwardPe;
+  const staticElement = document.querySelector('#valuation-static-percentile');
+  const forwardElement = document.querySelector('#valuation-forward-percentile');
+  staticElement.textContent = staticPe?.percentile == null ? '—' : `${staticPe.percentile.toFixed(2)}%`;
+  forwardElement.textContent = forwardPe?.percentile == null ? '—' : `${forwardPe.percentile.toFixed(2)}%`;
+  document.querySelector('#valuation-static-percentile-note').textContent = staticPe?.percentile != null
+    ? `${staticPe.label} · ${staticPe.sampleCount}个日线样本`
+    : staticPe?.current == null && staticPe?.sampleCount >= staticPe?.minimumSamples
+      ? '当前静态PE不可计算，暂不发布分位'
+      : `仅${staticPe?.sampleCount || 0}个样本，至少需要${staticPe?.minimumSamples || 60}个`;
+  document.querySelector('#valuation-forward-percentile-note').textContent = forwardPe?.percentile != null
+    ? `${forwardPe.label} · ${forwardPe.sampleCount}个历史快照`
+    : `仅${forwardPe?.sampleCount || 0}个预期快照，至少需要${forwardPe?.minimumSamples || 20}个`;
+  document.querySelector('#valuation-history-range').textContent = history?.startDate
+    ? `观察窗口：近${history.lookbackYears}年，自 ${history.startDate}`
+    : '等待历史行情';
+  document.querySelector('#valuation-history-body').innerHTML = [
+    valuationHistoryRow('静态 PE', staticPe),
+    valuationHistoryRow('动态 PE', forwardPe)
+  ].join('');
+  document.querySelector('#valuation-history-methodology').textContent = history?.methodology || '';
+}
+
 function renderValuation(overview) {
   state.valuationOverview = overview;
   state.valuationLoadedTicker = overview?.target?.ticker || null;
   const target = overview?.target;
   const median = overview?.peerMedian;
+  const relative = overview?.relativeToPeers;
+  const revision30 = target?.estimate?.revision?.thirtyDay;
   document.querySelector('#valuation-price').textContent = money(target?.price);
   document.querySelector('#valuation-price-note').textContent = target?.priceDate
     ? `${target.priceDate} · ${target.priceProvider}` : '尚无行情';
@@ -249,6 +303,20 @@ function renderValuation(overview) {
   document.querySelector('#valuation-peer-pe').textContent = multiple(median?.staticPe);
   document.querySelector('#valuation-peer-note').textContent = median?.staticPeSamples
     ? `${median.staticPeSamples}个有效同业样本` : '尚无有效同业样本';
+  document.querySelector('#valuation-peer-forward-pe').textContent = multiple(median?.forwardPe);
+  document.querySelector('#valuation-peer-forward-note').textContent = median?.forwardPeSamples
+    ? `${median.forwardPeSamples}个有效同业样本` : '尚无有效同业样本';
+  document.querySelector('#valuation-forward-premium').textContent = ratioPercent(relative?.forwardPePremium);
+  document.querySelector('#valuation-forward-premium-note').textContent = relative?.forwardPeLabel
+    ? `${relative.forwardPeLabel}${relative.forwardQualityStatus === 'limited_samples' ? ' · 样本不足2家' : ''}`
+    : '等待目标公司与同业动态PE';
+  const revisionElement = document.querySelector('#valuation-eps-revision');
+  revisionElement.textContent = ratioPercent(revision30?.changePct);
+  revisionElement.className = pnlClass(revision30?.change);
+  document.querySelector('#valuation-eps-revision-note').textContent = revision30?.previousEps != null
+    ? `前值 ${decimal(revision30.previousEps, 4)} → ${decimal(target?.forwardEps, 4)} · 上调${revision30.revisionsUp}/下调${revision30.revisionsDown}`
+    : '当前数据源未提供完整30日可比值';
+  renderValuationHistory(overview?.historicalValuation);
   document.querySelector('#valuation-status').textContent = target
     ? `${target.ticker}${target.industry ? ` · ${target.industry}` : ''}；所有缺失值均不参与PE和同业中位数计算。`
     : '请选择股票。';
@@ -277,6 +345,8 @@ function renderValuation(overview) {
   document.querySelector('#valuation-estimate-body').innerHTML = estimates.map((estimate) => `<tr>
     <td>${escapeHtml(estimate.as_of)}</td><td>${escapeHtml(estimate.period_end || '—')}</td>
     <td>${decimal(estimate.eps_value, 4)}</td>
+    <td>${estimateRevisionCell(estimate.revision?.sevenDay)}</td>
+    <td>${estimateRevisionCell(estimate.revision?.thirtyDay)}</td>
     <td>${estimate.source_url ? `<a class="sec-link" href="${escapeHtml(estimate.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(estimate.source)} ↗</a>` : escapeHtml(estimate.source)}${estimate.analyst_count ? `<br><small class="muted">至少${estimate.analyst_count}位分析师</small>` : ''}</td>
     <td>${escapeHtml(estimate.note || estimate.calculation_method || '—')}</td>
     <td><button class="danger-link" data-delete-estimate="${estimate.id}">删除</button></td>
@@ -298,7 +368,8 @@ async function loadSelectedValuation(force = false) {
   state.valuationPeerSelection = await api('/api/valuation/peers/auto', {
     method: 'POST', body: JSON.stringify({ ticker })
   });
-  renderValuation(await api(`/api/valuation/overview?ticker=${encodeURIComponent(ticker)}`));
+  const years = document.querySelector('#valuation-history-years').value || '5';
+  renderValuation(await api(`/api/valuation/overview?ticker=${encodeURIComponent(ticker)}&years=${encodeURIComponent(years)}`));
 }
 
 function renderPortfolio() {
@@ -627,6 +698,11 @@ document.querySelector('#sec-ticker').addEventListener('change', () => {
 });
 
 document.querySelector('#valuation-ticker').addEventListener('change', () => {
+  state.valuationLoadedTicker = null;
+  loadSelectedValuation(true).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#valuation-history-years').addEventListener('change', () => {
   state.valuationLoadedTicker = null;
   loadSelectedValuation(true).catch((error) => showToast(error.message, true));
 });

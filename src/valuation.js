@@ -156,7 +156,10 @@ function allEstimates(db, ticker) {
     SELECT * FROM earnings_estimates
     WHERE ticker = ? AND estimate_type = 'NTM_EPS'
     ORDER BY as_of DESC, id DESC LIMIT 30
-  `).all(ticker));
+  `).all(ticker)).map((estimate) => ({
+    ...estimate,
+    revision: estimateRevision(db, estimate)
+  }));
 }
 
 function estimatePeriods(db, estimateId) {
@@ -176,21 +179,84 @@ function estimatePeriods(db, estimateId) {
   }));
 }
 
-function epsFacts(db, ticker) {
-  const rows = toPlainRows(db.prepare(`
+function weightedPeriodValue(periods, field) {
+  const included = periods.filter((period) => period.included_in_ntm);
+  if (
+    !included.length
+    || included.some((period) => period[field] == null || !Number.isFinite(Number(period[field])))
+  ) return null;
+  return included.reduce(
+    (sum, period) => sum + (Number(period[field]) * Number(period.ntm_weight)),
+    0
+  );
+}
+
+function revisionWindow(currentValue, previousValue, periods, suffix) {
+  const up = periods.reduce((sum, period) => sum + Number(period[`revision_up_${suffix}`] || 0), 0);
+  const down = periods.reduce((sum, period) => sum + Number(period[`revision_down_${suffix}`] || 0), 0);
+  const change = previousValue == null ? null : currentValue - previousValue;
+  return {
+    previousEps: round(previousValue, 4),
+    change: round(change, 4),
+    changePct: previousValue && change != null ? round(change / Math.abs(previousValue), 6) : null,
+    revisionsUp: up,
+    revisionsDown: down,
+    revisionNet: up - down,
+    revisionBreadth: up + down ? round((up - down) / (up + down), 6) : null
+  };
+}
+
+function estimateRevision(db, estimate) {
+  if (!estimate || estimate.provider === 'manual') return null;
+  const periods = estimatePeriods(db, estimate.id).filter((period) => period.included_in_ntm);
+  if (!periods.length) return null;
+  const currentValue = Number(estimate.eps_value);
+  return {
+    sevenDay: revisionWindow(
+      currentValue,
+      weightedPeriodValue(periods, 'eps_average_7_days_ago'),
+      periods,
+      '7_days'
+    ),
+    thirtyDay: revisionWindow(
+      currentValue,
+      weightedPeriodValue(periods, 'eps_average_30_days_ago'),
+      periods,
+      '30_days'
+    )
+  };
+}
+
+function epsFacts(db, ticker, asOf = null) {
+  const sql = `
     SELECT value, period_start, period_end, period_type, fiscal_year, fiscal_period,
            filed_at, form, accession_number, source_url, tag_priority
     FROM financial_facts
     WHERE ticker = ? AND metric_key = 'epsDiluted'
       AND period_type IN ('annual', 'ytd', 'quarter')
+      ${asOf ? 'AND filed_at < ?' : ''}
     ORDER BY period_end DESC, filed_at DESC, tag_priority ASC
-  `).all(ticker));
+  `;
+  const rows = toPlainRows(asOf
+    ? db.prepare(sql).all(ticker, asOf)
+    : db.prepare(sql).all(ticker));
   const distinct = new Map();
   for (const row of rows) {
     const key = [row.period_type, row.period_start, row.period_end, row.fiscal_period].join(':');
     if (!distinct.has(key)) distinct.set(key, row);
   }
   return [...distinct.values()];
+}
+
+function rawEpsFacts(db, ticker) {
+  return toPlainRows(db.prepare(`
+    SELECT value, period_start, period_end, period_type, fiscal_year, fiscal_period,
+           filed_at, form, accession_number, source_url, tag_priority
+    FROM financial_facts
+    WHERE ticker = ? AND metric_key = 'epsDiluted'
+      AND period_type IN ('annual', 'ytd', 'quarter')
+    ORDER BY filed_at, tag_priority DESC, period_end
+  `).all(ticker));
 }
 
 function periodsAreContinuous(rows) {
@@ -216,9 +282,7 @@ function ttmPeriod(fact, role) {
   };
 }
 
-export function calculateTtmEps(db, tickerValue) {
-  const ticker = normalizeTicker(tickerValue);
-  const facts = epsFacts(db, ticker);
+function calculateTtmFromFacts(facts) {
   const annual = facts.filter((fact) => fact.period_type === 'annual')[0] || null;
   const interim = facts.filter((fact) => (
     fact.period_type === 'ytd'
@@ -283,6 +347,11 @@ export function calculateTtmEps(db, tickerValue) {
   };
 }
 
+export function calculateTtmEps(db, tickerValue, asOf = null) {
+  const ticker = normalizeTicker(tickerValue);
+  return calculateTtmFromFacts(epsFacts(db, ticker, asOf));
+}
+
 function annualMetricRows(db, ticker, metricKey) {
   const rows = toPlainRows(db.prepare(`
     SELECT value, period_end, filed_at, tag_priority
@@ -306,6 +375,7 @@ function companyValuation(db, ticker) {
   const ttm = calculateTtmEps(db, ticker);
   const ttmEps = ttm.value;
   const estimate = latestEstimate(db, ticker);
+  const estimateRevisionSummary = estimateRevision(db, estimate);
   const staticPe = price && ttmEps > 0 ? Number(price.close) / ttmEps : null;
   const forwardPe = price && estimate?.eps_value > 0 ? Number(price.close) / Number(estimate.eps_value) : null;
   const annualRevenue = annualMetricRows(db, ticker, 'revenue');
@@ -349,7 +419,7 @@ function companyValuation(db, ticker) {
       estimateBasis: estimate.estimate_basis, qualityStatus: estimate.quality_status,
       analystCount: estimate.analyst_count, epsHigh: round(estimate.eps_high, 4),
       epsLow: round(estimate.eps_low, 4), fetchedAt: estimate.fetched_at,
-      periods: estimatePeriods(db, estimate.id)
+      periods: estimatePeriods(db, estimate.id), revision: estimateRevisionSummary
     } : null,
     revenueGrowth: round(revenueGrowth, 6),
     grossMargin: round(grossMargin, 6),
@@ -364,7 +434,186 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-export function getValuationOverview(db, tickerValue) {
+function relativePremium(value, peerValue) {
+  if (!Number.isFinite(value) || !Number.isFinite(peerValue) || peerValue <= 0) return null;
+  return round((value / peerValue) - 1, 6);
+}
+
+function relativeLabel(premium) {
+  if (premium == null) return null;
+  if (premium <= -0.2) return '较同业显著折价';
+  if (premium < -0.05) return '较同业折价';
+  if (premium <= 0.05) return '接近同业';
+  if (premium < 0.2) return '较同业溢价';
+  return '较同业显著溢价';
+}
+
+function dateYearsBefore(dateValue, years) {
+  const date = new Date(`${dateValue}T00:00:00.000Z`);
+  date.setUTCFullYear(date.getUTCFullYear() - years);
+  return date.toISOString().slice(0, 10);
+}
+
+function quantile(sortedValues, fraction) {
+  if (!sortedValues.length) return null;
+  const index = (sortedValues.length - 1) * fraction;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sortedValues[lower];
+  return sortedValues[lower] + ((sortedValues[upper] - sortedValues[lower]) * (index - lower));
+}
+
+function percentileRank(values, current) {
+  if (!Number.isFinite(current) || !values.length) return null;
+  const less = values.filter((value) => value < current).length;
+  const equal = values.filter((value) => value === current).length;
+  return ((less + (equal * 0.5)) / values.length) * 100;
+}
+
+function percentileLabel(percentile) {
+  if (percentile == null) return null;
+  if (percentile <= 10) return '历史低位';
+  if (percentile < 30) return '历史偏低';
+  if (percentile <= 70) return '历史中部';
+  if (percentile < 90) return '历史偏高';
+  return '历史高位';
+}
+
+function distribution(samples, current, minimumSamples) {
+  const values = samples.map((sample) => sample.pe).filter(Number.isFinite).sort((left, right) => left - right);
+  const rank = values.length >= minimumSamples ? percentileRank(values, current) : null;
+  return {
+    sampleCount: values.length,
+    from: samples[0]?.date || null,
+    to: samples.at(-1)?.date || null,
+    minimum: round(values[0], 2),
+    p10: round(quantile(values, 0.1), 2),
+    median: round(quantile(values, 0.5), 2),
+    p90: round(quantile(values, 0.9), 2),
+    maximum: round(values.at(-1), 2),
+    current: round(current, 2),
+    percentile: round(rank, 2),
+    label: percentileLabel(rank),
+    qualityStatus: values.length >= 252
+      ? 'complete'
+      : values.length >= minimumSamples ? 'limited_history' : 'insufficient_samples',
+    minimumSamples
+  };
+}
+
+function historicalPrices(db, ticker, startDate) {
+  return toPlainRows(db.prepare(`
+    SELECT trade_date AS date, close
+    FROM (
+      SELECT trade_date, close, provider, ingested_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY trade_date
+               ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
+             ) AS row_number
+      FROM prices_daily
+      WHERE ticker = ? AND trade_date >= ?
+    )
+    WHERE row_number = 1
+    ORDER BY trade_date
+  `).all(ticker, startDate));
+}
+
+export function buildHistoricalStaticPeSeries(db, tickerValue, startDate) {
+  const ticker = normalizeTicker(tickerValue);
+  const prices = historicalPrices(db, ticker, startDate);
+  const facts = rawEpsFacts(db, ticker);
+  const availableFacts = new Map();
+  let factIndex = 0;
+  return prices.flatMap((price) => {
+    while (factIndex < facts.length && facts[factIndex].filed_at < price.date) {
+      const fact = facts[factIndex];
+      const key = [fact.period_type, fact.period_start, fact.period_end, fact.fiscal_period].join(':');
+      const current = availableFacts.get(key);
+      if (
+        !current
+        || fact.filed_at > current.filed_at
+        || (fact.filed_at === current.filed_at && fact.tag_priority < current.tag_priority)
+      ) availableFacts.set(key, fact);
+      factIndex += 1;
+    }
+    const pointInTimeFacts = [...availableFacts.values()].sort((left, right) => (
+      right.period_end.localeCompare(left.period_end)
+      || right.filed_at.localeCompare(left.filed_at)
+      || left.tag_priority - right.tag_priority
+    ));
+    const ttm = calculateTtmFromFacts(pointInTimeFacts);
+    if (!Number.isFinite(ttm.value) || ttm.value <= 0 || !Number.isFinite(Number(price.close))) return [];
+    return [{
+      date: price.date,
+      price: round(Number(price.close), 4),
+      ttmEps: round(ttm.value, 4),
+      pe: round(Number(price.close) / ttm.value, 6),
+      ttmMethod: ttm.method
+    }];
+  });
+}
+
+function buildHistoricalForwardPeSeries(db, ticker, startDate) {
+  const estimates = toPlainRows(db.prepare(`
+    SELECT * FROM (
+      SELECT e.*,
+             ROW_NUMBER() OVER (
+               PARTITION BY e.as_of
+               ORDER BY CASE WHEN e.provider = 'manual' THEN 0 ELSE 1 END, e.id DESC
+             ) AS row_number
+      FROM earnings_estimates e
+      WHERE e.ticker = ? AND e.estimate_type = 'NTM_EPS' AND e.as_of >= ?
+    )
+    WHERE row_number = 1
+    ORDER BY as_of
+  `).all(ticker, startDate));
+  const priceStatement = db.prepare(`
+    SELECT trade_date, close FROM (
+      SELECT trade_date, close, provider, ingested_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY trade_date
+               ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
+             ) AS row_number
+      FROM prices_daily WHERE ticker = ? AND trade_date <= ?
+    ) WHERE row_number = 1 ORDER BY trade_date DESC LIMIT 1
+  `);
+  return estimates.flatMap((estimate) => {
+    const price = toPlain(priceStatement.get(ticker, estimate.as_of));
+    if (!price || estimate.eps_value <= 0) return [];
+    return [{
+      date: estimate.as_of,
+      priceDate: price.trade_date,
+      price: round(Number(price.close), 4),
+      forwardEps: round(Number(estimate.eps_value), 4),
+      pe: round(Number(price.close) / Number(estimate.eps_value), 6),
+      provider: estimate.provider
+    }];
+  });
+}
+
+export function getHistoricalValuation(db, tickerValue, options = {}) {
+  const ticker = normalizeTicker(tickerValue);
+  const years = [1, 3, 5].includes(Number(options.lookbackYears)) ? Number(options.lookbackYears) : 5;
+  const latest = latestPrice(db, ticker);
+  if (!latest) {
+    return { lookbackYears: years, startDate: null, staticPe: distribution([], null, 60), forwardPe: distribution([], null, 20) };
+  }
+  const startDate = dateYearsBefore(latest.trade_date, years);
+  const current = companyValuation(db, ticker);
+  const staticSeries = buildHistoricalStaticPeSeries(db, ticker, startDate);
+  const forwardSeries = buildHistoricalForwardPeSeries(db, ticker, startDate);
+  return {
+    lookbackYears: years,
+    startDate,
+    staticPe: distribution(staticSeries, current.staticPe, 60),
+    forwardPe: distribution(forwardSeries, current.forwardPe, 20),
+    recentStaticSamples: staticSeries.slice(-10).reverse(),
+    recentForwardSamples: forwardSeries.slice(-10).reverse(),
+    methodology: '历史静态PE仅使用价格日之前已向SEC提交的EPS事实；动态PE仅使用当日留存的一致预期快照，禁止用当前预期回填历史'
+  };
+}
+
+export function getValuationOverview(db, tickerValue, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const target = companyValuation(db, ticker);
   const peerRelationships = listPeers(db, ticker);
@@ -372,22 +621,35 @@ export function getValuationOverview(db, tickerValue) {
     ...companyValuation(db, peer.ticker),
     relationship: { source: peer.source, activeFrom: peer.active_from }
   }));
+  const peerMedian = {
+    staticPe: round(median(peers.map((peer) => peer.staticPe)), 2),
+    forwardPe: round(median(peers.map((peer) => peer.forwardPe)), 2),
+    revenueGrowth: round(median(peers.map((peer) => peer.revenueGrowth)), 6),
+    grossMargin: round(median(peers.map((peer) => peer.grossMargin)), 6),
+    staticPeSamples: peers.filter((peer) => peer.staticPe != null).length,
+    forwardPeSamples: peers.filter((peer) => peer.forwardPe != null).length
+  };
+  const staticPremium = relativePremium(target.staticPe, peerMedian.staticPe);
+  const forwardPremium = relativePremium(target.forwardPe, peerMedian.forwardPe);
   return {
     target,
     peers,
-    peerMedian: {
-      staticPe: round(median(peers.map((peer) => peer.staticPe)), 2),
-      forwardPe: round(median(peers.map((peer) => peer.forwardPe)), 2),
-      revenueGrowth: round(median(peers.map((peer) => peer.revenueGrowth)), 6),
-      grossMargin: round(median(peers.map((peer) => peer.grossMargin)), 6),
-      staticPeSamples: peers.filter((peer) => peer.staticPe != null).length,
-      forwardPeSamples: peers.filter((peer) => peer.forwardPe != null).length
+    peerMedian,
+    relativeToPeers: {
+      staticPePremium: staticPremium,
+      staticPeLabel: relativeLabel(staticPremium),
+      forwardPePremium: forwardPremium,
+      forwardPeLabel: relativeLabel(forwardPremium),
+      staticQualityStatus: peerMedian.staticPeSamples >= 2 ? 'complete' : 'limited_samples',
+      forwardQualityStatus: peerMedian.forwardPeSamples >= 2 ? 'complete' : 'limited_samples'
     },
+    historicalValuation: getHistoricalValuation(db, ticker, options),
     estimates: allEstimates(db, ticker),
     methodology: {
       staticPe: '最新收盘价 ÷ TTM GAAP摊薄EPS；优先使用最新财年EPS，跨财年时使用年度EPS + 本期YTD − 上年同期YTD',
       forwardPe: '最新收盘价 ÷ NTM一致预期EPS；优先汇总未来四个财季，不足四季时按财年剩余天数滚动加权未来两个财年预期',
-      peerMedian: '仅统计已配置竞争对手中可计算的有效值，中位数不包含目标公司'
+      peerMedian: '仅统计已配置竞争对手中可计算的有效值，中位数不包含目标公司',
+      revisions: 'EPS修订幅度按构成NTM的各预测期及其NTM权重还原；上调/下调次数仅作一致预期变化证据，不等同于投资建议'
     }
   };
 }
