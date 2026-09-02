@@ -1,13 +1,15 @@
 const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
+  valuationOverview: null, valuationLoadedTicker: null,
+  valuationPeerSelection: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
   transactionImportToken: null
 };
 
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
-  financials: '财报分析', reviews: '收盘复盘', settings: '系统状态'
+  financials: '财报分析', valuation: '估值与竞争对手', reviews: '收盘复盘', settings: '系统状态'
 };
 
 async function api(path, options = {}) {
@@ -43,6 +45,14 @@ function currentEtMonth() {
   return `${values.year}-${values.month}`;
 }
 
+function currentEtDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -64,6 +74,7 @@ function showView(view) {
   document.querySelectorAll('.view').forEach((item) => item.classList.toggle('active', item.id === `view-${view}`));
   document.querySelector('#page-title').textContent = titles[view];
   if (view === 'financials') loadSelectedSecOverview().catch((error) => showToast(error.message, true));
+  if (view === 'valuation') loadSelectedValuation().catch((error) => showToast(error.message, true));
 }
 
 function renderWatchlist() {
@@ -72,6 +83,8 @@ function renderWatchlist() {
     <tr>
       <td class="ticker">${escapeHtml(item.ticker)}</td>
       <td>${escapeHtml(item.name || '—')}</td>
+      <td>${escapeHtml(item.sector || '—')}</td>
+      <td>${escapeHtml(item.industry || '—')}</td>
       <td>${escapeHtml(item.benchmark)}</td>
       <td>${escapeHtml(item.industry_etf || '—')}</td>
       <td>${escapeHtml(item.note || '—')}</td>
@@ -91,6 +104,13 @@ function renderWatchlist() {
   const secOptions = state.watchlist.map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
   secSelect.innerHTML = secOptions || '<option value="">请先添加股票</option>';
   if (selectedTicker && state.watchlist.some((item) => item.ticker === selectedTicker)) secSelect.value = selectedTicker;
+
+  const valuationSelect = document.querySelector('#valuation-ticker');
+  const selectedValuationTicker = valuationSelect.value || state.valuationLoadedTicker;
+  valuationSelect.innerHTML = secOptions || '<option value="">请先添加股票</option>';
+  if (selectedValuationTicker && state.watchlist.some((item) => item.ticker === selectedValuationTicker)) {
+    valuationSelect.value = selectedValuationTicker;
+  }
 }
 
 function secValue(fact) {
@@ -184,6 +204,101 @@ async function loadSelectedSecOverview(force = false) {
   if (!force && state.secLoadedTicker === ticker && state.secOverview) return;
   const overview = await api(`/api/sec/overview?ticker=${encodeURIComponent(ticker)}`);
   renderSecOverview(overview);
+}
+
+function multiple(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)}×`;
+}
+
+function decimal(value, digits = 2) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits);
+}
+
+function ratioPercent(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${value >= 0 ? '+' : ''}${(Number(value) * 100).toFixed(2)}%`;
+}
+
+function valuationCompanyRow(company, isTarget = false) {
+  const issues = company.issues.length ? company.issues.join('；') : '数据完整';
+  return `<tr class="${isTarget ? 'valuation-target-row' : ''}">
+    <td><span class="ticker">${escapeHtml(company.ticker)}</span>${isTarget ? '<span class="badge target-badge">目标</span>' : ''}<br><small class="muted">${escapeHtml(company.name || '')}</small></td>
+    <td>${money(company.price)}<br><small class="muted">${escapeHtml(company.priceDate || '')}</small></td>
+    <td>${decimal(company.ttmEps, 4)}</td><td>${multiple(company.staticPe)}</td>
+    <td>${decimal(company.forwardEps, 4)}</td><td>${multiple(company.forwardPe)}</td>
+    <td>${ratioPercent(company.revenueGrowth)}</td><td>${ratioPercent(company.grossMargin)}</td>
+    <td class="valuation-issue-cell ${company.issues.length ? 'has-issues' : ''}">${escapeHtml(issues)}</td>
+  </tr>`;
+}
+
+function renderValuation(overview) {
+  state.valuationOverview = overview;
+  state.valuationLoadedTicker = overview?.target?.ticker || null;
+  const target = overview?.target;
+  const median = overview?.peerMedian;
+  document.querySelector('#valuation-price').textContent = money(target?.price);
+  document.querySelector('#valuation-price-note').textContent = target?.priceDate
+    ? `${target.priceDate} · ${target.priceProvider}` : '尚无行情';
+  document.querySelector('#valuation-ttm-eps').textContent = decimal(target?.ttmEps, 4);
+  document.querySelector('#valuation-ttm-note').textContent = target?.ttmLabel || '等待完整SEC财务数据';
+  document.querySelector('#valuation-static-pe').textContent = multiple(target?.staticPe);
+  document.querySelector('#valuation-forward-eps').textContent = decimal(target?.forwardEps, 4);
+  document.querySelector('#valuation-forward-note').textContent = target?.estimate
+    ? `${target.estimate.asOf} · ${target.estimate.source}${target.estimate.analystCount ? ` · 至少${target.estimate.analystCount}位分析师` : ''}`
+    : '尚未取得可靠预期';
+  document.querySelector('#valuation-forward-pe').textContent = multiple(target?.forwardPe);
+  document.querySelector('#valuation-peer-pe').textContent = multiple(median?.staticPe);
+  document.querySelector('#valuation-peer-note').textContent = median?.staticPeSamples
+    ? `${median.staticPeSamples}个有效同业样本` : '尚无有效同业样本';
+  document.querySelector('#valuation-status').textContent = target
+    ? `${target.ticker}${target.industry ? ` · ${target.industry}` : ''}；所有缺失值均不参与PE和同业中位数计算。`
+    : '请选择股票。';
+
+  const issuesPanel = document.querySelector('#valuation-issues');
+  issuesPanel.innerHTML = target?.issues?.length
+    ? `<strong>当前估值暂缺项目</strong><ul>${target.issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul>`
+    : '';
+  issuesPanel.classList.toggle('hidden', !target?.issues?.length);
+
+  const peers = overview?.peers || [];
+  document.querySelector('#valuation-peer-body').innerHTML = target
+    ? [valuationCompanyRow(target, true), ...peers.map((peer) => valuationCompanyRow(peer))].join('') : '';
+  document.querySelector('#valuation-peer-empty').classList.toggle('hidden', peers.length > 0);
+
+  const selection = state.valuationPeerSelection;
+  const selectionElement = document.querySelector('#valuation-peer-selection');
+  if (selection?.matched) {
+    const peerNames = selection.peers.map((peer) => `${peer.ticker}（${peer.name}）`).join('、');
+    selectionElement.innerHTML = `<strong>${escapeHtml(selection.industry)}</strong><p>自动选取：${escapeHtml(peerNames)}</p><p>匹配方式：${escapeHtml(selection.method)} · 规则版本：${escapeHtml(selection.source)}</p>${selection.sourceUrl ? `<a class="sec-link" href="${escapeHtml(selection.sourceUrl)}" target="_blank" rel="noreferrer">查看行业依据 ↗</a>` : ''}`;
+  } else {
+    selectionElement.innerHTML = `<p>${escapeHtml(selection?.reason || '尚未完成行业匹配')}</p>`;
+  }
+
+  const estimates = overview?.estimates || [];
+  document.querySelector('#valuation-estimate-body').innerHTML = estimates.map((estimate) => `<tr>
+    <td>${escapeHtml(estimate.as_of)}</td><td>${escapeHtml(estimate.period_end || '—')}</td>
+    <td>${decimal(estimate.eps_value, 4)}</td>
+    <td>${estimate.source_url ? `<a class="sec-link" href="${escapeHtml(estimate.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(estimate.source)} ↗</a>` : escapeHtml(estimate.source)}${estimate.analyst_count ? `<br><small class="muted">至少${estimate.analyst_count}位分析师</small>` : ''}</td>
+    <td>${escapeHtml(estimate.note || estimate.calculation_method || '—')}</td>
+    <td><button class="danger-link" data-delete-estimate="${estimate.id}">删除</button></td>
+  </tr>`).join('');
+  document.querySelector('#valuation-estimate-empty').classList.toggle('hidden', estimates.length > 0);
+  const methodology = overview?.methodology || {};
+  document.querySelector('#valuation-methodology').innerHTML = Object.values(methodology)
+    .map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+}
+
+async function loadSelectedValuation(force = false) {
+  const ticker = document.querySelector('#valuation-ticker').value;
+  if (!ticker) {
+    state.valuationOverview = null;
+    state.valuationLoadedTicker = null;
+    return;
+  }
+  if (!force && state.valuationLoadedTicker === ticker && state.valuationOverview) return;
+  state.valuationPeerSelection = await api('/api/valuation/peers/auto', {
+    method: 'POST', body: JSON.stringify({ ticker })
+  });
+  renderValuation(await api(`/api/valuation/overview?ticker=${encodeURIComponent(ticker)}`));
 }
 
 function renderPortfolio() {
@@ -381,6 +496,7 @@ function renderConfig() {
     ['监听地址', `${config.host}:${config.port}`], ['时区', config.timezone],
     ['行情数据源', config.marketDataProvider], ['可靠度门槛', `${config.reliabilityGate}分`],
     ['SEC EDGAR', config.sec.configured ? `已配置（限速 ${config.sec.requestsPerSecond}/秒）` : '尚未配置联系邮箱'],
+    ['Alpha Vantage预期', config.alphaVantage?.configured ? '已配置，日终自动更新' : '尚未配置API Key'],
     ['macOS通知', config.notifications.macosEnabled ? '已启用' : '未启用'],
     ['邮件通知', config.notifications.emailEnabled ? (config.notifications.emailConfigured ? '已配置' : '缺少配置') : '未启用'],
     ['云端LLM', config.llm.enabled ? (config.llm.configured ? config.llm.model : '缺少配置') : '未启用']
@@ -422,6 +538,8 @@ function editWatchlistItem(ticker) {
   form.elements.ticker.value = item.ticker;
   form.elements.ticker.readOnly = true;
   form.elements.name.value = item.name || '';
+  form.elements.sector.value = item.sector || '';
+  form.elements.industry.value = item.industry || '';
   form.elements.benchmark.value = item.benchmark || 'SPY';
   form.elements.industryEtf.value = item.industry_etf || '';
   form.elements.note.value = item.note || '';
@@ -480,6 +598,13 @@ document.body.addEventListener('click', async (event) => {
       await loadAll(); showToast('交易已删除并重新计算持仓');
     } catch (error) { showToast(error.message, true); }
   }
+  const removeEstimateButton = event.target.closest('[data-delete-estimate]');
+  if (removeEstimateButton && confirm('确定删除这条预期EPS快照吗？')) {
+    try {
+      await api(`/api/valuation/estimates/${removeEstimateButton.dataset.deleteEstimate}`, { method: 'DELETE' });
+      await loadSelectedValuation(true); showToast('预期EPS快照已删除');
+    } catch (error) { showToast(error.message, true); }
+  }
 });
 
 document.querySelector('#watchlist-form').addEventListener('submit', async (event) => {
@@ -499,6 +624,46 @@ document.querySelector('#watchlist-cancel-edit').addEventListener('click', reset
 document.querySelector('#sec-ticker').addEventListener('change', () => {
   state.secLoadedTicker = null;
   loadSelectedSecOverview(true).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#valuation-ticker').addEventListener('change', () => {
+  state.valuationLoadedTicker = null;
+  loadSelectedValuation(true).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#sync-valuation').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#valuation-ticker').value;
+  if (!ticker) return showToast('请先选择股票', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在同步…';
+  try {
+    const result = await api('/api/valuation/sync', { method: 'POST', body: JSON.stringify({ ticker }) });
+    state.valuationPeerSelection = result.selection;
+    await loadSelectedValuation(true);
+    const failures = result.results.reduce((count, item) => (
+      count + (item.market?.ok ? 0 : 1) + (item.sec?.ok ? 0 : 1) + (item.earnings?.ok ? 0 : 1)
+    ), 0);
+    showToast(failures ? `数据同步完成，${failures}项失败或跳过` : `已同步${result.tickers.length}家公司`, failures > 0);
+  } catch (error) { showToast(error.message, true); }
+  finally {
+    button.disabled = false;
+    button.textContent = '自动匹配并同步同业';
+  }
+});
+
+document.querySelector('#valuation-estimate-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const ticker = document.querySelector('#valuation-ticker').value;
+  if (!ticker) return showToast('请先选择股票', true);
+  try {
+    await api('/api/valuation/estimates', {
+      method: 'POST', body: JSON.stringify({ ...formData(event.target), ticker })
+    });
+    event.target.reset();
+    event.target.elements.asOf.value = currentEtDate();
+    await loadSelectedValuation(true); showToast('NTM预期EPS快照已保存');
+  } catch (error) { showToast(error.message, true); }
 });
 
 document.querySelector('#sync-sec').addEventListener('click', async (event) => {
@@ -612,4 +777,5 @@ document.querySelector('#test-notification').addEventListener('click', async () 
   } catch (error) { showToast(error.message, true); }
 });
 
+document.querySelector('#valuation-estimate-form').elements.asOf.value = currentEtDate();
 loadAll().catch((error) => showToast(`加载失败：${error.message}`, true));

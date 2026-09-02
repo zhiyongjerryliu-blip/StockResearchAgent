@@ -82,6 +82,21 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .sec-toolbar select { min-width: 220px; }
 .sec-sync-status { grid-column: 1 / -1; margin: 0; line-height: 1.6; }
 .financial-table { min-width: 1060px; }
+.valuation-table { min-width: 1180px; }
+.valuation-layout { grid-template-columns: minmax(0, 2fr) minmax(310px, .72fr); }
+.valuation-target-row { background: #13202b; }
+.target-badge { margin-left: 7px; background: #173048; color: var(--accent-2); }
+.valuation-issue-cell { max-width: 270px; color: var(--accent); white-space: normal; line-height: 1.5; }
+.valuation-issue-cell.has-issues { color: var(--warning); }
+.valuation-issues { margin: 0 0 16px; border-color: #594820; background: #221d12; color: var(--warning); }
+.valuation-issues strong { font-size: 12px; }
+.valuation-issues ul { margin: 10px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
+.form-help { margin: 14px 0 0; line-height: 1.6; }
+.methodology-card h2 { margin-bottom: 10px; }
+.peer-selection-card h2 { margin-bottom: 14px; }
+.peer-selection-detail { line-height: 1.65; }
+.peer-selection-detail strong { color: var(--text); font-size: 13px; }
+.peer-selection-detail p { margin: 8px 0; }
 .sec-link { color: var(--accent-2); text-decoration: none; font-size: 11px; }
 .sec-link:hover { text-decoration: underline; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 17px; }
@@ -158,7 +173,7 @@ code { color: var(--accent); background: #09110d; padding: 2px 5px; border-radiu
 @media (max-width: 1050px) {
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
   .sec-metric-grid { grid-template-columns: repeat(2, 1fr); }
-  .wide-left, .form-layout { grid-template-columns: 1fr; }
+  .wide-left, .form-layout, .valuation-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; }

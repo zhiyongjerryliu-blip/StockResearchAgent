@@ -171,3 +171,26 @@ test('股票池SEC同步按股票隔离错误且未配置时安全跳过', async
   assert.equal(skipped.reason, 'not-configured');
   db.close();
 });
+
+test('SEC同步目标公司后会自动选择并继续同步两家行业对标公司', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'LITE' });
+  const requested = [];
+  const provider = {
+    assertConfigured() {},
+    async fetchCompanyData(ticker) {
+      requested.push(ticker);
+      return { company: { cik: '0000320193' }, submissions, companyFacts };
+    }
+  };
+
+  const result = await syncSecWatchlist(db, provider);
+  assert.deepEqual(requested, ['LITE', 'COHR', 'CIEN']);
+  assert.deepEqual(result.selections[0].peers.map((peer) => peer.ticker), ['COHR', 'CIEN']);
+  assert.equal(result.results.every((item) => item.ok), true);
+  assert.equal(db.prepare(`
+    SELECT COUNT(*) AS count FROM company_relationships
+    WHERE ticker = 'LITE' AND active_to IS NULL
+  `).get().count, 2);
+  db.close();
+});

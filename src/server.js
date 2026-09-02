@@ -4,12 +4,22 @@ import path from 'node:path';
 import { config } from './config.js';
 import { nowIso, openDatabase, toPlainRows } from './db.js';
 import { calculateMonthlyPerformance, calculatePortfolio } from './portfolio.js';
-import { providerFromName } from './market.js';
+import { providerFromName, upsertDailyBars } from './market.js';
 import { createNotification } from './notifications.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
 import { runDailyCycle, runMarketRefreshCycle, startScheduler } from './scheduler.js';
 import { getSecOverview, SecEdgarProvider, syncSecCompany } from './sec.js';
 import { commitTransactionImport, validateTransactionImport } from './transaction-import.js';
+import { configureAutomaticPeers } from './peer-selection.js';
+import { AlphaVantageEarningsProvider, syncEarningsEstimate } from './earnings-estimates.js';
+import {
+  addPeer,
+  deleteEarningsEstimate,
+  getValuationOverview,
+  removePeer,
+  saveEarningsEstimate,
+  valuationGroupTickers
+} from './valuation.js';
 import {
   addTransaction,
   deleteWatchlistItem,
@@ -27,6 +37,7 @@ import {
 const db = openDatabase();
 const provider = providerFromName(config.marketDataProvider);
 const secProvider = new SecEdgarProvider(config.sec);
+const earningsProvider = new AlphaVantageEarningsProvider(config.alphaVantage);
 const publicDir = path.join(config.projectRoot, 'public');
 const pidFile = path.join(config.projectRoot, 'data', 'server.pid');
 
@@ -61,6 +72,50 @@ async function readJson(request) {
   }
 }
 
+async function syncValuationGroup(ticker) {
+  let targetSec = null;
+  try {
+    const synced = await syncSecCompany(db, secProvider, ticker);
+    targetSec = { ok: true, filingCount: synced.filingCount, factCount: synced.factCount };
+  } catch (error) {
+    targetSec = { ok: false, error: error.message };
+  }
+  const selection = configureAutomaticPeers(db, ticker);
+  const tickers = valuationGroupTickers(db, ticker);
+  const targetTicker = tickers[0];
+  const results = [];
+  for (const currentTicker of tickers) {
+    const result = { ticker: currentTicker, market: null, sec: null, earnings: null };
+    if (!provider) {
+      result.market = { ok: false, skipped: true, error: '当前为手动行情模式' };
+    } else {
+      try {
+        const bars = await provider.fetchDaily(currentTicker);
+        result.market = { ok: true, count: upsertDailyBars(db, bars) };
+      } catch (error) {
+        result.market = { ok: false, error: error.message };
+      }
+    }
+    if (currentTicker === targetTicker) {
+      result.sec = targetSec;
+    } else {
+      try {
+        const synced = await syncSecCompany(db, secProvider, currentTicker);
+        result.sec = { ok: true, filingCount: synced.filingCount, factCount: synced.factCount };
+      } catch (error) {
+        result.sec = { ok: false, error: error.message };
+      }
+    }
+    try {
+      result.earnings = await syncEarningsEstimate(db, earningsProvider, currentTicker, latestEtDate());
+    } catch (error) {
+      result.earnings = { ok: false, error: error.message };
+    }
+    results.push(result);
+  }
+  return { tickers, selection, results };
+}
+
 function latestEtDate() {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -89,6 +144,9 @@ async function apiRoute(request, response, url) {
       sec: {
         configured: /[^\s@]+@[^\s@]+\.[^\s@]+/.test(config.sec.userAgent),
         requestsPerSecond: config.sec.requestsPerSecond
+      },
+      alphaVantage: {
+        configured: Boolean(config.alphaVantage.apiKey)
       },
       notifications: {
         macosEnabled: config.notifications.macosEnabled,
@@ -175,6 +233,45 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, await syncSecCompany(db, secProvider, body.ticker));
   }
 
+  if (method === 'GET' && url.pathname === '/api/valuation/overview') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, getValuationOverview(db, ticker));
+  }
+  if (method === 'POST' && url.pathname === '/api/valuation/sync') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, await syncValuationGroup(body.ticker));
+  }
+  if (method === 'POST' && url.pathname === '/api/valuation/peers/auto') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, configureAutomaticPeers(db, body.ticker));
+  }
+  if (method === 'POST' && url.pathname === '/api/valuation/estimates') {
+    return sendJson(response, 201, saveEarningsEstimate(db, await readJson(request)));
+  }
+  if (method === 'POST' && url.pathname === '/api/valuation/estimates/sync') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, await syncEarningsEstimate(
+      db, earningsProvider, body.ticker, latestEtDate()
+    ));
+  }
+  const estimateMatch = url.pathname.match(/^\/api\/valuation\/estimates\/(\d+)$/);
+  if (estimateMatch && method === 'DELETE') {
+    return sendJson(response, 200, deleteEarningsEstimate(db, estimateMatch[1]));
+  }
+  if (method === 'POST' && url.pathname === '/api/valuation/peers') {
+    return sendJson(response, 201, addPeer(db, await readJson(request)));
+  }
+  const peerMatch = url.pathname.match(/^\/api\/valuation\/peers\/([^/]+)\/([^/]+)$/);
+  if (peerMatch && method === 'DELETE') {
+    return sendJson(response, 200, removePeer(
+      db, decodeURIComponent(peerMatch[1]), decodeURIComponent(peerMatch[2])
+    ));
+  }
+
   if (method === 'GET' && url.pathname === '/api/notifications') {
     return sendJson(response, 200, toPlainRows(db.prepare(`
       SELECT * FROM notifications ORDER BY created_at DESC LIMIT 100
@@ -209,7 +306,9 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, await generateDailyReviews(db, latestEtDate()));
   }
   if (method === 'POST' && url.pathname === '/api/daily-cycle') {
-    return sendJson(response, 200, await runDailyCycle(db, provider, new Date(), secProvider));
+    return sendJson(response, 200, await runDailyCycle(
+      db, provider, new Date(), secProvider, earningsProvider
+    ));
   }
 
   return sendJson(response, 404, { error: '接口不存在' });
@@ -238,7 +337,7 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-const stopScheduler = startScheduler(db, provider, config, secProvider);
+const stopScheduler = startScheduler(db, provider, config, secProvider, earningsProvider);
 
 server.listen(config.port, config.host, () => {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });

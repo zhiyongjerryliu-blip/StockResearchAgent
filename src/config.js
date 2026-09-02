@@ -32,6 +32,9 @@ export const config = Object.freeze({
     userAgent: process.env.SEC_USER_AGENT || '',
     requestsPerSecond: Math.min(10, Math.max(1, intEnv('SEC_REQUESTS_PER_SECOND', 5)))
   },
+  alphaVantage: {
+    apiKey: process.env.ALPHA_VANTAGE_API_KEY || ''
+  },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {
     macosEnabled: boolEnv('MACOS_NOTIFICATIONS_ENABLED', true),

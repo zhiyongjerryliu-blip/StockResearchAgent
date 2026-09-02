@@ -20,6 +20,7 @@
         <button class="nav-item active" data-view="dashboard">总览</button>
         <button class="nav-item" data-view="watchlist">股票池</button>
         <button class="nav-item" data-view="financials">财报分析</button>
+        <button class="nav-item" data-view="valuation">估值与同业</button>
         <button class="nav-item" data-view="transactions">交易流水</button>
         <button class="nav-item" data-view="reviews">每日复盘</button>
         <button class="nav-item" data-view="settings">系统状态</button>
@@ -141,13 +142,90 @@
         </div>
       </section>
 
+      <section class="view" id="view-valuation">
+        <article class="panel sec-toolbar-panel">
+          <div>
+            <p class="eyebrow">VALUATION · PEER SET</p>
+            <h2>估值与竞争对手</h2>
+          </div>
+          <div class="sec-toolbar">
+            <select id="valuation-ticker" aria-label="估值股票"></select>
+            <button id="sync-valuation" class="button primary">自动匹配并同步同业</button>
+          </div>
+          <p id="valuation-status" class="muted sec-sync-status">请选择股票。静态PE使用SEC GAAP摊薄EPS，动态PE每日同步Alpha Vantage分析师一致预期。</p>
+        </article>
+
+        <div class="sec-metric-grid valuation-metric-grid">
+          <article class="metric-card"><span>最新股价</span><strong id="valuation-price">—</strong><small id="valuation-price-note">尚无数据</small></article>
+          <article class="metric-card"><span>TTM 摊薄 EPS</span><strong id="valuation-ttm-eps">—</strong><small id="valuation-ttm-note">等待SEC财务数据</small></article>
+          <article class="metric-card"><span>静态 PE</span><strong id="valuation-static-pe">—</strong><small>股价 ÷ TTM GAAP EPS</small></article>
+          <article class="metric-card"><span>NTM 预期 EPS</span><strong id="valuation-forward-eps">—</strong><small id="valuation-forward-note">尚未录入</small></article>
+          <article class="metric-card"><span>动态 PE</span><strong id="valuation-forward-pe">—</strong><small>股价 ÷ NTM预期EPS</small></article>
+          <article class="metric-card"><span>同业静态 PE 中位数</span><strong id="valuation-peer-pe">—</strong><small id="valuation-peer-note">尚无有效同业样本</small></article>
+        </div>
+
+        <article id="valuation-issues" class="panel valuation-issues hidden"></article>
+
+        <div class="content-grid form-layout valuation-layout">
+          <div class="stack">
+            <article class="panel">
+              <div class="panel-head"><div><p class="eyebrow">PEER COMPARISON</p><h2>同业横向对比</h2></div></div>
+              <div class="table-wrap">
+                <table class="valuation-table">
+                  <thead><tr><th>公司</th><th>股价</th><th>TTM EPS</th><th>静态PE</th><th>NTM EPS</th><th>动态PE</th><th>营收同比</th><th>毛利率</th><th>数据问题</th></tr></thead>
+                  <tbody id="valuation-peer-body"></tbody>
+                </table>
+              </div>
+              <div id="valuation-peer-empty" class="empty hidden">尚未匹配到两个可靠的同行业上市公司。</div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head"><div><p class="eyebrow">ESTIMATE HISTORY</p><h2>NTM预期EPS历史快照</h2></div></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>基准日</th><th>预测期末</th><th>预期EPS</th><th>来源</th><th>备注</th><th></th></tr></thead>
+                  <tbody id="valuation-estimate-body"></tbody>
+                </table>
+              </div>
+              <div id="valuation-estimate-empty" class="empty hidden">尚未取得预期EPS。缺少可靠数据时，系统不会计算动态PE。</div>
+            </article>
+          </div>
+
+          <div class="stack">
+            <article class="panel form-panel">
+              <p class="eyebrow">FORWARD ESTIMATE FALLBACK</p><h2>手工备用NTM预期EPS</h2>
+              <p class="muted">Alpha Vantage无法覆盖或需要人工覆盖时使用；自动数据正常时无需填写。</p>
+              <form id="valuation-estimate-form">
+                <label>估值基准日<input name="asOf" type="date" required></label>
+                <label>未来12个月预期EPS<input name="epsValue" type="number" step="0.0001" required></label>
+                <label>预测期末日（可选）<input name="periodEnd" type="date"></label>
+                <label>数据来源<input name="source" placeholder="例如 公司指引 / 分析师一致预期" required></label>
+                <label>来源链接（可选）<input name="sourceUrl" type="url" placeholder="https://..."></label>
+                <label>备注<textarea name="note" placeholder="记录口径、调整项或分析师覆盖范围"></textarea></label>
+                <button class="button primary full" type="submit">保存预期快照</button>
+              </form>
+            </article>
+
+            <article class="panel peer-selection-card">
+              <p class="eyebrow">AUTO PEER SELECTION</p><h2>系统自动对标</h2>
+              <div id="valuation-peer-selection" class="peer-selection-detail muted">正在匹配同行业龙头…</div>
+            </article>
+
+            <article class="panel methodology-card">
+              <p class="eyebrow">METHODOLOGY</p><h2>计算口径</h2>
+              <ul id="valuation-methodology" class="principle-list"></ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section class="view" id="view-watchlist">
         <div class="content-grid form-layout">
           <article class="panel">
             <div class="panel-head"><div><p class="eyebrow">WATCHLIST</p><h2>股票池</h2></div></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>代码</th><th>名称</th><th>市场基准</th><th>行业ETF</th><th>备注</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>行业</th><th>市场基准</th><th>行业ETF</th><th>备注</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody id="watchlist-body"></tbody>
               </table>
             </div>
@@ -159,6 +237,10 @@
             <form id="watchlist-form">
               <label>股票代码<input name="ticker" placeholder="例如 NVDA" required></label>
               <label>公司名称<input name="name" placeholder="可选"></label>
+              <div class="form-row">
+                <label>板块<input name="sector" placeholder="例如 Technology"></label>
+                <label>行业<input name="industry" placeholder="例如 Semiconductors"></label>
+              </div>
               <div class="form-row">
                 <label>市场基准<input name="benchmark" value="SPY"></label>
                 <label>行业ETF<input name="industryEtf" placeholder="例如 SMH"></label>

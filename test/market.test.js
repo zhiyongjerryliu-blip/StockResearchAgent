@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { YahooDailyProvider } from '../src/market.js';
+import { openDatabase } from '../src/db.js';
+import { YahooDailyProvider, refreshWatchlistPrices } from '../src/market.js';
+import { configureAutomaticPeers } from '../src/peer-selection.js';
+import { upsertWatchlistItem } from '../src/repository.js';
 
 test('Yahoo Provider将返回值标准化为日线', async () => {
   const fakeFetch = async () => ({
@@ -79,4 +82,28 @@ test('Yahoo会按最早建仓日扩展历史行情范围', async () => {
   await provider.fetchDaily('LITE', { historyStart: '2026-02-01' });
   assert.equal(requests.length, 2);
   assert.match(requests[1], /range=1y/);
+});
+
+test('行情刷新会同时更新自动选择的两家同行业对标公司', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'LITE' });
+  configureAutomaticPeers(db, 'LITE', '2026-09-02');
+  const requested = [];
+  const provider = {
+    name: 'test',
+    async fetchDaily(ticker) {
+      requested.push(ticker);
+      return [{
+        ticker, tradeDate: '2026-09-01', open: 100, high: 101, low: 99,
+        close: 100, adjustedClose: 100, volume: 1000, provider: 'test',
+        availableAt: '2026-09-02T00:00:00.000Z'
+      }];
+    }
+  };
+
+  const result = await refreshWatchlistPrices(db, provider);
+  assert.deepEqual(requested, ['CIEN', 'COHR', 'LITE']);
+  assert.equal(result.results.every((item) => item.ok), true);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM prices_daily').get().count, 3);
+  db.close();
 });

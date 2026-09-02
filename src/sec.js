@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { nowIso, toPlain, toPlainRows } from './db.js';
 import { normalizeTicker } from './domain.js';
+import { configureAutomaticPeers } from './peer-selection.js';
 
 const SEC_BASE = 'https://www.sec.gov';
 const SEC_DATA_BASE = 'https://data.sec.gov';
@@ -236,6 +237,8 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
   const filings = normalizeSubmissions(submissions, ticker, cik);
   const facts = normalizeCompanyFacts(companyFacts, ticker, cik);
   const entityName = companyFacts?.entityName || submissions?.name || null;
+  const sic = submissions?.sic ? String(submissions.sic) : null;
+  const sicDescription = submissions?.sicDescription || null;
   const ingestedAt = nowIso();
 
   const filingStatement = db.prepare(`
@@ -263,9 +266,10 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
   try {
     db.prepare(`
       UPDATE securities
-      SET cik = ?, name = COALESCE(name, ?), updated_at = ?
+      SET cik = ?, name = COALESCE(name, ?), sic = COALESCE(?, sic),
+          sic_description = COALESCE(?, sic_description), updated_at = ?
       WHERE ticker = ?
-    `).run(cik, entityName, ingestedAt, ticker);
+    `).run(cik, entityName, sic, sicDescription, ingestedAt, ticker);
     for (const filing of filings) {
       filingStatement.run(
         filing.accessionNumber, ticker, cik, filing.form, filing.filedAt,
@@ -297,7 +301,7 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
         facts_count = excluded.facts_count, last_error = NULL, updated_at = excluded.updated_at
     `).run(ticker, cik, entityName, ingestedAt, filingCount, factCount, ingestedAt);
     db.exec('COMMIT');
-    return { ticker, cik, entityName, filingsReceived: filings.length, factsReceived: facts.length, insertedFacts, filingCount, factCount, syncedAt: ingestedAt };
+    return { ticker, cik, entityName, sic, sicDescription, filingsReceived: filings.length, factsReceived: facts.length, insertedFacts, filingCount, factCount, syncedAt: ingestedAt };
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
@@ -333,19 +337,41 @@ export async function syncSecWatchlist(db, provider) {
   } catch (error) {
     return { skipped: true, reason: 'not-configured', error: error.message, results: [] };
   }
-  const stocks = toPlainRows(db.prepare(`
+  const targetTickers = new Set(toPlainRows(db.prepare(`
     SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
+  `).all()).map((stock) => stock.ticker));
+  const stocks = toPlainRows(db.prepare(`
+    SELECT ticker FROM watchlist_items WHERE enabled = 1
+    UNION
+    SELECT r.related_ticker AS ticker
+    FROM company_relationships r
+    JOIN watchlist_items w ON w.ticker = r.ticker AND w.enabled = 1
+    WHERE r.relationship_type = 'COMPETITOR' AND r.active_to IS NULL
+    ORDER BY ticker
   `).all());
   const results = [];
-  for (const { ticker } of stocks) {
+  const selections = [];
+  const queue = stocks.map(({ ticker }) => ticker);
+  const processed = new Set();
+  while (queue.length) {
+    const ticker = queue.shift();
+    if (processed.has(ticker)) continue;
+    processed.add(ticker);
     try {
       const result = await syncSecCompany(db, provider, ticker);
       results.push({ ticker, ok: true, filingCount: result.filingCount, factCount: result.factCount });
+      if (targetTickers.has(ticker)) {
+        const selection = configureAutomaticPeers(db, ticker);
+        selections.push(selection);
+        for (const peer of selection.peers || []) {
+          if (!processed.has(peer.ticker)) queue.push(peer.ticker);
+        }
+      }
     } catch (error) {
       results.push({ ticker, ok: false, error: error.message });
     }
   }
-  return { skipped: false, results };
+  return { skipped: false, selections, results };
 }
 
 function isBetterFact(candidate, current) {
@@ -417,7 +443,7 @@ function buildPeriods(facts, periodType, limit = 8) {
 export function getSecOverview(db, tickerValue) {
   const ticker = normalizeTicker(tickerValue);
   const company = toPlain(db.prepare(`
-    SELECT ticker, name, cik, exchange, sector, industry FROM securities WHERE ticker = ?
+    SELECT ticker, name, cik, sic, sic_description, exchange, sector, industry FROM securities WHERE ticker = ?
   `).get(ticker));
   if (!company) throw new Error('股票不存在');
   const status = toPlain(db.prepare('SELECT * FROM sec_sync_status WHERE ticker = ?').get(ticker)) || null;

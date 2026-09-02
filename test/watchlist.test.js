@@ -12,15 +12,19 @@ import {
 test('股票池项目可以修改且股票代码保持不变', () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, {
-    ticker: 'NVDA', name: 'NVIDIA', benchmark: 'SPY', industryEtf: 'SMH', note: '原备注'
+    ticker: 'NVDA', name: 'NVIDIA', sector: 'Technology', industry: 'Semiconductors',
+    benchmark: 'SPY', industryEtf: 'SMH', note: '原备注'
   });
 
   const updated = updateWatchlistItem(db, 'NVDA', {
-    name: 'NVIDIA Corporation', benchmark: 'QQQ', industryEtf: '', note: '关注数据中心', enabled: false
+    name: 'NVIDIA Corporation', sector: 'Information Technology', industry: 'Chips',
+    benchmark: 'QQQ', industryEtf: '', note: '关注数据中心', enabled: false
   });
 
   assert.equal(updated.ticker, 'NVDA');
   assert.equal(updated.name, 'NVIDIA Corporation');
+  assert.equal(updated.sector, 'Information Technology');
+  assert.equal(updated.industry, 'Chips');
   assert.equal(updated.benchmark, 'QQQ');
   assert.equal(updated.industry_etf, null);
   assert.equal(updated.note, '关注数据中心');

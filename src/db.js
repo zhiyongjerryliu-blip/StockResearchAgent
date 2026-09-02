@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS securities (
   name TEXT,
   exchange TEXT,
   cik TEXT,
+  sic TEXT,
+  sic_description TEXT,
   sector TEXT,
   industry TEXT,
   benchmark TEXT NOT NULL DEFAULT 'SPY',
@@ -42,6 +44,58 @@ CREATE TABLE IF NOT EXISTS company_relationships (
   active_to TEXT,
   UNIQUE(ticker, related_ticker, relationship_type, active_from)
 );
+
+CREATE INDEX IF NOT EXISTS idx_company_relationships_active
+ON company_relationships(ticker, relationship_type, active_to);
+
+CREATE TABLE IF NOT EXISTS earnings_estimates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  estimate_type TEXT NOT NULL CHECK(estimate_type IN ('NTM_EPS')),
+  as_of TEXT NOT NULL,
+  period_end TEXT,
+  eps_value REAL NOT NULL,
+  eps_high REAL,
+  eps_low REAL,
+  analyst_count INTEGER,
+  source TEXT NOT NULL,
+  source_url TEXT,
+  provider TEXT NOT NULL DEFAULT 'manual',
+  calculation_method TEXT,
+  estimate_basis TEXT,
+  quality_status TEXT,
+  note TEXT,
+  fetched_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_earnings_estimates_lookup
+ON earnings_estimates(ticker, estimate_type, as_of DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS earnings_estimate_periods (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  estimate_id INTEGER NOT NULL REFERENCES earnings_estimates(id) ON DELETE CASCADE,
+  period_end TEXT NOT NULL,
+  horizon TEXT NOT NULL CHECK(horizon IN ('fiscal quarter','fiscal year')),
+  eps_average REAL NOT NULL,
+  eps_high REAL,
+  eps_low REAL,
+  analyst_count INTEGER,
+  eps_average_7_days_ago REAL,
+  eps_average_30_days_ago REAL,
+  eps_average_60_days_ago REAL,
+  eps_average_90_days_ago REAL,
+  revision_up_7_days INTEGER,
+  revision_down_7_days INTEGER,
+  revision_up_30_days INTEGER,
+  revision_down_30_days INTEGER,
+  ntm_weight REAL NOT NULL DEFAULT 0,
+  included_in_ntm INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(estimate_id, period_end, horizon)
+);
+
+CREATE INDEX IF NOT EXISTS idx_earnings_estimate_periods_estimate
+ON earnings_estimate_periods(estimate_id, period_end);
 
 CREATE TABLE IF NOT EXISTS transactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,6 +330,36 @@ export function openDatabase(databasePath = config.databasePath) {
   if (!transactionColumns.has('import_row_number')) {
     db.exec('ALTER TABLE transactions ADD COLUMN import_row_number INTEGER');
   }
+  const securityColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(securities)').all()).map((column) => column.name)
+  );
+  if (!securityColumns.has('sic')) {
+    db.exec('ALTER TABLE securities ADD COLUMN sic TEXT');
+  }
+  if (!securityColumns.has('sic_description')) {
+    db.exec('ALTER TABLE securities ADD COLUMN sic_description TEXT');
+  }
+  const estimateColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(earnings_estimates)').all()).map((column) => column.name)
+  );
+  const estimateMigrations = [
+    ['eps_high', 'REAL'],
+    ['eps_low', 'REAL'],
+    ['analyst_count', 'INTEGER'],
+    ['provider', "TEXT NOT NULL DEFAULT 'manual'"],
+    ['calculation_method', 'TEXT'],
+    ['estimate_basis', 'TEXT'],
+    ['quality_status', 'TEXT'],
+    ['fetched_at', 'TEXT']
+  ];
+  for (const [column, definition] of estimateMigrations) {
+    if (!estimateColumns.has(column)) db.exec(`ALTER TABLE earnings_estimates ADD COLUMN ${column} ${definition}`);
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_earnings_estimates_provider_snapshot
+    ON earnings_estimates(ticker, estimate_type, as_of, provider)
+    WHERE provider <> 'manual'
+  `);
   return db;
 }
 

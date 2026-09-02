@@ -31,6 +31,10 @@ export function upsertWatchlistItem(db, input) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?)
       ON CONFLICT(ticker) DO UPDATE SET
         name = COALESCE(excluded.name, securities.name),
+        exchange = COALESCE(excluded.exchange, securities.exchange),
+        cik = COALESCE(excluded.cik, securities.cik),
+        sector = COALESCE(excluded.sector, securities.sector),
+        industry = COALESCE(excluded.industry, securities.industry),
         benchmark = excluded.benchmark,
         industry_etf = COALESCE(excluded.industry_etf, securities.industry_etf),
         updated_at = excluded.updated_at
@@ -95,6 +99,8 @@ export function updateWatchlistItem(db, tickerValue, input) {
   const industryEtf = has('industryEtf')
     ? (input.industryEtf ? normalizeTicker(input.industryEtf) : null)
     : existing.industry_etf;
+  const sector = has('sector') ? input.sector?.trim() || null : existing.sector;
+  const industry = has('industry') ? input.industry?.trim() || null : existing.industry;
   const note = has('note') ? input.note?.trim() || null : existing.note;
   const enabled = has('enabled') ? Boolean(input.enabled) : existing.enabled;
   const timestamp = nowIso();
@@ -103,9 +109,9 @@ export function updateWatchlistItem(db, tickerValue, input) {
   try {
     db.prepare(`
       UPDATE securities
-      SET name = ?, benchmark = ?, industry_etf = ?, updated_at = ?
+      SET name = ?, benchmark = ?, industry_etf = ?, sector = ?, industry = ?, updated_at = ?
       WHERE ticker = ?
-    `).run(name, benchmark, industryEtf, timestamp, ticker);
+    `).run(name, benchmark, industryEtf, sector, industry, timestamp, ticker);
     db.prepare(`
       UPDATE watchlist_items
       SET note = ?, enabled = ?, updated_at = ?

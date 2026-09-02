@@ -9,7 +9,7 @@
     "stop": "node scripts/stop.js",
     "restart": "npm stop && npm start",
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=22.5.0"

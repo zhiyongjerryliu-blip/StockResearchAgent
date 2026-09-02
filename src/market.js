@@ -127,8 +127,14 @@ export async function refreshWatchlistPrices(db, provider) {
     SELECT w.ticker,
            (SELECT MIN(t.trade_time) FROM transactions t WHERE t.ticker = w.ticker) AS first_trade_time,
            (SELECT MIN(p.trade_date) FROM prices_daily p WHERE p.ticker = w.ticker) AS first_price_date
-    FROM watchlist_items w
-    WHERE w.enabled = 1
+    FROM (
+      SELECT ticker FROM watchlist_items WHERE enabled = 1
+      UNION
+      SELECT r.related_ticker AS ticker
+      FROM company_relationships r
+      JOIN watchlist_items w ON w.ticker = r.ticker AND w.enabled = 1
+      WHERE r.relationship_type = 'COMPETITOR' AND r.active_to IS NULL
+    ) w
     ORDER BY w.ticker
   `).all());
   const results = [];
