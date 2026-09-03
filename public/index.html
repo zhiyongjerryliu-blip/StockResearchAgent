@@ -21,6 +21,7 @@
         <button class="nav-item" data-view="watchlist">股票池</button>
         <button class="nav-item" data-view="financials">财报分析</button>
         <button class="nav-item" data-view="valuation">估值与同业</button>
+        <button class="nav-item" data-view="predictions">预测中心</button>
         <button class="nav-item" data-view="capital">资金与成交量</button>
         <button class="nav-item" data-view="events">事件与风险</button>
         <button class="nav-item" data-view="transactions">交易流水</button>
@@ -83,7 +84,7 @@
 
         <article class="panel callout">
           <div><p class="eyebrow">RELIABILITY GATE</p><h2>综合可靠度发布门槛：85分</h2></div>
-          <p>方向准确率、概率校准、区间覆盖、相对基准能力、市场状态稳定性和数据质量共同决定预测能否发布。当前基础版本尚未训练预测模型，不会生成未经验证的目标价。</p>
+          <p>方向准确率、概率校准、区间覆盖、相对基准能力、市场状态稳定性和数据质量共同决定预测能否发布。当前可解释V1基线用于积累验证样本；未通过闸门的目标区间仅供模型诊断，不进入正式投资建议。</p>
         </article>
       </section>
 
@@ -245,6 +246,62 @@
             </article>
           </div>
         </div>
+      </section>
+
+      <section class="view" id="view-predictions">
+        <article class="panel analysis-toolbar-panel">
+          <div>
+            <p class="eyebrow">POINT-IN-TIME · WALK-FORWARD</p>
+            <h2>多周期预测与历史验证</h2>
+            <p class="muted analysis-toolbar-note">基于当时可获得的数据生成1、3、6个月预测；样本量与综合可靠度未达标时不发布正式目标价。</p>
+          </div>
+          <div class="analysis-toolbar-actions">
+            <label class="inline-select">股票
+              <select id="prediction-ticker" aria-label="预测股票"><option value="">请选择股票</option></select>
+            </label>
+            <button id="run-prediction-backtest" class="button primary">生成特征并运行回测</button>
+          </div>
+        </article>
+
+        <div class="sec-metric-grid prediction-metric-grid">
+          <article class="metric-card"><span>特征基准日</span><strong id="prediction-feature-date">—</strong><small id="prediction-feature-version">尚未生成</small></article>
+          <article class="metric-card"><span>数据质量</span><strong id="prediction-data-quality">—</strong><small>时点数据覆盖评分</small></article>
+          <article class="metric-card"><span>可用数据组</span><strong id="prediction-factor-count">—</strong><small id="prediction-factor-note">等待特征快照</small></article>
+          <article class="metric-card"><span>发布门槛</span><strong id="prediction-gate">85分</strong><small>同时要求满足最低有效样本量</small></article>
+        </div>
+
+        <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">LATEST FORECASTS</p><h2>最新预测</h2></div><small class="muted">21 · 63 · 126个交易日</small></div>
+          <div class="table-wrap">
+            <table class="prediction-table">
+              <thead><tr><th>期限</th><th>方向</th><th>目标日期</th><th>预期收益</th><th>价格区间 P10–P90</th><th>上涨概率</th><th>综合可靠度</th><th>发布状态</th></tr></thead>
+              <tbody id="prediction-body"></tbody>
+            </table>
+          </div>
+          <div id="prediction-empty" class="empty">请选择股票并运行首次回测。</div>
+        </article>
+
+        <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">BACKTEST RELIABILITY</p><h2>Walk-forward验证</h2></div><small class="muted">可靠度使用非重叠样本计算</small></div>
+          <div class="table-wrap">
+            <table class="prediction-table">
+              <thead><tr><th>期限</th><th>全部到期样本</th><th>有效非重叠样本</th><th>最低要求</th><th>方向准确率</th><th>实际区间覆盖</th><th>模型MAE</th><th>基准MAE</th><th>状态</th></tr></thead>
+              <tbody id="prediction-backtest-body"></tbody>
+            </table>
+          </div>
+          <div id="prediction-backtest-empty" class="empty">尚无历史验证结果。</div>
+        </article>
+
+        <article class="panel event-policy-panel">
+          <p class="eyebrow">MODEL BOUNDARY</p><h2>第一版模型边界</h2>
+          <ul class="principle-list">
+            <li>历史特征只读取基准日及之前的价格、SEC提交、EPS预期、事件和宏观数据。</li>
+            <li>21、63、126日分别对应约1、3、6个月；实际结果使用其后对应交易日收盘价结算。</li>
+            <li>V1为冻结权重的可解释基线模型，用于建立验证账本，不宣称已经训练完成。</li>
+            <li>可靠度按期限抽取非重叠样本，避免连续每日预测造成虚假的大样本。</li>
+            <li>只有样本量达标且综合可靠度不低于85分，预测才会进入PUBLISHED状态。</li>
+          </ul>
+        </article>
       </section>
 
       <section class="view" id="view-capital">

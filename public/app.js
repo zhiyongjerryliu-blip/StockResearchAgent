@@ -3,6 +3,7 @@ const state = {
   eventFeed: { events: [], counts: {}, total: 0 },
   newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
   capitalFlow: null, intradayFlow: null, capitalLoadedTicker: null,
+  predictionOverview: null, predictionLoadedTicker: null,
   capitalChartVisible: new Set(['volume', 'averageVolume5d', 'averageVolume20d', 'netActiveTurnover']),
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
@@ -13,7 +14,8 @@ const state = {
 
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
-  financials: '财报分析', valuation: '估值与竞争对手', capital: '资金与成交量', events: '事件与风险',
+  financials: '财报分析', valuation: '估值与竞争对手', predictions: '多周期预测与历史验证',
+  capital: '资金与成交量', events: '事件与风险',
   reviews: '收盘复盘', settings: '系统状态'
 };
 
@@ -80,6 +82,7 @@ function showView(view) {
   document.querySelector('#page-title').textContent = titles[view];
   if (view === 'financials') loadSelectedSecOverview().catch((error) => showToast(error.message, true));
   if (view === 'valuation') loadSelectedValuation().catch((error) => showToast(error.message, true));
+  if (view === 'predictions') loadPredictionOverview().catch((error) => showToast(error.message, true));
   if (view === 'capital') loadCapitalFlow().catch((error) => showToast(error.message, true));
   if (view === 'events') loadEventCenter().catch((error) => showToast(error.message, true));
 }
@@ -131,6 +134,13 @@ function renderWatchlist() {
   capitalSelect.innerHTML = `<option value="">请选择股票</option>${options}`;
   if (selectedCapitalTicker && state.watchlist.some((item) => item.ticker === selectedCapitalTicker && item.enabled)) {
     capitalSelect.value = selectedCapitalTicker;
+  }
+
+  const predictionSelect = document.querySelector('#prediction-ticker');
+  const selectedPredictionTicker = predictionSelect.value || state.predictionLoadedTicker || state.watchlist.find((item) => item.enabled)?.ticker;
+  predictionSelect.innerHTML = `<option value="">请选择股票</option>${options}`;
+  if (selectedPredictionTicker && state.watchlist.some((item) => item.ticker === selectedPredictionTicker && item.enabled)) {
+    predictionSelect.value = selectedPredictionTicker;
   }
 }
 
@@ -1040,6 +1050,88 @@ async function loadEventCenter() {
   await Promise.all([loadEvents(), loadNews(), loadExternalDrivers(), loadInvestmentAdvice()]);
 }
 
+const predictionHorizonLabels = { 21: '1个月', 63: '3个月', 126: '6个月' };
+const predictionDirectionLabels = { BULLISH: '看多', BEARISH: '看空', NEUTRAL: '震荡' };
+const predictionStatusLabels = {
+  PUBLISHED: '已发布', OBSERVE: '观察', REJECTED: '未通过', INSUFFICIENT: '样本不足'
+};
+
+function metricPercent(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)}%`;
+}
+
+function renderPredictionOverview() {
+  const overview = state.predictionOverview;
+  const feature = overview?.feature;
+  const availability = feature?.availability || {};
+  const availableFactors = Object.entries(availability).filter(([, available]) => available).map(([key]) => key);
+  const allFactorLabels = {
+    price: '价格', longPriceHistory: '长周期价格', benchmark: '基准', capitalFlow: '资金行为',
+    valuation: '估值', earnings: 'EPS预期', fundamentals: '基本面', macro: '宏观', events: '事件'
+  };
+  document.querySelector('#prediction-feature-date').textContent = feature?.priceDate || '—';
+  document.querySelector('#prediction-feature-version').textContent = feature?.featureVersion || '尚未生成';
+  document.querySelector('#prediction-data-quality').textContent = feature ? `${decimal(feature.dataQualityScore, 1)}分` : '—';
+  document.querySelector('#prediction-factor-count').textContent = feature ? `${availableFactors.length}/9` : '—';
+  document.querySelector('#prediction-factor-note').textContent = availableFactors.length
+    ? availableFactors.map((key) => allFactorLabels[key]).join(' · ') : '等待特征快照';
+  document.querySelector('#prediction-gate').textContent = `${overview?.reliabilityGate || 85}分`;
+
+  const reliabilityByHorizon = new Map((overview?.reliability || []).map((item) => [Number(item.horizon_days), item]));
+  const predictions = overview?.predictions || [];
+  document.querySelector('#prediction-body').innerHTML = predictions.map((item) => {
+    const horizon = Number(item.horizon_days);
+    const rationale = item.rationale || {};
+    const direction = rationale.predictedDirection || 'NEUTRAL';
+    const status = item.publication_status;
+    return `<tr>
+      <td><strong>${predictionHorizonLabels[horizon] || `${horizon}日`}</strong><br><small class="muted">${horizon}个交易日</small></td>
+      <td><span class="badge prediction-direction ${direction}">${predictionDirectionLabels[direction] || direction}</span></td>
+      <td>${escapeHtml(item.target_date || '—')}</td>
+      <td class="${pnlClass(item.return_p50)}">${percent(item.return_p50)}</td>
+      <td>${money(item.price_p10)} – ${money(item.price_p90)}<br><small class="muted">中位 ${money(item.price_p50)}</small></td>
+      <td>${percent(item.probability_up)}</td>
+      <td>${decimal(item.reliability_score, 2)}分</td>
+      <td><span class="badge ${status}">${predictionStatusLabels[status] || status}</span></td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#prediction-empty').classList.toggle('hidden', predictions.length > 0);
+
+  const backtest = overview?.backtest || [];
+  document.querySelector('#prediction-backtest-body').innerHTML = backtest.map((counts) => {
+    const reliability = reliabilityByHorizon.get(Number(counts.horizonDays));
+    const details = reliability?.details || {};
+    const baselineMae = Number.isFinite(details.benchmarkMae) ? details.benchmarkMae : details.zeroReturnMae;
+    const status = reliability?.status || 'INSUFFICIENT';
+    return `<tr>
+      <td><strong>${predictionHorizonLabels[counts.horizonDays] || `${counts.horizonDays}日`}</strong></td>
+      <td>${counts.matured || 0}<br><small class="muted">待到期 ${counts.pending || 0} · 排除 ${counts.excluded || 0}</small></td>
+      <td>${reliability?.effective_samples ?? 0}</td>
+      <td>${details.requiredSamples ?? '—'}</td>
+      <td>${metricPercent(reliability?.direction_accuracy)}</td>
+      <td>${metricPercent(details.empiricalIntervalCoverage)}</td>
+      <td>${percent(details.modelMae)}</td>
+      <td>${percent(baselineMae)}</td>
+      <td><span class="badge ${status}">${predictionStatusLabels[status] || status}</span></td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#prediction-backtest-empty').classList.toggle('hidden', backtest.length > 0);
+}
+
+async function loadPredictionOverview(force = false) {
+  const ticker = document.querySelector('#prediction-ticker').value;
+  if (!ticker) {
+    state.predictionOverview = null;
+    state.predictionLoadedTicker = null;
+    renderPredictionOverview();
+    return;
+  }
+  if (!force && state.predictionLoadedTicker === ticker && state.predictionOverview) return;
+  state.predictionOverview = await api(`/api/predictions?ticker=${encodeURIComponent(ticker)}`);
+  state.predictionLoadedTicker = ticker;
+  renderPredictionOverview();
+}
+
 function renderReviews() {
   document.querySelector('#reviews-list').innerHTML = state.reviews.map((review) => `
     <article class="review">
@@ -1073,7 +1165,7 @@ async function loadAll() {
     api('/api/news?limit=100'), api('/api/news/sentiment')
   ]);
   Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
-  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderReviews(); renderConfig();
+  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig();
 }
 
 function formData(form) {
@@ -1206,6 +1298,11 @@ document.querySelector('#capital-ticker').addEventListener('change', () => {
   loadCapitalFlow().catch((error) => showToast(error.message, true));
 });
 
+document.querySelector('#prediction-ticker').addEventListener('change', () => {
+  state.predictionLoadedTicker = null;
+  loadPredictionOverview(true).catch((error) => showToast(error.message, true));
+});
+
 document.querySelector('#event-severity').addEventListener('change', () => {
   loadEvents().catch((error) => showToast(error.message, true));
 });
@@ -1291,6 +1388,27 @@ document.querySelector('#run-capital-flow').addEventListener('click', async (eve
   } finally {
     button.disabled = false;
     button.textContent = '识别资金行为';
+  }
+});
+
+document.querySelector('#run-prediction-backtest').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#prediction-ticker').value;
+  if (!ticker) return showToast('请先选择一只股票', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在回测…';
+  try {
+    const result = await api('/api/predictions/backtest', {
+      method: 'POST', body: JSON.stringify({ ticker })
+    });
+    state.predictionLoadedTicker = null;
+    await loadPredictionOverview(true);
+    showToast(`${ticker} 已处理${result.datesProcessed}个历史交易日，更新${result.resultsUpdated}个期限样本`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '生成特征并运行回测';
   }
 });
 

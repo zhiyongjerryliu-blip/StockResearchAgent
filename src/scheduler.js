@@ -13,6 +13,7 @@ import { notifyVolumeAnomalies, saveWatchlistCapitalFlow } from './capital-flow.
 import {
   notifyIntradayFlowAnomalies, saveWatchlistIntradayFlow
 } from './intraday-flow.js';
+import { runWatchlistPredictionBacktests } from './predictions.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -56,11 +57,13 @@ export async function runDailyCycle(
       if (!result.ok || !result.analysis.asOf) continue;
       result.notifications = await notifyIntradayFlowAnomalies(db, result.analysis);
     }
+    const predictions = runWatchlistPredictionBacktests(db, reviewDate);
     const advice = saveWatchlistAdvice(db, reviewDate);
     const portfolio = saveDailySnapshots(db, reviewDate);
     const reviews = await generateDailyReviews(db, reviewDate);
     const details = {
-      market, marketContext, sec, earnings, news, capitalFlow, intradayFlow, advice, reviewDate,
+      market, marketContext, sec, earnings, news, capitalFlow, intradayFlow,
+      predictions, advice, reviewDate,
       positions: portfolio.positions.length
     };
     db.prepare(`

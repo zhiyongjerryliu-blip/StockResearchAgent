@@ -218,6 +218,14 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .factor-row strong { color: var(--text); }
 .advice-levels { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.7; }
 .advice-policy { margin: 14px 0 0; padding: 12px 14px; border: 1px solid #594820; border-radius: 7px; background: #221d12; color: var(--warning); font-size: 11px; line-height: 1.65; }
+.prediction-metric-grid { margin-top: 16px; }
+.prediction-panel { margin-top: 16px; }
+.prediction-table { min-width: 980px; }
+.badge.OBSERVE, .badge.INSUFFICIENT { background: #3a301d; color: var(--warning); }
+.badge.REJECTED { background: #3b1f28; color: #ff99a3; }
+.prediction-direction.BULLISH { background: #3b1f28; color: #ff99a3; }
+.prediction-direction.BEARISH { background: #153529; color: var(--accent); }
+.prediction-direction.NEUTRAL { background: #253141; color: #aebccc; }
 .news-panel { margin-top: 16px; }
 .news-list { display: grid; gap: 11px; }
 .news-card { padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0d141d; }

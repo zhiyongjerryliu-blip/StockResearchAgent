@@ -58,6 +58,7 @@ import {
   upsertWatchlistItem
 } from './repository.js';
 import { latestStableUsMarketDate } from './trading-calendar.js';
+import { getPredictionOverview, runPredictionBacktest } from './predictions.js';
 
 const db = openDatabase();
 rebuildMissingIntradayMinutes(db);
@@ -384,6 +385,21 @@ async function apiRoute(request, response, url) {
     if (!body.ticker) throw new Error('缺少ticker');
     return sendJson(response, 200, saveInvestmentAdvice(
       db, body.ticker, body.asOf || latestStableMarketDate()
+    ));
+  }
+  if (method === 'GET' && url.pathname === '/api/predictions') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, getPredictionOverview(
+      db, ticker, url.searchParams.get('asOf') || null
+    ));
+  }
+  if (method === 'POST' && url.pathname === '/api/predictions/backtest') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, runPredictionBacktest(
+      db, body.ticker, body.asOf || latestStableMarketDate(),
+      { maxSessions: body.maxSessions }
     ));
   }
   if (method === 'GET' && url.pathname === '/api/capital-flow') {

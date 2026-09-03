@@ -86,15 +86,16 @@ export function removePeer(db, tickerValue, relatedTickerValue) {
   return { ticker, relatedTicker, removed: true };
 }
 
-export function listPeers(db, tickerValue) {
+export function listPeers(db, tickerValue, asOf = null) {
   const ticker = normalizeTicker(tickerValue);
   return toPlainRows(db.prepare(`
     SELECT s.ticker, s.name, s.sector, s.industry, r.source, r.active_from
     FROM company_relationships r
     JOIN securities s ON s.ticker = r.related_ticker
-    WHERE r.ticker = ? AND r.relationship_type = 'COMPETITOR' AND r.active_to IS NULL
+    WHERE r.ticker = ? AND r.relationship_type = 'COMPETITOR'
+      ${asOf ? 'AND r.active_from <= ? AND (r.active_to IS NULL OR r.active_to >= ?)' : 'AND r.active_to IS NULL'}
     ORDER BY s.ticker
-  `).all(ticker));
+  `).all(...(asOf ? [ticker, asOf, asOf] : [ticker])));
 }
 
 export function saveEarningsEstimate(db, input) {
@@ -618,7 +619,7 @@ export function getHistoricalValuation(db, tickerValue, options = {}) {
 export function getValuationOverview(db, tickerValue, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const target = companyValuation(db, ticker, options.asOf || null);
-  const peerRelationships = listPeers(db, ticker);
+  const peerRelationships = listPeers(db, ticker, options.asOf || null);
   const peers = peerRelationships.map((peer) => ({
     ...companyValuation(db, peer.ticker, options.asOf || null),
     relationship: { source: peer.source, activeFrom: peer.active_from }

@@ -502,6 +502,23 @@ CREATE TABLE IF NOT EXISTS intraday_flow_snapshots (
 CREATE INDEX IF NOT EXISTS idx_intraday_flow_ticker_time
 ON intraday_flow_snapshots(ticker, as_of_minute DESC);
 
+CREATE TABLE IF NOT EXISTS feature_snapshots (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  price_date TEXT,
+  feature_version TEXT NOT NULL,
+  features_json TEXT NOT NULL DEFAULT '{}',
+  availability_json TEXT NOT NULL DEFAULT '{}',
+  data_quality_score REAL NOT NULL,
+  eligible_for_training INTEGER NOT NULL DEFAULT 0,
+  exclusion_reasons_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, feature_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_snapshots_ticker_asof
+ON feature_snapshots(ticker, as_of DESC, feature_version);
+
 CREATE TABLE IF NOT EXISTS predictions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT NOT NULL REFERENCES securities(ticker),
@@ -526,6 +543,37 @@ CREATE TABLE IF NOT EXISTS predictions (
 
 CREATE INDEX IF NOT EXISTS idx_predictions_ticker_horizon_asof
 ON predictions(ticker, horizon_days, as_of DESC);
+
+CREATE TABLE IF NOT EXISTS prediction_backtest_results (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  target_date TEXT,
+  actual_date TEXT,
+  current_price REAL NOT NULL,
+  predicted_direction TEXT NOT NULL,
+  probability_up REAL,
+  return_p10 REAL,
+  return_p50 REAL,
+  return_p90 REAL,
+  actual_return REAL,
+  benchmark_return REAL,
+  excess_return REAL,
+  direction_hit INTEGER,
+  interval_hit INTEGER,
+  status TEXT NOT NULL CHECK(status IN ('PENDING','MATURED','EXCLUDED')),
+  exclusion_reason TEXT,
+  data_quality_score REAL NOT NULL,
+  feature_version TEXT NOT NULL,
+  model_version TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, horizon_days, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_backtest_lookup
+ON prediction_backtest_results(ticker, horizon_days, status, as_of DESC);
 
 CREATE TABLE IF NOT EXISTS investment_advice_snapshots (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
@@ -568,6 +616,9 @@ CREATE TABLE IF NOT EXISTS reliability_scores (
 
 CREATE INDEX IF NOT EXISTS idx_reliability_lookup
 ON reliability_scores(ticker, horizon_days, model_version, as_of DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reliability_snapshot_unique
+ON reliability_scores(ticker, horizon_days, model_version, as_of);
 
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

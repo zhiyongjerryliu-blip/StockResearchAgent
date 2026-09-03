@@ -84,7 +84,7 @@ test('Yahoo会按最早建仓日扩展历史行情范围', async () => {
   assert.match(requests[1], /range=1y/);
 });
 
-test('行情刷新会同时更新自动选择的两家同行业对标公司', async () => {
+test('行情刷新会同时更新对标公司和市场基准', async () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'LITE' });
   configureAutomaticPeers(db, 'LITE', '2026-09-02');
@@ -102,8 +102,31 @@ test('行情刷新会同时更新自动选择的两家同行业对标公司', as
   };
 
   const result = await refreshWatchlistPrices(db, provider);
-  assert.deepEqual(requested, ['CIEN', 'COHR', 'LITE']);
+  assert.deepEqual(requested, ['CIEN', 'COHR', 'LITE', 'SPY']);
   assert.equal(result.results.every((item) => item.ok), true);
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM prices_daily').get().count, 3);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM prices_daily').get().count, 4);
+  assert.equal(result.results.find((item) => item.ticker === 'SPY').role, 'BENCHMARK');
+  db.close();
+});
+
+test('行情刷新会自动创建并同步股票池配置的行业ETF', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEST', industryEtf: 'SMH' });
+  const requested = [];
+  const provider = {
+    name: 'test',
+    async fetchDaily(ticker) {
+      requested.push(ticker);
+      return [{
+        ticker, tradeDate: '2026-09-01', open: 100, high: 101, low: 99,
+        close: 100, adjustedClose: 100, volume: 1000, provider: 'test',
+        availableAt: '2026-09-02T00:00:00.000Z'
+      }];
+    }
+  };
+
+  await refreshWatchlistPrices(db, provider);
+  assert.deepEqual(requested, ['SMH', 'SPY', 'TEST']);
+  assert.ok(db.prepare("SELECT 1 FROM securities WHERE ticker = 'SMH'").get());
   db.close();
 });

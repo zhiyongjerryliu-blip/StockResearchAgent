@@ -24,6 +24,26 @@ function historyRange(startDate, latestDate) {
   return 'max';
 }
 
+function predictionHistoryStart() {
+  const date = new Date();
+  date.setUTCFullYear(date.getUTCFullYear() - 5);
+  return date.toISOString().slice(0, 10);
+}
+
+function earlierDate(...values) {
+  return values.filter(Boolean).sort()[0] || null;
+}
+
+function ensureReferenceSecurity(db, ticker) {
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO securities (
+      ticker, benchmark, currency, created_at, updated_at
+    ) VALUES (?, 'SPY', 'USD', ?, ?)
+    ON CONFLICT(ticker) DO NOTHING
+  `).run(ticker, timestamp, timestamp);
+}
+
 export class YahooDailyProvider {
   constructor(fetchImpl = fetch) {
     this.fetchImpl = fetchImpl;
@@ -123,32 +143,59 @@ export function upsertDailyBars(db, bars) {
 
 export async function refreshWatchlistPrices(db, provider) {
   if (!provider) return { provider: 'manual', results: [] };
-  const stocks = toPlainRows(db.prepare(`
+  const coreAndPeers = toPlainRows(db.prepare(`
     SELECT w.ticker,
+           w.role,
            (SELECT MIN(t.trade_time) FROM transactions t WHERE t.ticker = w.ticker) AS first_trade_time,
            (SELECT MIN(p.trade_date) FROM prices_daily p WHERE p.ticker = w.ticker) AS first_price_date
     FROM (
-      SELECT ticker FROM watchlist_items WHERE enabled = 1
+      SELECT ticker, 'WATCHLIST' AS role FROM watchlist_items WHERE enabled = 1
       UNION
-      SELECT r.related_ticker AS ticker
+      SELECT r.related_ticker AS ticker, 'PEER' AS role
       FROM company_relationships r
       JOIN watchlist_items w ON w.ticker = r.ticker AND w.enabled = 1
       WHERE r.relationship_type = 'COMPETITOR' AND r.active_to IS NULL
     ) w
     ORDER BY w.ticker
   `).all());
+  const references = toPlainRows(db.prepare(`
+    SELECT DISTINCT reference.ticker, reference.role
+    FROM (
+      SELECT s.benchmark AS ticker, 'BENCHMARK' AS role
+      FROM watchlist_items w JOIN securities s ON s.ticker = w.ticker
+      WHERE w.enabled = 1 AND s.benchmark IS NOT NULL
+      UNION
+      SELECT s.industry_etf AS ticker, 'INDUSTRY_ETF' AS role
+      FROM watchlist_items w JOIN securities s ON s.ticker = w.ticker
+      WHERE w.enabled = 1 AND s.industry_etf IS NOT NULL
+    ) reference
+    WHERE reference.ticker IS NOT NULL
+  `).all());
+  const stocksByTicker = new Map(coreAndPeers.map((stock) => [stock.ticker, stock]));
+  for (const reference of references) {
+    ensureReferenceSecurity(db, reference.ticker);
+    if (stocksByTicker.has(reference.ticker)) continue;
+    const firstPriceDate = db.prepare(`
+      SELECT MIN(trade_date) AS value FROM prices_daily WHERE ticker = ?
+    `).get(reference.ticker)?.value || null;
+    stocksByTicker.set(reference.ticker, {
+      ...reference, first_trade_time: null, first_price_date: firstPriceDate
+    });
+  }
+  const stocks = [...stocksByTicker.values()].sort((left, right) => left.ticker.localeCompare(right.ticker));
+  const defaultHistoryStart = predictionHistoryStart();
   const results = [];
-  for (const { ticker, first_trade_time: firstTradeTime, first_price_date: firstPriceDate } of stocks) {
+  for (const { ticker, role, first_trade_time: firstTradeTime, first_price_date: firstPriceDate } of stocks) {
     try {
       const firstTradeDate = firstTradeTime ? etDate(firstTradeTime) : null;
-      const historyStart = firstTradeDate && (!firstPriceDate || firstPriceDate > firstTradeDate)
-        ? firstTradeDate
-        : null;
+      const desiredHistoryStart = earlierDate(defaultHistoryStart, firstTradeDate);
+      const historyStart = !firstPriceDate || firstPriceDate > desiredHistoryStart
+        ? desiredHistoryStart : null;
       const bars = await provider.fetchDaily(ticker, { historyStart });
       const count = upsertDailyBars(db, bars);
-      results.push({ ticker, ok: true, count, historyStart });
+      results.push({ ticker, role, ok: true, count, historyStart });
     } catch (error) {
-      results.push({ ticker, ok: false, error: error.message });
+      results.push({ ticker, role, ok: false, error: error.message });
     }
   }
   return { provider: provider.name, results };
