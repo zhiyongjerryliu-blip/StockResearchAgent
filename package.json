@@ -9,6 +9,7 @@
     "stop": "node scripts/stop.js",
     "restart": "npm stop && npm start",
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "setup:futu": "python3 -m venv .venv-futu && .venv-futu/bin/python -m pip install -r requirements-futu.txt",
     "test": "node --test test/*.test.js"
   },
   "engines": {

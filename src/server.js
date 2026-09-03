@@ -30,6 +30,12 @@ import {
   analyzeCapitalFlow, listRecentCapitalFlowDays,
   notifyVolumeAnomalies, saveCapitalFlow
 } from './capital-flow.js';
+import { FutuCollector } from './futu.js';
+import {
+  analyzeIntradayFlow, ingestFutuBars, ingestFutuTicks,
+  listIntradayFlowMinutes, pruneIntradayTicks, rebuildMissingIntradayMinutes,
+  saveIntradayFlowSnapshot
+} from './intraday-flow.js';
 import {
   addPeer,
   deleteEarningsEstimate,
@@ -54,6 +60,8 @@ import {
 import { latestStableUsMarketDate } from './trading-calendar.js';
 
 const db = openDatabase();
+rebuildMissingIntradayMinutes(db);
+pruneIntradayTicks(db, config.futu.tickRetentionDays);
 backfillSecFilingEvents(db);
 configureWatchlistConcepts(db);
 const provider = providerFromName(config.marketDataProvider);
@@ -67,6 +75,57 @@ const newsProvider = new CompositeNewsProvider([
 ]);
 const publicDir = path.join(config.projectRoot, 'public');
 const pidFile = path.join(config.projectRoot, 'data', 'server.pid');
+const intradaySnapshotTimers = new Map();
+
+function enabledWatchlistTickers() {
+  return listWatchlist(db).filter((item) => item.enabled).map((item) => item.ticker);
+}
+
+function missingIntradayHistory(tickers) {
+  const countBars = db.prepare(`
+    SELECT COUNT(*) AS count FROM prices_intraday
+    WHERE ticker = ? AND interval = '1M' AND COALESCE(volume, 0) > 0
+  `);
+  return tickers.filter((ticker) => Number(countBars.get(ticker)?.count || 0) < 390);
+}
+
+function scheduleIntradaySnapshot(ticker) {
+  if (intradaySnapshotTimers.has(ticker)) return;
+  const timer = setTimeout(() => {
+    intradaySnapshotTimers.delete(ticker);
+    try {
+      saveIntradayFlowSnapshot(db, ticker);
+    } catch (error) {
+      console.error(`保存 ${ticker} 分钟资金流快照失败：`, error.message);
+    }
+  }, 1000);
+  intradaySnapshotTimers.set(ticker, timer);
+}
+
+const futuCollector = new FutuCollector(
+  { ...config.futu, projectRoot: config.projectRoot },
+  (event) => {
+    if (event.type === 'bars') {
+      ingestFutuBars(db, event.bars);
+      for (const ticker of new Set((event.bars || []).map((bar) => bar.ticker))) {
+        scheduleIntradaySnapshot(ticker);
+      }
+    }
+    if (event.type === 'ticks') {
+      ingestFutuTicks(db, event.ticks);
+      for (const ticker of new Set((event.ticks || []).map((tick) => tick.ticker))) {
+        scheduleIntradaySnapshot(ticker);
+      }
+    }
+  }
+);
+
+function refreshFutuCollectorSymbols() {
+  const tickers = enabledWatchlistTickers();
+  futuCollector.start(tickers, missingIntradayHistory(tickers)).catch((error) => {
+    console.error('刷新富途订阅失败：', error.message);
+  });
+}
 
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -194,6 +253,13 @@ async function apiRoute(request, response, url) {
       alphaVantage: {
         configured: Boolean(config.alphaVantage.apiKey)
       },
+      futu: {
+        enabled: config.futu.enabled,
+        host: config.futu.host,
+        port: config.futu.port,
+        session: config.futu.session,
+        collector: futuCollector.status()
+      },
       notifications: {
         macosEnabled: config.notifications.macosEnabled,
         emailEnabled: config.notifications.emailEnabled,
@@ -213,6 +279,7 @@ async function apiRoute(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/watchlist') {
     const item = upsertWatchlistItem(db, await readJson(request));
     configureStockConcepts(db, item.ticker);
+    refreshFutuCollectorSymbols();
     return sendJson(response, 201, item);
   }
   const watchlistMatch = url.pathname.match(/^\/api\/watchlist\/([^/]+)$/);
@@ -220,14 +287,19 @@ async function apiRoute(request, response, url) {
     const body = await readJson(request);
     const ticker = decodeURIComponent(watchlistMatch[1]);
     if (Object.keys(body).length === 1 && Object.hasOwn(body, 'enabled')) {
-      return sendJson(response, 200, setWatchlistEnabled(db, ticker, body.enabled));
+      const item = setWatchlistEnabled(db, ticker, body.enabled);
+      refreshFutuCollectorSymbols();
+      return sendJson(response, 200, item);
     }
     const item = updateWatchlistItem(db, ticker, body);
     configureStockConcepts(db, item.ticker);
+    refreshFutuCollectorSymbols();
     return sendJson(response, 200, item);
   }
   if (watchlistMatch && method === 'DELETE') {
-    return sendJson(response, 200, deleteWatchlistItem(db, decodeURIComponent(watchlistMatch[1])));
+    const result = deleteWatchlistItem(db, decodeURIComponent(watchlistMatch[1]));
+    refreshFutuCollectorSymbols();
+    return sendJson(response, 200, result);
   }
 
   if (method === 'GET' && url.pathname === '/api/transactions') {
@@ -241,7 +313,9 @@ async function apiRoute(request, response, url) {
   }
   if (method === 'POST' && url.pathname === '/api/transactions/import/commit') {
     const body = await readJson(request);
-    return sendJson(response, 201, commitTransactionImport(db, body.token));
+    const result = commitTransactionImport(db, body.token);
+    refreshFutuCollectorSymbols();
+    return sendJson(response, 201, result);
   }
   const transactionMatch = url.pathname.match(/^\/api\/transactions\/(\d+)$/);
   if (transactionMatch && method === 'DELETE') {
@@ -336,6 +410,23 @@ async function apiRoute(request, response, url) {
     );
     analysis.volumeNotifications = await notifyVolumeAnomalies(db, analysis);
     return sendJson(response, 200, analysis);
+  }
+  if (method === 'GET' && url.pathname === '/api/futu/status') {
+    return sendJson(response, 200, futuCollector.status());
+  }
+  if (method === 'POST' && url.pathname === '/api/futu/restart') {
+    const tickers = enabledWatchlistTickers();
+    return sendJson(response, 200, await futuCollector.restart(tickers, missingIntradayHistory(tickers)));
+  }
+  if (method === 'GET' && url.pathname === '/api/intraday-flow') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    const tradeDate = url.searchParams.get('tradeDate') || null;
+    return sendJson(response, 200, {
+      analysis: analyzeIntradayFlow(db, ticker, tradeDate),
+      minutes: listIntradayFlowMinutes(db, ticker, tradeDate, url.searchParams.get('limit')),
+      collector: futuCollector.status()
+    });
   }
 
   if (method === 'GET' && url.pathname === '/api/sec/overview') {
@@ -487,6 +578,7 @@ server.listen(config.port, config.host, () => {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid), { encoding: 'utf8' });
   console.log(`美股投研工作台已启动：http://${config.host}:${config.port}`);
+  refreshFutuCollectorSymbols();
 });
 
 server.on('error', (error) => {
@@ -510,8 +602,10 @@ function removeOwnPidFile() {
   }
 }
 
-function shutdown() {
+async function shutdown() {
   stopScheduler();
+  for (const timer of intradaySnapshotTimers.values()) clearTimeout(timer);
+  await futuCollector.stop();
   server.close(() => {
     removeOwnPidFile();
     db.close();

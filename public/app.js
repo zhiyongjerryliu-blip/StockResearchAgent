@@ -2,7 +2,7 @@ const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
   eventFeed: { events: [], counts: {}, total: 0 },
   newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
-  capitalFlow: null, capitalLoadedTicker: null,
+  capitalFlow: null, intradayFlow: null, capitalLoadedTicker: null,
   capitalChartVisible: new Set(['volume', 'averageVolume5d', 'averageVolume20d']),
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
@@ -873,6 +873,78 @@ function renderCapitalFlow() {
     <p class="driver-disclaimer">当前不是逐笔主动买卖统计，不显示虚构的“主力净流入金额”。公开成交无法确认最终账户身份；评分需通过后续价格表现持续验证。</p>`;
 }
 
+function renderIntradayFlow() {
+  const overview = state.intradayFlow;
+  const content = document.querySelector('#intraday-flow-content');
+  const empty = document.querySelector('#intraday-flow-empty');
+  const status = document.querySelector('#intraday-flow-status');
+  if (!overview) {
+    content.innerHTML = '';
+    empty.classList.remove('hidden');
+    status.textContent = '等待富途行情';
+    return;
+  }
+  const analysis = overview.analysis || {};
+  const collector = overview.collector || {};
+  const metrics = analysis.metrics || {};
+  status.textContent = collector.status === 'connected'
+    ? `富途已连接 · ${collector.session || 'RTH'} · ${collector.symbols?.length || 0}只股票`
+    : `富途状态：${collector.status || '未知'}${collector.lastError ? ` · ${collector.lastError}` : ''}`;
+  if (!analysis.asOf) {
+    content.innerHTML = '';
+    empty.textContent = analysis.explanation || '尚未收到分钟行情。';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const compactUsd = (value) => Number.isFinite(value)
+    ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(value)
+    : '—';
+  const ratio = (value) => Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%` : '—';
+  const rows = (overview.minutes || []).slice(0, 10).map((row) => `
+    <tr>
+      <td>${escapeHtml(row.minute)}</td>
+      <td class="positive">${compactUsd(row.buyTurnover)}</td>
+      <td class="negative">${compactUsd(row.sellTurnover)}</td>
+      <td class="${pnlClass(row.netActiveTurnover)}">${compactUsd(row.netActiveTurnover)}</td>
+      <td>${Number(row.tickCount).toLocaleString('zh-CN')}</td>
+    </tr>`).join('');
+  const anomalies = (analysis.anomalies || []).map((item) =>
+    `<span class="badge ${item.direction === 'OUTFLOW' ? 'P1' : 'impact'}">${escapeHtml(item.label)}</span>`
+  ).join('');
+  content.innerHTML = `
+    <div class="intraday-flow-summary ${escapeHtml(analysis.signal)}">
+      <article class="intraday-flow-primary">
+        <span>${escapeHtml(analysis.tradeDate)} · 截至 ${escapeHtml(analysis.asOf.slice(11, 19))} ET</span>
+        <strong class="${pnlClass(analysis.score)}">${escapeHtml(analysis.signalLabel)}</strong>
+        <div>方向评分 <b class="${pnlClass(analysis.score)}">${analysis.score >= 0 ? '+' : ''}${Number(analysis.score).toFixed(1)}</b> · 证据置信 ${Number(analysis.confidence).toFixed(1)}分 · ${escapeHtml(analysis.dataLevel)}</div>
+      </article>
+      <div class="intraday-flow-metrics">
+        <article><span>主动买入成交额</span><strong class="positive">${compactUsd(metrics.buyTurnover)}</strong></article>
+        <article><span>主动卖出成交额</span><strong class="negative">${compactUsd(metrics.sellTurnover)}</strong></article>
+        <article><span>净主动成交额</span><strong class="${pnlClass(metrics.netActiveTurnover)}">${compactUsd(metrics.netActiveTurnover)}</strong></article>
+        <article><span>主动成交差比例</span><strong class="${pnlClass(metrics.activeTurnoverRatio)}">${ratio(metrics.activeTurnoverRatio)}</strong></article>
+        <article><span>大额主动买入</span><strong class="positive">${compactUsd(metrics.largeBuyTurnover)}</strong></article>
+        <article><span>大额主动卖出</span><strong class="negative">${compactUsd(metrics.largeSellTurnover)}</strong></article>
+        <article><span>VWAP / 最新价</span><strong>${money(metrics.vwap)} / ${money(metrics.latestPrice)}</strong></article>
+        <article><span>逐笔数 / 分钟数</span><strong>${Number(metrics.tickCount || 0).toLocaleString('zh-CN')} / ${Number(metrics.barCount || 0).toLocaleString('zh-CN')}</strong></article>
+        <article><span>逐笔分钟覆盖率</span><strong>${ratio(metrics.tickMinuteCoverage)}</strong></article>
+        <article><span>方向笔数覆盖率</span><strong>${ratio(metrics.directionCountCoverage)}</strong></article>
+      </div>
+    </div>
+    <p class="flow-explanation">${escapeHtml(analysis.explanation)}</p>
+    ${anomalies ? `<div class="flow-anomalies"><strong>盘中异常</strong>${anomalies}</div>` : ''}
+    <div class="volume-history-head"><strong>最近10分钟主动成交</strong><span>BUY/SELL 来自富途逐笔成交方向；红色为主动买入，绿色为主动卖出</span></div>
+    <div class="table-wrap volume-history-wrap">
+      <table class="intraday-flow-table">
+        <thead><tr><th>美东时间</th><th>主动买入</th><th>主动卖出</th><th>净主动成交</th><th>逐笔数</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${rows ? '' : '<div class="empty">分钟线已收到，但逐笔方向仍在积累。</div>'}
+    </div>
+    <p class="driver-disclaimer">净主动成交额是成交发生在买卖盘两侧的方向代理，不代表资金进入或离开公司，也不能确认机构或最终账户身份。</p>`;
+}
+
 async function loadExternalDrivers() {
   const ticker = document.querySelector('#event-ticker').value;
   state.externalDrivers = ticker ? await api(`/api/drivers?ticker=${encodeURIComponent(ticker)}`) : null;
@@ -887,16 +959,23 @@ async function loadInvestmentAdvice() {
 
 async function loadCapitalFlow() {
   const ticker = document.querySelector('#capital-ticker').value;
-  if (!ticker) state.capitalFlow = null;
+  if (!ticker) {
+    state.capitalFlow = null;
+    state.intradayFlow = null;
+    state.capitalLoadedTicker = null;
+  }
   else {
-    const [analysis, history] = await Promise.all([
+    const [analysis, history, intradayFlow] = await Promise.all([
       api(`/api/capital-flow?ticker=${encodeURIComponent(ticker)}`),
-      api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`)
+      api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`),
+      api(`/api/intraday-flow?ticker=${encodeURIComponent(ticker)}&limit=30`)
     ]);
     state.capitalFlow = { ...analysis, history };
+    state.intradayFlow = intradayFlow;
     state.capitalLoadedTicker = ticker;
   }
   renderCapitalFlow();
+  renderIntradayFlow();
 }
 
 async function loadEvents() {
@@ -943,6 +1022,7 @@ function renderConfig() {
     ['行情数据源', config.marketDataProvider], ['可靠度门槛', `${config.reliabilityGate}分`],
     ['SEC EDGAR', config.sec.configured ? `已配置（限速 ${config.sec.requestsPerSecond}/秒）` : '尚未配置联系邮箱'],
     ['Alpha Vantage预期', config.alphaVantage?.configured ? '已配置，日终自动更新' : '尚未配置API Key'],
+    ['富途分钟行情', config.futu?.enabled ? `${config.futu.collector?.status || '等待连接'} · ${config.futu.host}:${config.futu.port}` : '未启用'],
     ['macOS通知', config.notifications.macosEnabled ? '已启用' : '未启用'],
     ['邮件通知', config.notifications.emailEnabled ? (config.notifications.emailConfigured ? '已配置' : '缺少配置') : '未启用'],
     ['云端LLM', config.llm.enabled ? (config.llm.configured ? config.llm.model : '缺少配置') : '未启用']
@@ -958,7 +1038,7 @@ async function loadAll() {
     api('/api/news?limit=100'), api('/api/news/sentiment')
   ]);
   Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
-  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderInvestmentAdvice(); renderReviews(); renderConfig();
+  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderReviews(); renderConfig();
 }
 
 function formData(form) {
@@ -1165,7 +1245,9 @@ document.querySelector('#run-capital-flow').addEventListener('click', async (eve
       method: 'POST', body: JSON.stringify({ ticker })
     });
     state.capitalFlow.history = await api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`);
+    state.intradayFlow = await api(`/api/intraday-flow?ticker=${encodeURIComponent(ticker)}&limit=30`);
     renderCapitalFlow();
+    renderIntradayFlow();
     await loadInvestmentAdvice();
     const notified = state.capitalFlow.volumeNotifications?.length || 0;
     showToast(`${ticker} 资金行为识别已更新：${state.capitalFlow.signalLabel}${notified ? `，已发送${notified}条放量提醒` : ''}`);
@@ -1174,6 +1256,23 @@ document.querySelector('#run-capital-flow').addEventListener('click', async (eve
   } finally {
     button.disabled = false;
     button.textContent = '识别资金行为';
+  }
+});
+
+document.querySelector('#restart-futu').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在连接…';
+  try {
+    const result = await api('/api/futu/restart', { method: 'POST', body: '{}' });
+    showToast(result.status === 'missing_sdk' ? result.lastError : '富途分钟行情采集器已启动', result.status === 'missing_sdk');
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await loadCapitalFlow();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '连接富途分钟行情';
   }
 });
 
@@ -1353,3 +1452,15 @@ document.querySelector('#test-notification').addEventListener('click', async () 
 
 document.querySelector('#valuation-estimate-form').elements.asOf.value = currentEtDate();
 loadAll().catch((error) => showToast(`加载失败：${error.message}`, true));
+
+setInterval(async () => {
+  if (document.hidden || !document.querySelector('#view-capital').classList.contains('active')) return;
+  const ticker = document.querySelector('#capital-ticker').value;
+  if (!ticker) return;
+  try {
+    state.intradayFlow = await api(`/api/intraday-flow?ticker=${encodeURIComponent(ticker)}&limit=30`);
+    renderIntradayFlow();
+  } catch {
+    // 后台轮询失败时保留最后一次可用结果，手动操作仍会显示明确错误。
+  }
+}, 15_000);

@@ -258,6 +258,7 @@
             <label class="inline-select">股票
               <select id="capital-ticker" aria-label="资金分析股票"><option value="">请选择股票</option></select>
             </label>
+            <button id="restart-futu" class="button">连接富途分钟行情</button>
             <button id="run-capital-flow" class="button primary">识别资金行为</button>
           </div>
         </article>
@@ -266,6 +267,15 @@
           <div class="panel-head"><div><p class="eyebrow">CAPITAL FLOW BEHAVIOR</p><h2>成交量趋势与资金行为</h2></div><small class="muted">日线量价代理 · 建仓/派发概率信号</small></div>
           <div id="capital-flow-content"></div>
           <div id="capital-flow-empty" class="empty">请选择一只股票查看成交量和资金行为。</div>
+        </article>
+
+        <article class="panel intraday-flow-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">FUTU TICK DIRECTION · 1 MINUTE</p><h2>分钟资金流向</h2></div>
+            <small id="intraday-flow-status" class="muted">等待富途行情</small>
+          </div>
+          <div id="intraday-flow-content"></div>
+          <div id="intraday-flow-empty" class="empty">请选择股票并连接富途分钟行情。</div>
         </article>
       </section>
 

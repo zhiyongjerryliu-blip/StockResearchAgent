@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +35,18 @@ export const config = Object.freeze({
   },
   alphaVantage: {
     apiKey: process.env.ALPHA_VANTAGE_API_KEY || ''
+  },
+  futu: {
+    enabled: boolEnv(
+      'FUTU_ENABLED',
+      process.platform === 'darwin' && fs.existsSync('/Applications/Futu_OpenD.app')
+    ),
+    host: process.env.FUTU_OPEND_HOST || '127.0.0.1',
+    port: intEnv('FUTU_OPEND_PORT', 11111),
+    pythonPath: resolveProjectPath(process.env.FUTU_PYTHON_PATH || './.venv-futu/bin/python'),
+    session: process.env.FUTU_MARKET_SESSION || 'RTH',
+    backfillDays: Math.min(60, Math.max(0, intEnv('FUTU_BACKFILL_DAYS', 35))),
+    tickRetentionDays: Math.min(30, Math.max(1, intEnv('FUTU_TICK_RETENTION_DAYS', 7)))
   },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {

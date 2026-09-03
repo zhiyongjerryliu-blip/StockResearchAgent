@@ -424,6 +424,84 @@ CREATE TABLE IF NOT EXISTS volume_alerts (
 CREATE INDEX IF NOT EXISTS idx_volume_alerts_ticker_date
 ON volume_alerts(ticker, trade_date DESC, alert_type);
 
+CREATE TABLE IF NOT EXISTS prices_intraday (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  bar_time_et TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  interval TEXT NOT NULL DEFAULT '1M',
+  session TEXT NOT NULL DEFAULT 'RTH',
+  open REAL,
+  high REAL,
+  low REAL,
+  close REAL NOT NULL,
+  volume REAL,
+  turnover REAL,
+  provider TEXT NOT NULL DEFAULT 'futu',
+  is_final INTEGER NOT NULL DEFAULT 1,
+  ingested_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, bar_time_et, interval, session, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prices_intraday_ticker_time
+ON prices_intraday(ticker, bar_time_et DESC);
+
+CREATE TABLE IF NOT EXISTS ticks_intraday (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  sequence TEXT NOT NULL,
+  trade_time_et TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  price REAL NOT NULL,
+  volume REAL NOT NULL,
+  turnover REAL NOT NULL,
+  direction TEXT NOT NULL,
+  trade_type TEXT,
+  session TEXT NOT NULL DEFAULT 'RTH',
+  provider TEXT NOT NULL DEFAULT 'futu',
+  ingested_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, trade_date, sequence, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ticks_intraday_ticker_time
+ON ticks_intraday(ticker, trade_time_et DESC);
+
+CREATE TABLE IF NOT EXISTS intraday_tick_minutes (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  minute_et TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  session TEXT NOT NULL DEFAULT 'RTH',
+  buy_turnover REAL NOT NULL DEFAULT 0,
+  sell_turnover REAL NOT NULL DEFAULT 0,
+  neutral_turnover REAL NOT NULL DEFAULT 0,
+  buy_count INTEGER NOT NULL DEFAULT 0,
+  sell_count INTEGER NOT NULL DEFAULT 0,
+  neutral_count INTEGER NOT NULL DEFAULT 0,
+  volume REAL NOT NULL DEFAULT 0,
+  last_price REAL,
+  provider TEXT NOT NULL DEFAULT 'futu',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, minute_et, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_intraday_tick_minutes_ticker_time
+ON intraday_tick_minutes(ticker, minute_et DESC);
+
+CREATE TABLE IF NOT EXISTS intraday_flow_snapshots (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of_minute TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  signal TEXT NOT NULL,
+  score REAL NOT NULL,
+  confidence REAL NOT NULL,
+  metrics_json TEXT NOT NULL DEFAULT '{}',
+  limitations_json TEXT NOT NULL DEFAULT '[]',
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of_minute, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_intraday_flow_ticker_time
+ON intraday_flow_snapshots(ticker, as_of_minute DESC);
+
 CREATE TABLE IF NOT EXISTS predictions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT NOT NULL REFERENCES securities(ticker),
