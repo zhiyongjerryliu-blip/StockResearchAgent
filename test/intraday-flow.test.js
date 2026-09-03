@@ -4,8 +4,8 @@ import { openDatabase } from '../src/db.js';
 import { upsertWatchlistItem } from '../src/repository.js';
 import {
   analyzeIntradayFlow, ingestFutuBars, ingestFutuTicks,
-  INTRADAY_FLOW_MODEL_VERSION, listIntradayFlowMinutes, rebuildMissingIntradayMinutes,
-  saveIntradayFlowSnapshot
+  INTRADAY_FLOW_MODEL_VERSION, listIntradayFlowMinutes, notifyIntradayFlowAnomalies,
+  rebuildMissingIntradayMinutes, saveIntradayFlowSnapshot
 } from '../src/intraday-flow.js';
 
 function minute(index) {
@@ -159,5 +159,58 @@ test('升级已有数据库时可从原始逐笔重建分钟聚合', () => {
   `).get();
   assert.equal(minute.buy_turnover, 1000);
   assert.equal(minute.buy_count, 1);
+  db.close();
+});
+
+test('高置信P1分钟主动卖出异常立即提醒且同日幂等去重', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'ALERT' });
+  const sent = [];
+  const analysis = {
+    ticker: 'ALERT', tradeDate: '2026-09-01', asOf: '2026-09-01 15:59:00',
+    signal: 'STRONG_OUTFLOW', score: -72, confidence: 76,
+    dataLevel: 'FUTU_TICK_DIRECTION',
+    metrics: {
+      activeTurnoverRatio: -0.52, netActiveTurnover: -1_250_000,
+      tickMinuteCoverage: 0.94
+    },
+    anomalies: [{
+      code: 'ACTIVE_SELL_IMBALANCE', direction: 'OUTFLOW', severity: 'P1',
+      label: '主动卖出成交显著占优'
+    }]
+  };
+  const notifier = async (_db, input) => {
+    sent.push(input);
+    return { id: sent.length };
+  };
+
+  assert.equal((await notifyIntradayFlowAnomalies(db, analysis, { notifier })).length, 1);
+  assert.equal((await notifyIntradayFlowAnomalies(db, analysis, { notifier })).length, 0);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].category, 'INTRADAY_FLOW_ANOMALY');
+  assert.equal(sent[0].severity, 'P1');
+  assert.match(sent[0].body, /不能确认机构身份/);
+  assert.equal(db.prepare(`
+    SELECT COUNT(*) AS count FROM volume_alerts WHERE ticker = 'ALERT'
+  `).get().count, 1);
+  db.close();
+});
+
+test('低置信或分钟代理信号不会触发即时资金提醒', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'QUIET' });
+  const sent = [];
+  const base = {
+    ticker: 'QUIET', tradeDate: '2026-09-01', asOf: '2026-09-01 10:00:00',
+    signal: 'STRONG_OUTFLOW', score: -70, confidence: 40,
+    dataLevel: 'FUTU_TICK_DIRECTION', metrics: {},
+    anomalies: [{ code: 'ACTIVE_SELL_IMBALANCE', direction: 'OUTFLOW', severity: 'P1' }]
+  };
+  const notifier = async (_db, input) => { sent.push(input); return input; };
+  assert.equal((await notifyIntradayFlowAnomalies(db, base, { notifier })).length, 0);
+  assert.equal((await notifyIntradayFlowAnomalies(db, {
+    ...base, confidence: 80, dataLevel: 'FUTU_MINUTE_PROXY'
+  }, { notifier })).length, 0);
+  assert.equal(sent.length, 0);
   db.close();
 });

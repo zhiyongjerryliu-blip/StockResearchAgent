@@ -7,6 +7,7 @@ import { getExternalDriversOverview } from './external-drivers.js';
 import { getMarketContext } from './market-context.js';
 import { buildInvestmentAdvice } from './advice.js';
 import { analyzeCapitalFlow } from './capital-flow.js';
+import { analyzeIntradayFlow } from './intraday-flow.js';
 
 function volumeContext(db, ticker) {
   const rows = toPlainRows(db.prepare(`
@@ -77,7 +78,8 @@ function recentResearchEvents(db, ticker, reviewDate, lookbackDays = 7) {
 
 function deterministicStockNarrative(review) {
   const {
-    position, market, predictions, events, sentiment, externalDrivers, investmentAdvice, capitalFlow
+    position, market, predictions, events, sentiment, externalDrivers,
+    investmentAdvice, capitalFlow, intradayFlow
   } = review;
   const pieces = [];
   if (position.currentPrice == null) {
@@ -107,6 +109,19 @@ function deterministicStockNarrative(review) {
     );
   } else {
     pieces.push('资金行为有效成交量历史不足，暂不判断建仓或派发。');
+  }
+  if (intradayFlow?.asOf) {
+    if (['FUTU_TICK_DIRECTION', 'FUTU_TICK_DIRECTION_PARTIAL'].includes(intradayFlow.dataLevel)) {
+      pieces.push(
+        `分钟主动资金为${intradayFlow.signalLabel}（评分${intradayFlow.score >= 0 ? '+' : ''}${intradayFlow.score.toFixed(1)}，` +
+        `证据置信${intradayFlow.confidence.toFixed(1)}分，截至${intradayFlow.asOf.slice(11, 19)} ET）；` +
+        '逐笔方向不能确认机构或最终账户身份。'
+      );
+    } else {
+      pieces.push('当日仅有分钟量价代理，逐笔主动买卖覆盖不足，不纳入高置信资金判断。');
+    }
+  } else {
+    pieces.push('当日未采集到可用的富途分钟成交数据。');
   }
   const secEvents = events.filter((event) => event.source_type === 'SEC_8K');
   const newsRisks = events.filter((event) => event.source_type === 'NEWS_RISK');
@@ -202,6 +217,7 @@ export async function generateDailyReviews(db, reviewDate) {
       position,
       market: volumeContext(db, position.ticker),
       capitalFlow: analyzeCapitalFlow(db, position.ticker, reviewDate),
+      intradayFlow: analyzeIntradayFlow(db, position.ticker, reviewDate),
       events: recentResearchEvents(db, position.ticker, reviewDate),
       sentiment: getNewsSentimentSummary(db, { ticker: position.ticker, asOf: reviewDate }),
       externalDrivers: getExternalDriversOverview(db, position.ticker, reviewDate),
@@ -209,7 +225,8 @@ export async function generateDailyReviews(db, reviewDate) {
       predictions: latestPredictions(db, position.ticker),
       limitations: [
         '公开成交数据不能确认最终交易账户身份',
-        '当前资金行为来自日线量价代理，不是逐笔主动买卖金额',
+        '日线资金行为仍为量价代理；富途逐笔方向也不能识别机构或最终账户',
+        '分钟资金信号只有在交易日匹配且覆盖和置信度达标时才进入条件式建议',
         '未达到综合可靠度门槛的预测不得作为正式预测发布',
         ...(position.priceDataStatus === 'MISSING_PREVIOUS'
           ? [`前一交易日 ${position.expectedPreviousPriceDate} 的收盘行情缺失，不得计算当日涨跌和当日盈亏`]
@@ -222,7 +239,7 @@ export async function generateDailyReviews(db, reviewDate) {
     } catch (error) {
       structured.llmError = error.message;
     }
-    await saveReview(db, reviewDate, position.ticker, 'STOCK', structured, narrative, 'review-v1');
+    await saveReview(db, reviewDate, position.ticker, 'STOCK', structured, narrative, 'review-v2');
     stockReviews.push({ ticker: position.ticker, structured, narrative });
   }
 
@@ -255,6 +272,16 @@ export async function generateDailyReviews(db, reviewDate) {
       total: review.structured.sentiment.total,
       uniqueSources: review.structured.sentiment.uniqueSources,
       averageSentiment: review.structured.sentiment.averageSentiment
+    })),
+    intradayFlow: stockReviews.map((review) => ({
+      ticker: review.ticker,
+      tradeDate: review.structured.intradayFlow.tradeDate,
+      asOf: review.structured.intradayFlow.asOf,
+      signal: review.structured.intradayFlow.signal,
+      signalLabel: review.structured.intradayFlow.signalLabel,
+      score: review.structured.intradayFlow.score,
+      confidence: review.structured.intradayFlow.confidence,
+      dataLevel: review.structured.intradayFlow.dataLevel
     }))
   };
   const portfolioSecEvents = portfolioStructured.recentEvents.filter(
@@ -266,10 +293,13 @@ export async function generateDailyReviews(db, reviewDate) {
   const portfolioRiskCount = portfolioSecEvents.filter(
     (event) => ['P0', 'P1'].includes(event.severity)
   ).length;
+  const intradayOutflowCount = portfolioStructured.intradayFlow.filter((item) => (
+    item.signal === 'STRONG_OUTFLOW' && item.confidence >= 60
+  )).length;
   const portfolioNarrative = portfolio.positions.length
-    ? `股票池共 ${portfolio.positions.length} 只股票，当前总市值 $${portfolio.totals.marketValue.toFixed(2)}，今日盈亏 $${portfolio.totals.dailyPnl.toFixed(2)}，累计总盈亏 $${portfolio.totals.totalPnl.toFixed(2)}。近7日有 ${portfolioSecEvents.length} 个SEC 8-K事件${portfolioRiskCount ? `，其中${portfolioRiskCount}个为P0/P1风险` : ''}，以及${portfolioNewsRisks.length}个待核实新闻风险信号。`
+    ? `股票池共 ${portfolio.positions.length} 只股票，当前总市值 $${portfolio.totals.marketValue.toFixed(2)}，今日盈亏 $${portfolio.totals.dailyPnl.toFixed(2)}，累计总盈亏 $${portfolio.totals.totalPnl.toFixed(2)}。近7日有 ${portfolioSecEvents.length} 个SEC 8-K事件${portfolioRiskCount ? `，其中${portfolioRiskCount}个为P0/P1风险` : ''}，以及${portfolioNewsRisks.length}个待核实新闻风险信号；${intradayOutflowCount}只股票出现高置信分钟主动卖出显著占优。`
     : '股票池为空，请先录入测试股票和交易。';
-  await saveReview(db, reviewDate, null, 'PORTFOLIO', portfolioStructured, portfolioNarrative, 'review-v1');
+  await saveReview(db, reviewDate, null, 'PORTFOLIO', portfolioStructured, portfolioNarrative, 'review-v2');
 
   return { reviewDate, stockReviews, portfolio: { structured: portfolioStructured, narrative: portfolioNarrative } };
 }

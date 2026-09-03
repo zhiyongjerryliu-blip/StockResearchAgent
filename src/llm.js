@@ -24,6 +24,7 @@ export async function explainStructuredReview(structuredReview, fetchImpl = fetc
             '当priceDataStatus不是COMPLETE，或previousClose、dailyReturn、dailyPnl任一缺失时，必须明确说明前一交易日行情不完整，禁止推断涨跌幅和当日盈亏。',
             'externalDrivers中的代理公司不得写成已确认客户或供应商；只有verifiedDirectRelationship为true时才能称为已核实关系。',
             '资本开支只能表述为投资代理，不能单独断言已经扩产；回购现金支出不等同于剩余授权额度。联邦基金期货隐含利率只是预期变化代理，不是FedWatch概率。',
+            'intradayFlow中的BUY/SELL只是成交发生在买卖盘两侧的方向代理，不能写成机构、主力或最终账户的真实资金流入流出；低置信或分钟代理数据不得升级为确定性结论。',
             'investmentAdvice是确定性引擎输出。不得改变action、impactScore、publicationStatus、目标位或失效条件；formalReady为false时必须明确仅供观察或风险复核，禁止改写成正式买卖建议。',
             '如果数据不足，直接写数据不足。不得给出确定买卖命令。'
           ].join('')

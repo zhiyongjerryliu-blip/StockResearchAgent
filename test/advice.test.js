@@ -5,6 +5,7 @@ import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/rep
 import {
   ADVICE_MODEL_VERSION, buildInvestmentAdvice, saveInvestmentAdvice
 } from '../src/advice.js';
+import { ingestFutuBars, ingestFutuTicks } from '../src/intraday-flow.js';
 
 function seedPrices(db, ticker, count = 130, step = 1) {
   const end = new Date('2026-09-01T00:00:00.000Z');
@@ -32,6 +33,30 @@ function insertImpactEvent(db, ticker) {
   `).run(ticker, JSON.stringify([{
     sourceTier: 'TIER_1', relationType: 'DIRECT', direction: 'POSITIVE'
   }]), timestamp, timestamp);
+}
+
+function seedFullSessionOutflow(db, ticker) {
+  const bars = [];
+  const ticks = [];
+  for (let index = 0; index < 390; index += 1) {
+    const totalMinutes = (9 * 60) + 30 + index;
+    const hour = Math.floor(totalMinutes / 60);
+    const minute = totalMinutes % 60;
+    const minuteText = `2026-09-01 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    const price = 200 - (index * 0.01);
+    bars.push({
+      ticker, barTimeEt: `${minuteText}:00`, tradeDate: '2026-09-01',
+      open: price + 0.01, high: price + 0.02, low: price - 0.02, close: price,
+      volume: 1000, turnover: price * 1000, isFinal: true, session: 'RTH'
+    });
+    ticks.push({
+      ticker, sequence: String(index), tradeTimeEt: `${minuteText}:30`,
+      tradeDate: '2026-09-01', price, volume: 1000, turnover: price * 1000,
+      direction: 'SELL', tradeType: 'AUTO_MATCH', session: 'RTH'
+    });
+  }
+  ingestFutuBars(db, bars);
+  ingestFutuTicks(db, ticks);
 }
 
 test('没有通过可靠度闸门时只输出观察建议且不发布目标位', () => {
@@ -126,5 +151,24 @@ test('未过预测闸门但负面综合分达到阈值时只建议评估减仓',
   assert.equal(item.formalReady, false);
   assert.equal(item.action, 'REDUCE_REVIEW');
   assert.equal(item.publicationStatus, 'OBSERVE');
+  db.close();
+});
+
+test('高置信分钟主动卖出进入建议但不能单独触发清仓结论', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEST' });
+  addTransaction(db, {
+    ticker: 'TEST', side: 'BUY', tradeTime: '2026-08-01', quantity: 10, price: 100
+  });
+  seedPrices(db, 'TEST', 30, 0);
+  seedFullSessionOutflow(db, 'TEST');
+
+  const overview = buildInvestmentAdvice(db, 'TEST', '2026-09-01');
+  assert.ok(overview.advice.every((item) => item.components.intradayFlow.available));
+  assert.ok(overview.advice.every((item) => item.components.intradayFlow.signal === 'STRONG_OUTFLOW'));
+  assert.ok(overview.advice.every((item) => item.action === 'REDUCE_REVIEW'));
+  assert.ok(overview.advice.every((item) => item.formalReady === false));
+  assert.ok(overview.advice.every((item) => item.targetPrice == null));
+  assert.match(overview.policy.riskOverride, /不能单独触发清仓/);
   db.close();
 });

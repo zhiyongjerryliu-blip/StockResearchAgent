@@ -712,7 +712,8 @@ function renderInvestmentAdvice() {
   }
   empty.classList.add('hidden');
   const componentLabels = {
-    price: '价格趋势', capitalFlow: '资金行为', events: '事件影响', macro: '美债/利率',
+    price: '价格趋势', capitalFlow: '日线资金行为', intradayFlow: '分钟主动成交',
+    events: '事件影响', macro: '美债/利率',
     valuation: '估值', earnings: 'EPS修订', fundamentals: '基本面'
   };
   content.innerHTML = `<div class="advice-grid">${(overview.advice || []).map((item) => {

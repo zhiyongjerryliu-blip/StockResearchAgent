@@ -33,8 +33,8 @@ import {
 import { FutuCollector } from './futu.js';
 import {
   analyzeIntradayFlow, ingestFutuBars, ingestFutuTicks,
-  listIntradayFlowMinutes, pruneIntradayTicks, rebuildMissingIntradayMinutes,
-  saveIntradayFlowSnapshot
+  listIntradayFlowMinutes, notifyIntradayFlowAnomalies, pruneIntradayTicks,
+  rebuildMissingIntradayMinutes, saveIntradayFlowSnapshot
 } from './intraday-flow.js';
 import {
   addPeer,
@@ -91,12 +91,13 @@ function missingIntradayHistory(tickers) {
 
 function scheduleIntradaySnapshot(ticker) {
   if (intradaySnapshotTimers.has(ticker)) return;
-  const timer = setTimeout(() => {
+  const timer = setTimeout(async () => {
     intradaySnapshotTimers.delete(ticker);
     try {
-      saveIntradayFlowSnapshot(db, ticker);
+      const analysis = saveIntradayFlowSnapshot(db, ticker);
+      await notifyIntradayFlowAnomalies(db, analysis);
     } catch (error) {
-      console.error(`保存 ${ticker} 分钟资金流快照失败：`, error.message);
+      console.error(`保存或提醒 ${ticker} 分钟资金流快照失败：`, error.message);
     }
   }, 1000);
   intradaySnapshotTimers.set(ticker, timer);

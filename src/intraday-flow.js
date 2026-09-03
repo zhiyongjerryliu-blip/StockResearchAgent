@@ -1,5 +1,6 @@
 import { nowIso, toPlainRows } from './db.js';
 import { normalizeTicker, round } from './domain.js';
+import { createNotification } from './notifications.js';
 
 export const INTRADAY_FLOW_MODEL_VERSION = 'futu-tick-direction-v1-2026-09-02';
 
@@ -384,6 +385,76 @@ export function saveIntradayFlowSnapshot(db, tickerValue, tradeDate = null) {
     JSON.stringify(analysis.limitations), analysis.modelVersion, nowIso()
   );
   return analysis;
+}
+
+export function saveWatchlistIntradayFlow(db, tradeDate = null) {
+  return toPlainRows(db.prepare(`
+    SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
+  `).all()).map(({ ticker }) => {
+    try {
+      return { ticker, ok: true, analysis: saveIntradayFlowSnapshot(db, ticker, tradeDate) };
+    } catch (error) {
+      return { ticker, ok: false, error: error.message };
+    }
+  });
+}
+
+export async function notifyIntradayFlowAnomalies(db, analysis, options = {}) {
+  const notifier = options.notifier || createNotification;
+  const minimumConfidence = Number.isFinite(options.minimumConfidence)
+    ? options.minimumConfidence : 60;
+  if (
+    !analysis?.asOf || !analysis.tradeDate ||
+    !['FUTU_TICK_DIRECTION', 'FUTU_TICK_DIRECTION_PARTIAL'].includes(analysis.dataLevel) ||
+    analysis.confidence < minimumConfidence
+  ) return [];
+  const eligible = (analysis.anomalies || []).filter((item) => (
+    item.severity === 'P1' &&
+    ['ACTIVE_BUY_IMBALANCE', 'ACTIVE_SELL_IMBALANCE'].includes(item.code)
+  ));
+  const notifications = [];
+  for (const anomaly of eligible) {
+    const eventKey = `INTRADAY_FLOW:${analysis.ticker}:${analysis.tradeDate}:${anomaly.code}:${INTRADAY_FLOW_MODEL_VERSION}`;
+    if (db.prepare('SELECT 1 FROM volume_alerts WHERE event_key = ?').get(eventKey)) continue;
+    const isOutflow = anomaly.direction === 'OUTFLOW';
+    const ratio = Number(analysis.metrics.activeTurnoverRatio || 0) * 100;
+    const net = Number(analysis.metrics.netActiveTurnover || 0);
+    const input = {
+      ticker: analysis.ticker,
+      severity: 'P1',
+      category: 'INTRADAY_FLOW_ANOMALY',
+      title: `${analysis.ticker} ${isOutflow ? '主动卖出' : '主动买入'}显著占优`,
+      body: `${analysis.tradeDate} 截至 ${String(analysis.asOf).slice(11, 19)} ET，` +
+        `主动成交差比例${ratio >= 0 ? '+' : ''}${ratio.toFixed(1)}%，` +
+        `净主动成交额${net >= 0 ? '+' : ''}${Math.round(net).toLocaleString('zh-CN')}美元，` +
+        `证据置信${analysis.confidence.toFixed(1)}分。该信号不能确认机构身份，` +
+        `${isOutflow ? '请立即结合价格、公告和持仓风险复核。' : '请结合价格与基本面确认，不构成自动买入指令。'}`,
+      evidence: [{
+        eventKey,
+        tradeDate: analysis.tradeDate,
+        asOf: analysis.asOf,
+        signal: analysis.signal,
+        score: analysis.score,
+        confidence: analysis.confidence,
+        dataLevel: analysis.dataLevel,
+        anomalyCode: anomaly.code,
+        activeTurnoverRatio: analysis.metrics.activeTurnoverRatio,
+        netActiveTurnover: analysis.metrics.netActiveTurnover,
+        tickMinuteCoverage: analysis.metrics.tickMinuteCoverage
+      }]
+    };
+    const notification = await notifier(db, input);
+    db.prepare(`
+      INSERT INTO volume_alerts (
+        event_key, ticker, trade_date, alert_type, severity, notified_at, basis_json
+      ) VALUES (?, ?, ?, ?, 'P1', ?, ?)
+    `).run(
+      eventKey, analysis.ticker, analysis.tradeDate, anomaly.code,
+      nowIso(), JSON.stringify(input.evidence[0])
+    );
+    notifications.push(notification);
+  }
+  return notifications;
 }
 
 export function listIntradayFlowMinutes(db, tickerValue, tradeDate = null, limit = 30) {

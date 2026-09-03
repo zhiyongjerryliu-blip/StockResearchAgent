@@ -5,15 +5,16 @@ import { getExternalDriversOverview } from './external-drivers.js';
 import { calculatePosition } from './portfolio.js';
 import { getValuationOverview } from './valuation.js';
 import { analyzeCapitalFlow } from './capital-flow.js';
+import { analyzeIntradayFlow } from './intraday-flow.js';
 
-export const ADVICE_MODEL_VERSION = 'evidence-impact-advice-v2-2026-09-02';
+export const ADVICE_MODEL_VERSION = 'evidence-impact-advice-v3-2026-09-03';
 export const ADVICE_HORIZONS = Object.freeze([21, 63, 126]);
 
 const HORIZON_LABELS = { 21: '1个月', 63: '3个月', 126: '6个月' };
 const COMPONENT_WEIGHTS = Object.freeze({
-  21: { price: 0.22, capitalFlow: 0.20, events: 0.22, macro: 0.13, valuation: 0.08, earnings: 0.08, fundamentals: 0.07 },
-  63: { price: 0.12, capitalFlow: 0.12, events: 0.18, macro: 0.13, valuation: 0.18, earnings: 0.18, fundamentals: 0.09 },
-  126: { price: 0.08, capitalFlow: 0.07, events: 0.14, macro: 0.14, valuation: 0.24, earnings: 0.19, fundamentals: 0.14 }
+  21: { price: 0.20, capitalFlow: 0.16, intradayFlow: 0.10, events: 0.20, macro: 0.12, valuation: 0.08, earnings: 0.08, fundamentals: 0.06 },
+  63: { price: 0.11, capitalFlow: 0.10, intradayFlow: 0.06, events: 0.17, macro: 0.13, valuation: 0.18, earnings: 0.18, fundamentals: 0.07 },
+  126: { price: 0.08, capitalFlow: 0.06, intradayFlow: 0.03, events: 0.14, macro: 0.14, valuation: 0.24, earnings: 0.19, fundamentals: 0.12 }
 });
 
 const ACTION_LABELS = Object.freeze({
@@ -230,7 +231,7 @@ function weightedImpact(components, horizonDays, corporateAdjustment) {
   };
 }
 
-function determineAction({ score, prediction, position, eventContext, confidenceScore }) {
+function determineAction({ score, prediction, position, eventContext, intradayFlow, confidenceScore }) {
   const reliabilityScore = Number(prediction.reliabilityScore);
   const formalReady = prediction.available
     && prediction.publicationStatus === 'PUBLISHED'
@@ -240,6 +241,17 @@ function determineAction({ score, prediction, position, eventContext, confidence
   const hasPosition = position.quantity > 0;
   if (eventContext.officialCritical.length) {
     return { action: hasPosition ? 'EXIT_RISK_REVIEW' : 'AVOID', publicationStatus: 'RISK_OVERRIDE', formalReady };
+  }
+  const confirmedTacticalOutflow = intradayFlow.available
+    && intradayFlow.signal === 'STRONG_OUTFLOW'
+    && intradayFlow.confidence >= 60
+    && intradayFlow.anomalies.some((item) => item.code === 'ACTIVE_SELL_IMBALANCE' && item.severity === 'P1');
+  if (confirmedTacticalOutflow) {
+    return {
+      action: hasPosition ? 'REDUCE_REVIEW' : 'AVOID',
+      publicationStatus: 'OBSERVE',
+      formalReady: false
+    };
   }
   if (!formalReady) {
     if (eventContext.unverifiedHighRisk.length || score <= -35) {
@@ -292,12 +304,30 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
     anomalies: capitalFlow.anomalies,
     metrics: capitalFlow.metrics
   };
+  const intradayFlow = analyzeIntradayFlow(db, ticker, asOf);
+  const intradayFlowReady = intradayFlow.asOf
+    && intradayFlow.tradeDate === asOf
+    && intradayFlow.dataLevel === 'FUTU_TICK_DIRECTION'
+    && intradayFlow.confidence >= 55;
+  const intradayFlowComponent = {
+    available: intradayFlowReady,
+    score: intradayFlowReady ? intradayFlow.score : null,
+    signal: intradayFlow.signal,
+    signalLabel: intradayFlow.signalLabel,
+    confidence: intradayFlow.confidence,
+    dataLevel: intradayFlow.dataLevel,
+    asOf: intradayFlow.asOf,
+    explanation: intradayFlow.explanation,
+    anomalies: intradayFlow.anomalies,
+    metrics: intradayFlow.metrics
+  };
   const corporateAdjustment = corporateActionAdjustment(externalDrivers, asOf);
   const advice = ADVICE_HORIZONS.map((horizonDays) => {
     const prediction = latestPrediction(db, ticker, asOf, horizonDays);
     const components = {
       price: priceContext(db, ticker, asOf, horizonDays),
       capitalFlow: capitalFlowComponent,
+      intradayFlow: intradayFlowComponent,
       events: eventContext(db, ticker, asOf, horizonDays),
       macro: macroScore(externalDrivers.macro, horizonDays),
       valuation: valuationComponent,
@@ -316,7 +346,7 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
     const stance = impact.score >= 20 ? 'BULLISH' : impact.score <= -20 ? 'BEARISH' : 'NEUTRAL';
     const decision = determineAction({
       score: impact.score, prediction, position,
-      eventContext: components.events, confidenceScore
+      eventContext: components.events, intradayFlow: components.intradayFlow, confidenceScore
     });
     const currentPrice = components.price.currentPrice;
     const targetPrice = decision.formalReady && Number.isFinite(prediction.priceP50)
@@ -336,10 +366,11 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
       conditions: [
         decision.formalReady ? '预测保持PUBLISHED且综合可靠度不低于发布门槛' : '等待预测通过综合可靠度及样本量门槛',
         '事件原文与官方披露不存在相互冲突',
-        '价格和资金行为没有出现与研究方向相反的确认信号'
+        '日线及高置信分钟资金行为没有出现与研究方向相反的确认信号'
       ],
       invalidation: [
         '出现新的SEC P0/P1官方风险事件',
+        '富途完整逐笔显示高置信主动卖出显著占优',
         'EPS一致预期或行业需求方向显著反转',
         '实际价格越过已验证模型的失效位或预测区间'
       ]
@@ -358,7 +389,7 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
     advice,
     policy: {
       formalGate: `候选买入、加仓和减仓必须有PUBLISHED预测且综合可靠度≥${config.reliabilityGate}分。`,
-      riskOverride: 'SEC官方P0/P1可触发风险优先评估；未核实新闻最多触发风险复核。',
+      riskOverride: 'SEC官方P0/P1可触发风险优先评估；高置信分钟主动卖出最多触发减仓复核，不能单独触发清仓。',
       personalization: '尚未配置个人风险承受度、流动性需求及最大单股仓位，因此不输出仓位百分比。',
       llmBoundary: 'LLM只能解释结构化结果，不得改变分数、可靠度闸门、目标位或止损位。'
     }
