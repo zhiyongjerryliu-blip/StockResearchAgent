@@ -6,6 +6,7 @@ import {
   analyzeCapitalFlow, CAPITAL_FLOW_MODEL_VERSION, listCapitalFlowHistory,
   listRecentCapitalFlowDays, notifyVolumeAnomalies, saveCapitalFlow
 } from '../src/capital-flow.js';
+import { ingestFutuTicks } from '../src/intraday-flow.js';
 
 function seedTrend(db, ticker, direction = 1, count = 45) {
   const start = new Date('2026-06-01T00:00:00.000Z');
@@ -74,6 +75,12 @@ test('成交量与资金行为明细直接列出最近10个交易日且按日期
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'TEN' });
   seedTrend(db, 'TEN', 1, 15);
+  ingestFutuTicks(db, [
+    { ticker: 'TEN', sequence: '1', tradeTimeEt: '2026-06-15 09:30:01', tradeDate: '2026-06-15', price: 10, volume: 100, turnover: 1000, direction: 'BUY' },
+    { ticker: 'TEN', sequence: '2', tradeTimeEt: '2026-06-15 09:30:02', tradeDate: '2026-06-15', price: 10, volume: 20, turnover: 200, direction: 'SELL' },
+    { ticker: 'TEN', sequence: '1', tradeTimeEt: '2026-06-14 09:30:01', tradeDate: '2026-06-14', price: 10, volume: 10, turnover: 100, direction: 'BUY' },
+    { ticker: 'TEN', sequence: '2', tradeTimeEt: '2026-06-14 09:30:02', tradeDate: '2026-06-14', price: 10, volume: 90, turnover: 900, direction: 'SELL' }
+  ]);
   const rows = listRecentCapitalFlowDays(db, 'TEN', '2026-06-15', 10);
   assert.equal(rows.length, 10);
   assert.equal(rows[0].priceDate, '2026-06-15');
@@ -81,6 +88,14 @@ test('成交量与资金行为明细直接列出最近10个交易日且按日期
   assert.ok(rows.every((row) => Number.isFinite(row.close)));
   assert.ok(rows.every((row) => Number.isFinite(row.volume)));
   assert.equal(new Set(rows.map((row) => row.priceDate)).size, 10);
+  assert.equal(rows[0].activeBuyTurnover, 1000);
+  assert.equal(rows[0].activeSellTurnover, 200);
+  assert.equal(rows[0].netActiveTurnover, 800);
+  assert.equal(rows[0].activeFlowDirection, 'INFLOW');
+  assert.equal(rows[1].netActiveTurnover, -800);
+  assert.equal(rows[1].activeFlowDirection, 'OUTFLOW');
+  assert.equal(rows[2].netActiveTurnover, null);
+  assert.equal(rows[2].activeFlowDataLevel, 'NO_TICK_DIRECTION');
   db.close();
 });
 

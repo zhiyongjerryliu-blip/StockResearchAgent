@@ -3,7 +3,7 @@ const state = {
   eventFeed: { events: [], counts: {}, total: 0 },
   newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
   capitalFlow: null, intradayFlow: null, capitalLoadedTicker: null,
-  capitalChartVisible: new Set(['volume', 'averageVolume5d', 'averageVolume20d']),
+  capitalChartVisible: new Set(['volume', 'averageVolume5d', 'averageVolume20d', 'netActiveTurnover']),
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
@@ -734,10 +734,17 @@ function renderInvestmentAdvice() {
 }
 
 const CAPITAL_CHART_SERIES = [
-  { key: 'volume', label: '成交量', color: '#6fb1ff', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
-  { key: 'averageVolume5d', label: '5日均量', color: '#54d6c5', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
-  { key: 'averageVolume20d', label: '20日均量', color: '#8a7dff', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) }
+  { key: 'volume', label: '成交量', color: '#6fb1ff', kind: 'line', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
+  { key: 'averageVolume5d', label: '5日均量', color: '#54d6c5', kind: 'line', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
+  { key: 'averageVolume20d', label: '20日均量', color: '#8a7dff', kind: 'line', format: (value) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value) },
+  { key: 'netActiveTurnover', label: '净主动流入/流出', color: '#ff6b78', kind: 'bar' }
 ];
+
+function compactUsdAmount(value) {
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(Math.abs(value))
+    : '—';
+}
 
 function renderCapitalFlowChart(history) {
   const rows = [...(history || [])].sort((left, right) =>
@@ -746,23 +753,26 @@ function renderCapitalFlowChart(history) {
   const controls = CAPITAL_CHART_SERIES.map((series) => `
     <label class="capital-chart-toggle" style="--series-color:${series.color}">
       <input type="checkbox" data-capital-chart-series="${series.key}" ${state.capitalChartVisible.has(series.key) ? 'checked' : ''}>
-      <span></span>${escapeHtml(series.label)}
+      <span class="${series.kind === 'bar' ? 'capital-chart-bar-key' : ''}"></span>${escapeHtml(series.label)}
     </label>`).join('');
-  const selected = CAPITAL_CHART_SERIES.filter((series) => state.capitalChartVisible.has(series.key));
-  if (!rows.length || !selected.length) {
+  const selectedLines = CAPITAL_CHART_SERIES.filter((series) => (
+    series.kind === 'line' && state.capitalChartVisible.has(series.key)
+  ));
+  const showFlowBars = state.capitalChartVisible.has('netActiveTurnover');
+  if (!rows.length || (!selectedLines.length && !showFlowBars)) {
     return `<section id="capital-flow-chart" class="capital-chart">
-      <div class="capital-chart-head"><div><strong>10日成交量趋势</strong><span>纵轴为实际成交股数。</span></div><div class="capital-chart-controls">${controls}</div></div>
+      <div class="capital-chart-head"><div><strong>10日成交量与主动资金流</strong><span>左轴为成交股数，右轴为净主动成交额。</span></div><div class="capital-chart-controls">${controls}</div></div>
       <div class="capital-chart-empty">${rows.length ? '请至少选择一个指标。' : '暂无可绘制的交易日数据。'}</div>
     </section>`;
   }
 
   const width = 1080;
   const height = 360;
-  const margin = { top: 22, right: 24, bottom: 48, left: 54 };
+  const margin = { top: 22, right: 72, bottom: 48, left: 54 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const xAt = (index) => margin.left + (rows.length === 1 ? plotWidth / 2 : (index / (rows.length - 1)) * plotWidth);
-  const selectedValues = selected.flatMap((series) => rows.map((row) =>
+  const selectedValues = selectedLines.flatMap((series) => rows.map((row) =>
     row[series.key] == null ? Number.NaN : Number(row[series.key])
   )).filter(Number.isFinite);
   const axisMaximum = Math.max(...selectedValues, 1) * 1.08;
@@ -773,13 +783,13 @@ function renderCapitalFlowChart(history) {
   const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
     const y = margin.top + (ratio * plotHeight);
     return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" class="capital-chart-grid" />
-      <text x="${margin.left - 10}" y="${y + 4}" text-anchor="end" class="capital-chart-axis-label">${formatAxisVolume(axisMaximum * (1 - ratio))}</text>`;
+      ${selectedLines.length ? `<text x="${margin.left - 10}" y="${y + 4}" text-anchor="end" class="capital-chart-axis-label">${formatAxisVolume(axisMaximum * (1 - ratio))}</text>` : ''}`;
   }).join('');
   const dates = rows.map((row, index) => {
     const date = String(row.priceDate || row.asOf || '');
     return `<text x="${xAt(index)}" y="${height - 17}" text-anchor="middle" class="capital-chart-date">${escapeHtml(date.slice(5))}</text>`;
   }).join('');
-  const lines = selected.map((series) => {
+  const lines = selectedLines.map((series) => {
     const observations = rows.map((row, index) => ({
       index,
       value: row[series.key] == null ? Number.NaN : Number(row[series.key]),
@@ -791,13 +801,32 @@ function renderCapitalFlowChart(history) {
     const circles = observations.map((item) => `<circle cx="${xAt(item.index)}" cy="${yAt(item.value)}" r="4" fill="${series.color}" class="capital-chart-point"><title>${escapeHtml(item.date)} · ${escapeHtml(series.label)}：${escapeHtml(series.format(item.value))}</title></circle>`).join('');
     return `<polyline points="${points}" fill="none" stroke="${series.color}" class="capital-chart-line" />${circles}`;
   }).join('');
+  const flowValues = rows.map((row) => row.netActiveTurnover == null
+    ? Number.NaN : Number(row.netActiveTurnover));
+  const maximumAbsoluteFlow = Math.max(...flowValues.filter(Number.isFinite).map(Math.abs), 0);
+  const flowZeroY = margin.top + (plotHeight / 2);
+  const flowBarWidth = Math.min(42, (plotWidth / Math.max(rows.length, 1)) * 0.48);
+  const flowBars = showFlowBars && maximumAbsoluteFlow > 0 ? rows.map((row, index) => {
+    const value = row.netActiveTurnover == null ? Number.NaN : Number(row.netActiveTurnover);
+    if (!Number.isFinite(value)) return '';
+    const barHeight = Math.max(1, (Math.abs(value) / maximumAbsoluteFlow) * (plotHeight / 2));
+    const y = value >= 0 ? flowZeroY - barHeight : flowZeroY;
+    const direction = value >= 0 ? '流入' : '流出';
+    return `<rect x="${xAt(index) - (flowBarWidth / 2)}" y="${y}" width="${flowBarWidth}" height="${barHeight}" class="capital-chart-flow-bar ${value >= 0 ? 'inflow' : 'outflow'}"><title>${escapeHtml(row.priceDate || row.asOf)} · 净主动${direction}：${value >= 0 ? '+' : '-'}${escapeHtml(compactUsdAmount(value))}</title></rect>`;
+  }).join('') : '';
+  const flowAxis = showFlowBars && maximumAbsoluteFlow > 0 ? `
+    <line x1="${margin.left}" y1="${flowZeroY}" x2="${width - margin.right}" y2="${flowZeroY}" class="capital-chart-flow-zero" />
+    <text x="${width - margin.right + 9}" y="${margin.top + 4}" class="capital-chart-axis-label capital-chart-flow-positive">+${escapeHtml(compactUsdAmount(maximumAbsoluteFlow))}</text>
+    <text x="${width - margin.right + 9}" y="${flowZeroY + 4}" class="capital-chart-axis-label">$0</text>
+    <text x="${width - margin.right + 9}" y="${margin.top + plotHeight}" class="capital-chart-axis-label capital-chart-flow-negative">-${escapeHtml(compactUsdAmount(maximumAbsoluteFlow))}</text>
+    <text x="${width - 13}" y="${margin.top + (plotHeight / 2)}" transform="rotate(90 ${width - 13} ${margin.top + (plotHeight / 2)})" text-anchor="middle" class="capital-chart-axis-title">净主动成交额（美元）</text>` : '';
 
   return `<section id="capital-flow-chart" class="capital-chart">
-    <div class="capital-chart-head"><div><strong>10日成交量趋势</strong><span>纵轴为实际成交股数，悬停数据点查看精确数值。</span></div><div class="capital-chart-controls">${controls}</div></div>
+    <div class="capital-chart-head"><div><strong>10日成交量与主动资金流</strong><span>折线使用左侧成交量轴；净流入为红色向上柱，净流出为绿色向下柱，使用右侧美元轴。</span></div><div class="capital-chart-controls">${controls}</div></div>
     <div class="capital-chart-canvas">
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="最近10个交易日成交量趋势折线图">
-        ${grid}<text x="17" y="${margin.top + (plotHeight / 2)}" transform="rotate(-90 17 ${margin.top + (plotHeight / 2)})" text-anchor="middle" class="capital-chart-axis-title">成交量（股）</text>
-        ${dates}${lines}
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="最近10个交易日成交量折线和净主动资金流柱状图">
+        ${grid}${selectedLines.length ? `<text x="17" y="${margin.top + (plotHeight / 2)}" transform="rotate(-90 17 ${margin.top + (plotHeight / 2)})" text-anchor="middle" class="capital-chart-axis-title">成交量（股）</text>` : ''}
+        ${flowAxis}${flowBars}${dates}${lines}
       </svg>
     </div>
   </section>`;
@@ -818,6 +847,8 @@ function renderCapitalFlow() {
   const compactVolume = (value) => Number.isFinite(value)
     ? new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
     : '—';
+  const signedFlow = (value) => Number.isFinite(value)
+    ? `${value >= 0 ? '+' : '-'}${compactUsdAmount(value)}` : '—';
   const evidence = (analysis.evidence || []).map((item) => {
     const directionClass = item.direction === 'INFLOW' ? 'positive' : item.direction === 'OUTFLOW' ? 'negative' : '';
     const value = item.key === 'relativeVolume'
@@ -837,6 +868,9 @@ function renderCapitalFlow() {
       <td>${Number.isFinite(row.averageVolume5d) ? compactVolume(row.averageVolume5d) : '—'}</td>
       <td>${Number.isFinite(row.averageVolume20d) ? compactVolume(row.averageVolume20d) : '—'}</td>
       <td>${Number.isFinite(row.relativeVolume) ? `${Number(row.relativeVolume).toFixed(2)}倍` : '—'}</td>
+      <td class="positive">${Number.isFinite(row.activeBuyTurnover) ? signedFlow(row.activeBuyTurnover) : '—'}</td>
+      <td class="negative">${Number.isFinite(row.activeSellTurnover) ? signedFlow(-row.activeSellTurnover) : '—'}</td>
+      <td class="${pnlClass(row.netActiveTurnover)}">${signedFlow(row.netActiveTurnover)}</td>
       <td>${escapeHtml(row.volumeTrendLabel || '—')}</td>
       <td class="${pnlClass(row.score)}">${escapeHtml(row.signalLabel || '—')}</td>
       <td class="${pnlClass(row.score)}">${Number.isFinite(row.score) ? `${row.score >= 0 ? '+' : ''}${Number(row.score).toFixed(1)}` : '—'}</td>
@@ -862,16 +896,16 @@ function renderCapitalFlow() {
     <p class="flow-explanation">${escapeHtml(analysis.explanation)}</p>
     ${anomalies ? `<div class="flow-anomalies"><strong>异常信号</strong>${anomalies}</div>` : ''}
     <div class="flow-evidence">${evidence}</div>
-    <div class="volume-history-head"><strong>最近10个交易日</strong><span>按交易日倒序 · 每日基于当时可获得的日线数据回算</span></div>
+    <div class="volume-history-head"><strong>最近10个交易日</strong><span>日线指标按当时数据回算；主动流向仅展示已采集的富途逐笔方向</span></div>
     <div class="table-wrap volume-history-wrap">
       <table class="volume-history-table">
-        <thead><tr><th>交易日</th><th>收盘价</th><th>涨跌</th><th>成交量</th><th>5日均量</th><th>20日均量</th><th>量比</th><th>成交量趋势</th><th>资金行为</th><th>评分</th></tr></thead>
+        <thead><tr><th>交易日</th><th>收盘价</th><th>涨跌</th><th>成交量</th><th>5日均量</th><th>20日均量</th><th>量比</th><th>主动流入</th><th>主动流出</th><th>净流入/流出</th><th>成交量趋势</th><th>资金行为</th><th>评分</th></tr></thead>
         <tbody>${volumeHistory}</tbody>
       </table>
       ${volumeHistory ? '' : '<div class="empty">尚无可展示的日线成交数据。</div>'}
     </div>
     ${renderCapitalFlowChart(analysis.history || [])}
-    <p class="driver-disclaimer">当前不是逐笔主动买卖统计，不显示虚构的“主力净流入金额”。公开成交无法确认最终账户身份；评分需通过后续价格表现持续验证。</p>`;
+    <p class="driver-disclaimer">上方资金行为评分仍是日线量价代理；表格和柱体中的主动流入/流出仅来自已采集的富途逐笔方向。两者都不能确认机构或最终账户身份，需通过后续价格表现持续验证。</p>`;
 }
 
 function renderIntradayFlow() {

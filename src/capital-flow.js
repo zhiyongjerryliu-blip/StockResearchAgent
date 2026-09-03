@@ -387,9 +387,31 @@ export function listRecentCapitalFlowDays(db, tickerValue, asOf, limit = 10) {
     ORDER BY trade_date DESC
     LIMIT ?
   `).all(ticker, asOf, boundedLimit));
+  const firstTradeDate = tradeDates.at(-1)?.trade_date;
+  const intradayByDate = new Map(firstTradeDate ? toPlainRows(db.prepare(`
+    SELECT trade_date,
+           SUM(buy_turnover) AS buy_turnover,
+           SUM(sell_turnover) AS sell_turnover,
+           SUM(neutral_turnover) AS neutral_turnover,
+           SUM(buy_count) AS buy_count,
+           SUM(sell_count) AS sell_count,
+           SUM(neutral_count) AS neutral_count,
+           COUNT(*) AS tick_minutes,
+           MIN(minute_et) AS first_minute,
+           MAX(minute_et) AS last_minute
+    FROM intraday_tick_minutes
+    WHERE ticker = ? AND trade_date BETWEEN ? AND ?
+    GROUP BY trade_date
+  `).all(ticker, firstTradeDate, asOf)).map((row) => [row.trade_date, row]) : []);
 
   return tradeDates.map(({ trade_date: tradeDate }) => {
     const analysis = analyzeCapitalFlow(db, ticker, tradeDate);
+    const intraday = intradayByDate.get(tradeDate);
+    const directionTickCount = Number(intraday?.buy_count || 0) + Number(intraday?.sell_count || 0);
+    const hasDirectedFlow = directionTickCount > 0;
+    const activeBuyTurnover = hasDirectedFlow ? Number(intraday.buy_turnover || 0) : null;
+    const activeSellTurnover = hasDirectedFlow ? Number(intraday.sell_turnover || 0) : null;
+    const netActiveTurnover = hasDirectedFlow ? activeBuyTurnover - activeSellTurnover : null;
     return {
       ticker: analysis.ticker,
       asOf: tradeDate,
@@ -407,6 +429,19 @@ export function listRecentCapitalFlowDays(db, tickerValue, asOf, limit = 10) {
       volumeTrend: analysis.metrics.volumeTrend,
       volumeTrendLabel: analysis.metrics.volumeTrendLabel,
       volumeTrendPct: analysis.metrics.volumeTrendPct,
+      activeBuyTurnover: round(activeBuyTurnover, 2),
+      activeSellTurnover: round(activeSellTurnover, 2),
+      netActiveTurnover: round(netActiveTurnover, 2),
+      activeFlowDirection: !hasDirectedFlow
+        ? 'UNAVAILABLE' : netActiveTurnover > 0 ? 'INFLOW' : netActiveTurnover < 0 ? 'OUTFLOW' : 'NEUTRAL',
+      activeFlowDataLevel: hasDirectedFlow ? 'FUTU_TICK_DIRECTION' : 'NO_TICK_DIRECTION',
+      activeFlowCoverage: hasDirectedFlow ? {
+        tickMinutes: Number(intraday.tick_minutes || 0),
+        directionTickCount,
+        neutralTickCount: Number(intraday.neutral_count || 0),
+        firstMinute: intraday.first_minute,
+        lastMinute: intraday.last_minute
+      } : null,
       anomalies: analysis.anomalies
     };
   });

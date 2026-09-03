@@ -178,7 +178,7 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .volume-history-head strong { font-size: 13px; }
 .volume-history-head span { color: var(--muted); font-size: 10px; }
 .volume-history-wrap { margin-top: 9px; }
-.volume-history-table { min-width: 1120px; }
+.volume-history-table { min-width: 1480px; }
 .capital-chart { margin-top: 16px; padding: 15px; border: 1px solid var(--line); border-radius: 8px; background: #0d141d; }
 .capital-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .capital-chart-head strong, .capital-chart-head span { display: block; }
@@ -188,6 +188,7 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .capital-chart-toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: #aab5c3; font-size: 10px; white-space: nowrap; cursor: pointer; user-select: none; }
 .capital-chart-toggle input { margin: 0; accent-color: var(--series-color); }
 .capital-chart-toggle span { width: 13px; height: 3px; border-radius: 2px; background: var(--series-color); }
+.capital-chart-toggle span.capital-chart-bar-key { height: 8px; background: linear-gradient(90deg, var(--profit) 0 50%, var(--loss) 50% 100%); }
 .capital-chart-canvas { margin-top: 14px; overflow-x: auto; }
 .capital-chart-canvas svg { display: block; width: 100%; min-width: 760px; height: auto; }
 .capital-chart-grid { stroke: #202c39; stroke-width: 1; }
@@ -195,6 +196,13 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .capital-chart-line { stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .capital-chart-point { stroke: #0d141d; stroke-width: 2; cursor: help; vector-effect: non-scaling-stroke; }
 .capital-chart-point:hover { r: 6px; stroke: #f4f7fb; }
+.capital-chart-flow-bar { opacity: .72; cursor: help; vector-effect: non-scaling-stroke; }
+.capital-chart-flow-bar.inflow { fill: var(--profit); }
+.capital-chart-flow-bar.outflow { fill: var(--loss); }
+.capital-chart-flow-bar:hover { opacity: 1; stroke: #f4f7fb; stroke-width: 1; }
+.capital-chart-flow-zero { stroke: #758296; stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.capital-chart-axis-label.capital-chart-flow-positive { fill: var(--profit); }
+.capital-chart-axis-label.capital-chart-flow-negative { fill: var(--loss); }
 .capital-chart-empty { margin-top: 14px; padding: 34px 16px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 7px; font-size: 11px; }
 .advice-panel { margin-top: 16px; }
 .advice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
