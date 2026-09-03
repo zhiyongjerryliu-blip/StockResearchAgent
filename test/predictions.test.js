@@ -4,7 +4,7 @@ import { openDatabase, nowIso } from '../src/db.js';
 import { saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import {
   FEATURE_VERSION, PREDICTION_MODEL_VERSION, buildFeatureSnapshot,
-  getPredictionOverview, predictFromSnapshot, runPredictionBacktest
+  getPredictionOverview, listPredictionChanges, predictFromSnapshot, runPredictionBacktest
 } from '../src/predictions.js';
 
 function businessDates(start, count) {
@@ -58,6 +58,41 @@ test('预测模型输出三个分位、方向和可追溯信号', () => {
   assert.ok(prediction.returnP50 < prediction.returnP90);
   assert.ok(prediction.priceP10 < prediction.priceP50);
   assert.ok(Number.isFinite(prediction.signals.momentum));
+  const explained = Object.values(prediction.factorContributions)
+    .filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
+  assert.ok(Math.abs(explained - prediction.returnP50) < 0.000001);
+  db.close();
+});
+
+test('连续交易日预测按因子拆解变化且重复运行不会重复记账', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEST' });
+  const dates = seedPrices(db, 'TEST', 170);
+  const previousDate = dates[165];
+  const currentDate = dates[166];
+
+  runPredictionBacktest(db, 'TEST', previousDate, { maxSessions: 170 });
+  const current = runPredictionBacktest(db, 'TEST', currentDate, { maxSessions: 170 });
+  runPredictionBacktest(db, 'TEST', currentDate, { maxSessions: 170 });
+  const changes = listPredictionChanges(db, 'TEST');
+  const historicalOverview = getPredictionOverview(db, 'TEST', previousDate);
+
+  assert.equal(current.changes.length, 3);
+  assert.equal(changes.length, 3);
+  assert.ok(historicalOverview.predictions.every((prediction) => prediction.as_of === previousDate));
+  assert.equal(historicalOverview.changes.length, 0);
+  assert.equal(db.prepare(`
+    SELECT COUNT(*) AS count FROM prediction_change_snapshots
+    WHERE ticker = 'TEST' AND as_of = ? AND model_version = ?
+  `).get(currentDate, PREDICTION_MODEL_VERSION).count, 3);
+  for (const change of changes) {
+    assert.equal(change.previous_as_of, previousDate);
+    assert.equal(change.as_of, currentDate);
+    assert.equal(change.contributions.length, 8);
+    assert.ok(Math.abs(change.residual_return_change) < 0.000001);
+    assert.match(change.summary.headline, /预期收益较/);
+    assert.match(change.summary.boundary, /不等同于.*因果关系/);
+  }
   db.close();
 });
 

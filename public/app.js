@@ -1055,6 +1055,10 @@ const predictionDirectionLabels = { BULLISH: '看多', BEARISH: '看空', NEUTRA
 const predictionStatusLabels = {
   PUBLISHED: '已发布', OBSERVE: '观察', REJECTED: '未通过', INSUFFICIENT: '样本不足'
 };
+const predictionChangeLabels = {
+  DIRECTION_CHANGE: '方向改变', MATERIAL_CHANGE: '重大变化',
+  MODERATE_CHANGE: '明显变化', STABLE: '变化较小'
+};
 
 function metricPercent(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)}%`;
@@ -1096,6 +1100,42 @@ function renderPredictionOverview() {
     </tr>`;
   }).join('');
   document.querySelector('#prediction-empty').classList.toggle('hidden', predictions.length > 0);
+
+  const latestChanges = [];
+  const seenChangeHorizons = new Set();
+  for (const change of overview?.changes || []) {
+    const horizon = Number(change.horizon_days);
+    if (seenChangeHorizons.has(horizon)) continue;
+    seenChangeHorizons.add(horizon);
+    latestChanges.push(change);
+  }
+  document.querySelector('#prediction-change-content').innerHTML = latestChanges.map((change) => {
+    const factorRows = (change.contributions || []).map((factor) => `
+      <div class="prediction-factor-change">
+        <span>${escapeHtml(factor.label)}</span>
+        <small>${percent(factor.previous)} → ${percent(factor.current)}</small>
+        <strong class="${pnlClass(factor.delta)}">${percent(factor.delta)}</strong>
+      </div>`).join('');
+    const qualityChange = change.summary?.dataQuality;
+    return `<article class="prediction-change-card ${escapeHtml(change.change_type)}">
+      <div class="prediction-change-head">
+        <div><span>${predictionHorizonLabels[change.horizon_days] || `${change.horizon_days}日`}</span><strong>${predictionChangeLabels[change.change_type] || change.change_type}</strong></div>
+        <small>${escapeHtml(change.previous_as_of)} → ${escapeHtml(change.as_of)}</small>
+      </div>
+      <p>${escapeHtml(change.summary?.headline || '预测变化已记录。')}</p>
+      <div class="prediction-change-metrics">
+        <div><span>预期收益变化</span><strong class="${pnlClass(change.return_change)}">${percent(change.return_change)}</strong></div>
+        <div><span>上涨概率变化</span><strong class="${pnlClass(change.probability_change)}">${percent(change.probability_change)}</strong></div>
+        <div><span>目标中位价变化</span><strong class="${pnlClass(change.price_target_change)}">${money(change.price_target_change)}</strong></div>
+        <div><span>市场价格效应</span><strong class="${pnlClass(change.market_price_effect)}">${money(change.market_price_effect)}</strong></div>
+        <div><span>收益预期效应</span><strong class="${pnlClass(change.return_outlook_effect)}">${money(change.return_outlook_effect)}</strong></div>
+        <div><span>数据质量变化</span><strong class="${pnlClass(qualityChange?.delta)}">${qualityChange?.delta == null ? '—' : `${qualityChange.delta >= 0 ? '+' : ''}${decimal(qualityChange.delta, 2)}分`}</strong></div>
+      </div>
+      <div class="prediction-factor-changes">${factorRows}</div>
+      <small class="prediction-change-boundary">${escapeHtml(change.summary?.boundary || '')}</small>
+    </article>`;
+  }).join('');
+  document.querySelector('#prediction-change-empty').classList.toggle('hidden', latestChanges.length > 0);
 
   const backtest = overview?.backtest || [];
   document.querySelector('#prediction-backtest-body').innerHTML = backtest.map((counts) => {

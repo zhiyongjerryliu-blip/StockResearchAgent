@@ -26,6 +26,12 @@ const HORIZON_CONFIG = Object.freeze({
   }
 });
 
+const FACTOR_LABELS = Object.freeze({
+  momentum: '价格动量', relativeStrength: '相对基准强弱', capitalFlow: '资金行为',
+  valuation: '估值', earnings: 'EPS预期修订', fundamentals: '基本面',
+  macro: '宏观利率', events: '公司及行业事件'
+});
+
 function clamp(value, minimum = -1, maximum = 1) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -381,6 +387,12 @@ export function predictFromSnapshot(snapshot, horizonDays) {
   const rawSignal = coverage ? clamp(weighted / coverage) : 0;
   const qualityShrinkage = Math.max(0.35, snapshot.dataQualityScore / 100);
   const expectedReturn = clamp(rawSignal * configuration.scale * qualityShrinkage, -0.8, 2);
+  const factorContributions = Object.fromEntries(Object.entries(configuration.weights).map(([key, weight]) => [
+    key,
+    Number.isFinite(signals[key]) && coverage
+      ? round((signals[key] * weight / coverage) * configuration.scale * qualityShrinkage, 8)
+      : null
+  ]));
   const dailyVolatility = snapshot.features.price.volatility20d;
   const horizonVolatility = Number.isFinite(dailyVolatility)
     ? dailyVolatility * Math.sqrt(horizon)
@@ -402,8 +414,10 @@ export function predictFromSnapshot(snapshot, horizonDays) {
     probabilityUp: round(clamp(0.5 + (rawSignal * 0.35), 0.05, 0.95), 4),
     predictedDirection, signalScore: round(rawSignal * 100, 2),
     factorCoverage: round(coverage * 100, 2), dataQualityScore: snapshot.dataQualityScore,
+    dataAvailability: snapshot.availability,
     eligible: snapshot.eligibleForTraining, exclusionReasons: snapshot.exclusionReasons,
-    signals, featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION
+    signals, factorContributions,
+    featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION
   };
 }
 
@@ -601,8 +615,10 @@ function saveCurrentPrediction(db, prediction, reliability) {
     prediction.featureVersion,
     JSON.stringify({
       predictedDirection: prediction.predictedDirection, signals: prediction.signals,
+      factorContributions: prediction.factorContributions,
       signalScore: prediction.signalScore, factorCoverage: prediction.factorCoverage,
       dataQualityScore: prediction.dataQualityScore,
+      dataAvailability: prediction.dataAvailability,
       exclusionReasons: prediction.exclusionReasons
     }), nowIso()
   ];
@@ -631,8 +647,10 @@ function saveCurrentPrediction(db, prediction, reliability) {
       prediction.modelVersion, prediction.featureVersion,
       JSON.stringify({
         predictedDirection: prediction.predictedDirection, signals: prediction.signals,
+        factorContributions: prediction.factorContributions,
         signalScore: prediction.signalScore, factorCoverage: prediction.factorCoverage,
         dataQualityScore: prediction.dataQualityScore,
+        dataAvailability: prediction.dataAvailability,
         exclusionReasons: prediction.exclusionReasons
       }), nowIso()
     );
@@ -650,6 +668,173 @@ function snapshotFromRow(row) {
     eligibleForTraining: Boolean(row.eligible_for_training),
     exclusionReasons: parseJson(row.exclusion_reasons_json, [])
   };
+}
+
+function directionFromPrediction(row, rationale) {
+  if (rationale?.predictedDirection) return rationale.predictedDirection;
+  if (row.return_p50 > 0.01) return 'BULLISH';
+  if (row.return_p50 < -0.01) return 'BEARISH';
+  return 'NEUTRAL';
+}
+
+function changeType(previous, current, returnChange, probabilityChange) {
+  if (previous !== current) return 'DIRECTION_CHANGE';
+  if (Math.abs(returnChange) >= 0.02 || Math.abs(probabilityChange || 0) >= 0.05) return 'MATERIAL_CHANGE';
+  if (Math.abs(returnChange) >= 0.005) return 'MODERATE_CHANGE';
+  return 'STABLE';
+}
+
+function signedPoints(value) {
+  if (!Number.isFinite(value)) return '0.00个百分点';
+  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}个百分点`;
+}
+
+function absolutePoints(value) {
+  return `${(Math.abs(Number(value) || 0) * 100).toFixed(2)}个百分点`;
+}
+
+function buildChangeSummary(horizonDays, previousAsOf, asOf, type, returnChange, contributions) {
+  const drivers = contributions.filter((item) => Math.abs(item.delta) >= 0.00005).slice(0, 3);
+  const direction = returnChange > 0 ? '上调' : returnChange < 0 ? '下调' : '基本不变';
+  const driverText = drivers.length
+    ? `主要变化来自${drivers.map((item) => `${item.label}${signedPoints(item.delta)}`).join('、')}。`
+    : '各结构化因子贡献没有明显变化。';
+  return {
+    headline: `${HORIZON_CONFIG[horizonDays].label}预期收益较${previousAsOf}${direction}${absolutePoints(returnChange)}。${driverText}`,
+    drivers,
+    changeType: type,
+    comparison: `${previousAsOf} → ${asOf}`,
+    boundary: '归因是同一冻结模型内的数学贡献变化，不等同于对股价变化建立因果关系。'
+  };
+}
+
+export function savePredictionChanges(db, tickerValue, asOf) {
+  const ticker = normalizeTicker(tickerValue);
+  const saved = [];
+  for (const horizonDays of PREDICTION_HORIZONS) {
+    const current = toPlain(db.prepare(`
+      SELECT * FROM predictions
+      WHERE ticker = ? AND as_of = ? AND horizon_days = ? AND model_version = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(ticker, asOf, horizonDays, PREDICTION_MODEL_VERSION));
+    if (!current) continue;
+    const previous = toPlain(db.prepare(`
+      SELECT * FROM predictions
+      WHERE ticker = ? AND as_of < ? AND horizon_days = ? AND model_version = ?
+      ORDER BY as_of DESC, id DESC LIMIT 1
+    `).get(ticker, asOf, horizonDays, PREDICTION_MODEL_VERSION));
+    if (!previous) continue;
+    const currentRationale = parseJson(current.rationale_json, {});
+    const previousRationale = parseJson(previous.rationale_json, {});
+    const currentContributions = currentRationale.factorContributions || {};
+    const previousContributions = previousRationale.factorContributions || {};
+    const contributions = Object.keys(FACTOR_LABELS).map((key) => {
+      const before = Number.isFinite(previousContributions[key]) ? previousContributions[key] : 0;
+      const after = Number.isFinite(currentContributions[key]) ? currentContributions[key] : 0;
+      return {
+        key, label: FACTOR_LABELS[key], previous: round(before, 8), current: round(after, 8),
+        delta: round(after - before, 8),
+        previousSignal: previousRationale.signals?.[key] ?? null,
+        currentSignal: currentRationale.signals?.[key] ?? null
+      };
+    }).sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta));
+    const explainedChange = contributions.reduce((sum, item) => sum + item.delta, 0);
+    const returnChange = current.return_p50 - previous.return_p50;
+    const probabilityChange = Number.isFinite(current.probability_up) && Number.isFinite(previous.probability_up)
+      ? current.probability_up - previous.probability_up : null;
+    const previousDirection = directionFromPrediction(previous, previousRationale);
+    const currentDirection = directionFromPrediction(current, currentRationale);
+    const type = changeType(previousDirection, currentDirection, returnChange, probabilityChange);
+    const marketPriceEffect = (current.current_price - previous.current_price) * (1 + previous.return_p50);
+    const returnOutlookEffect = current.current_price * returnChange;
+    const priceTargetChange = current.price_p50 - previous.price_p50;
+    const summary = buildChangeSummary(
+      horizonDays, previous.as_of, current.as_of, type, returnChange, contributions
+    );
+    summary.dataQuality = {
+      previous: previousRationale.dataQualityScore ?? null,
+      current: currentRationale.dataQualityScore ?? null,
+      delta: Number.isFinite(currentRationale.dataQualityScore) && Number.isFinite(previousRationale.dataQualityScore)
+        ? round(currentRationale.dataQualityScore - previousRationale.dataQualityScore, 2) : null
+    };
+    summary.factorCoverage = {
+      previous: previousRationale.factorCoverage ?? null,
+      current: currentRationale.factorCoverage ?? null,
+      delta: Number.isFinite(currentRationale.factorCoverage) && Number.isFinite(previousRationale.factorCoverage)
+        ? round(currentRationale.factorCoverage - previousRationale.factorCoverage, 2) : null
+    };
+    const timestamp = nowIso();
+    db.prepare(`
+      INSERT INTO prediction_change_snapshots (
+        ticker, as_of, previous_as_of, horizon_days, comparison_type,
+        previous_direction, current_direction, previous_return_p50, current_return_p50,
+        return_change, previous_probability_up, current_probability_up, probability_change,
+        previous_price_p50, current_price_p50, price_target_change,
+        market_price_effect, return_outlook_effect, residual_return_change, change_type,
+        contributions_json, summary_json, feature_version, model_version, created_at
+      ) VALUES (?, ?, ?, ?, 'SAME_HORIZON', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(ticker, as_of, horizon_days, comparison_type, model_version)
+      DO UPDATE SET
+        previous_as_of = excluded.previous_as_of,
+        previous_direction = excluded.previous_direction,
+        current_direction = excluded.current_direction,
+        previous_return_p50 = excluded.previous_return_p50,
+        current_return_p50 = excluded.current_return_p50,
+        return_change = excluded.return_change,
+        previous_probability_up = excluded.previous_probability_up,
+        current_probability_up = excluded.current_probability_up,
+        probability_change = excluded.probability_change,
+        previous_price_p50 = excluded.previous_price_p50,
+        current_price_p50 = excluded.current_price_p50,
+        price_target_change = excluded.price_target_change,
+        market_price_effect = excluded.market_price_effect,
+        return_outlook_effect = excluded.return_outlook_effect,
+        residual_return_change = excluded.residual_return_change,
+        change_type = excluded.change_type,
+        contributions_json = excluded.contributions_json,
+        summary_json = excluded.summary_json,
+        feature_version = excluded.feature_version,
+        created_at = excluded.created_at
+    `).run(
+      ticker, current.as_of, previous.as_of, horizonDays,
+      previousDirection, currentDirection, previous.return_p50, current.return_p50,
+      round(returnChange, 8), previous.probability_up, current.probability_up,
+      round(probabilityChange, 8), previous.price_p50, current.price_p50,
+      round(priceTargetChange, 4), round(marketPriceEffect, 4), round(returnOutlookEffect, 4),
+      round(returnChange - explainedChange, 8), type,
+      JSON.stringify(contributions), JSON.stringify(summary), current.feature_version,
+      PREDICTION_MODEL_VERSION, timestamp
+    );
+    saved.push({
+      ticker, asOf: current.as_of, previousAsOf: previous.as_of, horizonDays,
+      comparisonType: 'SAME_HORIZON', previousDirection, currentDirection,
+      previousReturnP50: previous.return_p50, currentReturnP50: current.return_p50,
+      returnChange: round(returnChange, 8), probabilityChange: round(probabilityChange, 8),
+      priceTargetChange: round(priceTargetChange, 4), marketPriceEffect: round(marketPriceEffect, 4),
+      returnOutlookEffect: round(returnOutlookEffect, 4),
+      residualReturnChange: round(returnChange - explainedChange, 8),
+      changeType: type, contributions, summary
+    });
+  }
+  return saved;
+}
+
+export function listPredictionChanges(db, tickerValue, limitPerHorizon = 10, asOf = null) {
+  const ticker = normalizeTicker(tickerValue);
+  const limit = Math.min(60, Math.max(1, Number(limitPerHorizon) || 10));
+  return toPlainRows(db.prepare(`
+    SELECT * FROM (
+      SELECT c.*,
+             ROW_NUMBER() OVER (PARTITION BY horizon_days ORDER BY as_of DESC) AS row_number
+      FROM prediction_change_snapshots c
+      WHERE ticker = ? AND model_version = ? AND comparison_type = 'SAME_HORIZON'
+        AND (? IS NULL OR as_of <= ?)
+    ) WHERE row_number <= ? ORDER BY as_of DESC, horizon_days
+  `).all(ticker, PREDICTION_MODEL_VERSION, asOf, asOf, limit)).map((row) => ({
+    ...row,
+    contributions: parseJson(row.contributions_json, []),
+    summary: parseJson(row.summary_json, {})
+  }));
 }
 
 export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
@@ -678,10 +863,11 @@ export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
     db, predictFromSnapshot(latestSnapshot, horizonDays),
     reliability.find((item) => item.horizonDays === horizonDays)
   ));
+  const changes = savePredictionChanges(db, ticker, asOf);
   return {
     ticker, asOf, featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION,
     datesProcessed: selectedDates.length, resultsUpdated: generated, excludedDates: excluded,
-    latestFeature: latestSnapshot, predictions, reliability,
+    latestFeature: latestSnapshot, predictions, reliability, changes,
     methodology: {
       validation: '冻结规则模型按历史交易日逐日生成时点预测，再使用其后第21/63/126个交易日收盘价验证。',
       leakage: '价格只读取基准日及之前日线；财务数据按SEC提交日截断；一致预期按as_of截断。',
@@ -704,8 +890,9 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
   const predictions = toPlainRows(db.prepare(`
     SELECT * FROM predictions
     WHERE ticker = ? AND model_version = ?
+      AND (? IS NULL OR as_of <= ?)
     ORDER BY as_of DESC, horizon_days, id DESC
-  `).all(ticker, PREDICTION_MODEL_VERSION));
+  `).all(ticker, PREDICTION_MODEL_VERSION, effectiveAsOf, effectiveAsOf));
   const latestByHorizon = [];
   const seen = new Set();
   for (const row of predictions) {
@@ -717,8 +904,9 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
     const row = toPlain(db.prepare(`
       SELECT * FROM reliability_scores
       WHERE ticker = ? AND horizon_days = ? AND model_version = ?
+        AND (? IS NULL OR as_of <= ?)
       ORDER BY as_of DESC, id DESC LIMIT 1
-    `).get(ticker, horizonDays, PREDICTION_MODEL_VERSION));
+    `).get(ticker, horizonDays, PREDICTION_MODEL_VERSION, effectiveAsOf, effectiveAsOf));
     return row ? { ...row, details: parseJson(row.details_json, {}) } : null;
   }).filter(Boolean);
   const backtest = PREDICTION_HORIZONS.map((horizonDays) => {
@@ -733,10 +921,11 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
     `).get(ticker, horizonDays, PREDICTION_MODEL_VERSION));
     return { horizonDays, ...counts };
   });
+  const changes = listPredictionChanges(db, ticker, 10, effectiveAsOf);
   return {
     ticker, asOf: effectiveAsOf || null,
     feature: featureRow ? snapshotFromRow(featureRow) : null,
-    predictions: latestByHorizon, reliability, backtest,
+    predictions: latestByHorizon, reliability, backtest, changes,
     featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION,
     reliabilityGate: config.reliabilityGate
   };

@@ -544,6 +544,38 @@ CREATE TABLE IF NOT EXISTS predictions (
 CREATE INDEX IF NOT EXISTS idx_predictions_ticker_horizon_asof
 ON predictions(ticker, horizon_days, as_of DESC);
 
+CREATE TABLE IF NOT EXISTS prediction_change_snapshots (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  previous_as_of TEXT NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  comparison_type TEXT NOT NULL DEFAULT 'SAME_HORIZON',
+  previous_direction TEXT NOT NULL,
+  current_direction TEXT NOT NULL,
+  previous_return_p50 REAL NOT NULL,
+  current_return_p50 REAL NOT NULL,
+  return_change REAL NOT NULL,
+  previous_probability_up REAL,
+  current_probability_up REAL,
+  probability_change REAL,
+  previous_price_p50 REAL,
+  current_price_p50 REAL,
+  price_target_change REAL,
+  market_price_effect REAL,
+  return_outlook_effect REAL,
+  residual_return_change REAL NOT NULL DEFAULT 0,
+  change_type TEXT NOT NULL,
+  contributions_json TEXT NOT NULL DEFAULT '[]',
+  summary_json TEXT NOT NULL DEFAULT '{}',
+  feature_version TEXT,
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, horizon_days, comparison_type, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_changes_ticker_asof
+ON prediction_change_snapshots(ticker, as_of DESC, horizon_days);
+
 CREATE TABLE IF NOT EXISTS prediction_backtest_results (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
   as_of TEXT NOT NULL,

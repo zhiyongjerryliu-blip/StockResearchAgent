@@ -282,6 +282,12 @@
         </article>
 
         <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">FORECAST CHANGE ATTRIBUTION</p><h2>预测变化与原因</h2></div><small class="muted">最新交易日 vs 上一次同期限预测</small></div>
+          <div id="prediction-change-content" class="prediction-change-grid"></div>
+          <div id="prediction-change-empty" class="empty">需要至少两个不同交易日的预测才能计算差异。</div>
+        </article>
+
+        <article class="panel prediction-panel">
           <div class="panel-head"><div><p class="eyebrow">BACKTEST RELIABILITY</p><h2>Walk-forward验证</h2></div><small class="muted">可靠度使用非重叠样本计算</small></div>
           <div class="table-wrap">
             <table class="prediction-table">
@@ -300,6 +306,7 @@
             <li>V1为冻结权重的可解释基线模型，用于建立验证账本，不宣称已经训练完成。</li>
             <li>可靠度按期限抽取非重叠样本，避免连续每日预测造成虚假的大样本。</li>
             <li>只有样本量达标且综合可靠度不低于85分，预测才会进入PUBLISHED状态。</li>
+            <li>预测变化按冻结模型的八类因子进行数学归因，同时分解目标价变化中的市场价格效应和收益预期效应。</li>
           </ul>
         </article>
       </section>
