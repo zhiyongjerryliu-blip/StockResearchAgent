@@ -1198,7 +1198,9 @@ function renderPredictionOverview() {
   const availableFactors = Object.entries(availability).filter(([, available]) => available).map(([key]) => key);
   const allFactorLabels = {
     price: '价格', longPriceHistory: '长周期价格', benchmark: '基准', capitalFlow: '资金行为',
-    valuation: '估值', earnings: 'EPS预期', fundamentals: '基本面', macro: '宏观', events: '事件'
+    industryBenchmark: '行业ETF', continuousCapital: '连续资金', valuation: '估值',
+    peerValuation: '同业估值', earnings: 'EPS预期', fundamentals: '基本面',
+    cashFlowFundamentals: '现金流', macro: '宏观', events: '事件'
   };
   document.querySelector('#prediction-feature-date').textContent = feature?.priceDate || '—';
   document.querySelector('#prediction-feature-version').textContent = feature?.featureVersion || '尚未生成';
@@ -1330,6 +1332,56 @@ function renderPredictionOverview() {
     </tr>`;
   }).join('');
   document.querySelector('#prediction-backtest-empty').classList.toggle('hidden', backtest.length > 0);
+
+  const modelComparisons = overview?.modelComparisons || [];
+  document.querySelector('#prediction-model-comparison-body').innerHTML = modelComparisons.map((item) => {
+    const promoted = item.decision === 'PROMOTE_CANDIDATE';
+    return `<tr>
+      <td><strong>${predictionHorizonLabels[item.horizonDays] || `${item.horizonDays}日`}</strong></td>
+      <td>${decimal(item.baseline?.compositeScore, 2)}分<br><small class="muted">${predictionStatusLabels[item.baseline?.status] || item.baseline?.status || '—'}</small></td>
+      <td>${decimal(item.candidate?.compositeScore, 2)}分<br><small class="muted">${predictionStatusLabels[item.candidate?.status] || item.candidate?.status || '—'}</small></td>
+      <td>${percent(item.baseline?.modelMae)}</td>
+      <td>${percent(item.candidate?.modelMae)}</td>
+      <td>${item.trainingSamples || 0}</td>
+      <td><span class="badge ${promoted ? 'PUBLISHED' : 'INSUFFICIENT'}">${promoted ? '候选晋级' : '保留基线'}</span></td>
+      <td>${escapeHtml(item.reason || '')}</td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#prediction-model-comparison-empty').classList.toggle('hidden', modelComparisons.length > 0);
+
+  const modelShortName = (version) => version?.startsWith('ridge-') ? 'V2候选' : 'V1基线';
+  const regimeLabels = { RISK_ON: '风险偏好', RISK_OFF: '风险规避', HIGH_VOLATILITY: '高波动', BALANCED: '均衡', UNKNOWN: '未知' };
+  const breakdownRows = (overview?.reliabilityCenter?.breakdowns || []).flatMap((item) => [
+    ...(item.byDirection || []).map((group) => ({ ...group, item, dimension: '预测方向', label: predictionDirectionLabels[group.key] || group.key })),
+    ...(item.byRegime || []).map((group) => ({ ...group, item, dimension: '市场状态', label: regimeLabels[group.key] || group.key }))
+  ]).filter((row) => row.samples > 0);
+  document.querySelector('#prediction-breakdown-body').innerHTML = breakdownRows.map((row) => {
+    const accuracy = row.samples >= 5 ? metricPercent(row.directionAccuracy) : `${row.hits}/${row.samples}`;
+    return `<tr>
+      <td>${modelShortName(row.item.modelVersion)}</td>
+      <td>${predictionHorizonLabels[row.item.horizonDays] || `${row.item.horizonDays}日`}</td>
+      <td>${row.dimension}</td><td>${escapeHtml(row.label)}</td>
+      <td>${row.samples}</td><td>${row.hits}</td><td>${accuracy}</td><td>${percent(row.modelMae)}</td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#prediction-breakdown-empty').classList.toggle('hidden', breakdownRows.length > 0);
+
+  const validationDetails = overview?.reliabilityCenter?.validationDetails || [];
+  document.querySelector('#prediction-validation-detail-body').innerHTML = validationDetails.map((row) => {
+    const directionResult = row.directionHit == null ? '—' : row.directionHit ? '命中' : '未命中';
+    const intervalResult = row.intervalHit == null ? '—' : row.intervalHit ? '覆盖' : '未覆盖';
+    return `<tr>
+      <td>${escapeHtml(row.asOf)}</td><td>${modelShortName(row.modelVersion)}</td>
+      <td>${predictionHorizonLabels[row.horizonDays] || `${row.horizonDays}日`}</td>
+      <td>${predictionDirectionLabels[row.predictedDirection] || row.predictedDirection}</td>
+      <td class="${pnlClass(row.predictedReturn)}">${percent(row.predictedReturn)}</td>
+      <td>${escapeHtml(row.actualDate || '—')}</td>
+      <td class="${pnlClass(row.actualReturn)}">${percent(row.actualReturn)}</td>
+      <td>${directionResult}</td><td>${intervalResult}</td>
+      <td><span class="badge ${row.status === 'MATURED' ? 'PUBLISHED' : 'INSUFFICIENT'}">${row.status === 'MATURED' ? '已到期' : '待到期'}</span></td>
+    </tr>`;
+  }).join('');
+  document.querySelector('#prediction-validation-detail-empty').classList.toggle('hidden', validationDetails.length > 0);
 }
 
 async function loadPredictionOverview(force = false) {

@@ -241,6 +241,10 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .prediction-metric-grid { margin-top: 16px; }
 .prediction-panel { margin-top: 16px; }
 .prediction-table { min-width: 980px; }
+.prediction-model-table { min-width: 1180px; }
+.prediction-model-table td:last-child { max-width: 360px; white-space: normal; line-height: 1.5; }
+.prediction-breakdown-table { min-width: 980px; }
+.prediction-validation-table { min-width: 1180px; }
 .badge.OBSERVE, .badge.INSUFFICIENT { background: #3a301d; color: var(--warning); }
 .badge.REJECTED { background: #3b1f28; color: #ff99a3; }
 .prediction-direction.BULLISH { background: #3b1f28; color: #ff99a3; }

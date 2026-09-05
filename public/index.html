@@ -305,12 +305,45 @@
           <div id="prediction-backtest-empty" class="empty">尚无历史验证结果。</div>
         </article>
 
+        <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">MODEL CHALLENGER</p><h2>基线与候选模型对照</h2></div><small class="muted">不满足替换条件时继续使用V1</small></div>
+          <div class="table-wrap">
+            <table class="prediction-model-table">
+              <thead><tr><th>期限</th><th>基线可靠度</th><th>候选可靠度</th><th>基线MAE</th><th>候选MAE</th><th>训练样本</th><th>决策</th><th>原因</th></tr></thead>
+              <tbody id="prediction-model-comparison-body"></tbody>
+            </table>
+          </div>
+          <div id="prediction-model-comparison-empty" class="empty">运行回测后生成模型对照。</div>
+        </article>
+
+        <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">SEGMENTED RELIABILITY</p><h2>方向与市场状态分层</h2></div><small class="muted">少于5个样本只显示原始计数</small></div>
+          <div class="table-wrap">
+            <table class="prediction-breakdown-table">
+              <thead><tr><th>模型</th><th>期限</th><th>分层维度</th><th>分组</th><th>样本</th><th>命中</th><th>方向准确率</th><th>模型MAE</th></tr></thead>
+              <tbody id="prediction-breakdown-body"></tbody>
+            </table>
+          </div>
+          <div id="prediction-breakdown-empty" class="empty">尚无可分层的已到期样本。</div>
+        </article>
+
+        <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">VALIDATION LEDGER</p><h2>最近预测验证明细</h2></div><small class="muted">待到期样本不提前判断命中</small></div>
+          <div class="table-wrap">
+            <table class="prediction-validation-table">
+              <thead><tr><th>预测日</th><th>模型</th><th>期限</th><th>预测方向</th><th>预测收益</th><th>结果日</th><th>实际收益</th><th>方向</th><th>区间</th><th>状态</th></tr></thead>
+              <tbody id="prediction-validation-detail-body"></tbody>
+            </table>
+          </div>
+          <div id="prediction-validation-detail-empty" class="empty">尚无预测验证明细。</div>
+        </article>
+
         <article class="panel event-policy-panel">
           <p class="eyebrow">MODEL BOUNDARY</p><h2>第一版模型边界</h2>
           <ul class="principle-list">
             <li>历史特征只读取基准日及之前的价格、SEC提交、EPS预期、事件和宏观数据。</li>
             <li>21、63、126日分别对应约1、3、6个月；实际结果使用其后对应交易日收盘价结算。</li>
-            <li>V1为冻结权重的可解释基线模型，用于建立验证账本，不宣称已经训练完成。</li>
+            <li>V1为冻结权重的可解释基线；V2候选执行walk-forward训练，只有可靠度和误差均显著改善才允许晋级。</li>
             <li>可靠度按期限抽取非重叠样本，避免连续每日预测造成虚假的大样本。</li>
             <li>只有样本量达标且综合可靠度不低于85分，预测才会进入PUBLISHED状态。</li>
             <li>预测变化按冻结模型的八类因子进行数学归因，同时分解目标价变化中的市场价格效应和收益预期效应。</li>

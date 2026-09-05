@@ -1288,6 +1288,109 @@ export function listModelComparisons(db, tickerValue, asOf = null) {
   }));
 }
 
+function nonOverlappingValidationRows(rows) {
+  const selected = [];
+  let previousActualDate = null;
+  for (const row of rows) {
+    if (previousActualDate && row.as_of <= previousActualDate) continue;
+    selected.push(row);
+    previousActualDate = row.actual_date;
+  }
+  return selected;
+}
+
+function groupedValidation(rows, keyForRow) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = keyForRow(row) || 'UNKNOWN';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  return [...groups.entries()].map(([key, group]) => ({
+    key,
+    samples: group.length,
+    hits: group.filter((row) => row.direction_hit === 1).length,
+    directionAccuracy: round(mean(group.map((row) => Number(row.direction_hit))) * 100, 2),
+    meanActualReturn: round(mean(group.map((row) => row.actual_return)), 6),
+    modelMae: round(mean(group.map((row) => Math.abs(row.actual_return - row.return_p50))), 6)
+  })).sort((left, right) => right.samples - left.samples);
+}
+
+function reliabilityBreakdown(db, ticker, modelVersion, horizonDays, asOf) {
+  const rows = toPlainRows(db.prepare(`
+    SELECT b.*, f.features_json
+    FROM prediction_backtest_results b
+    LEFT JOIN feature_snapshots f
+      ON f.ticker = b.ticker AND f.as_of = b.as_of AND f.feature_version = b.feature_version
+    WHERE b.ticker = ? AND b.model_version = ? AND b.horizon_days = ?
+      AND b.status = 'MATURED' AND b.as_of <= ? AND b.actual_date <= ?
+    ORDER BY b.as_of
+  `).all(ticker, modelVersion, horizonDays, asOf, asOf)).map((row) => {
+    const features = parseJson(row.features_json, {});
+    return { ...row, riskRegime: features.macro?.riskRegime || 'UNKNOWN' };
+  });
+  const effective = nonOverlappingValidationRows(rows);
+  return {
+    modelVersion, horizonDays, rawSamples: rows.length, effectiveSamples: effective.length,
+    byDirection: groupedValidation(effective, (row) => row.predicted_direction),
+    byRegime: groupedValidation(effective, (row) => row.riskRegime)
+  };
+}
+
+function modelReliabilityRows(db, ticker, asOf) {
+  const rows = toPlainRows(db.prepare(`
+    SELECT * FROM reliability_scores
+    WHERE ticker = ? AND as_of <= ? AND model_version IN (?, ?)
+    ORDER BY as_of DESC, horizon_days
+  `).all(ticker, asOf, PREDICTION_MODEL_VERSION, CANDIDATE_MODEL_VERSION));
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = `${row.model_version}:${row.horizon_days}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map((row) => ({ ...row, details: parseJson(row.details_json, {}) }));
+}
+
+function validationDetails(db, ticker, asOf, limit = 60) {
+  return toPlainRows(db.prepare(`
+    SELECT * FROM prediction_backtest_results
+    WHERE ticker = ? AND as_of <= ? AND model_version IN (?, ?)
+      AND status <> 'EXCLUDED'
+    ORDER BY as_of DESC, horizon_days, model_version LIMIT ?
+  `).all(ticker, asOf, PREDICTION_MODEL_VERSION, CANDIDATE_MODEL_VERSION, limit)).map((row) => {
+    const pendingAtAsOf = row.status === 'MATURED' && row.actual_date > asOf;
+    return {
+      ticker: row.ticker, asOf: row.as_of, horizonDays: row.horizon_days,
+      modelVersion: row.model_version, predictedDirection: row.predicted_direction,
+      targetDate: row.target_date, actualDate: pendingAtAsOf ? null : row.actual_date,
+      predictedReturn: row.return_p50,
+      actualReturn: pendingAtAsOf ? null : row.actual_return,
+      directionHit: pendingAtAsOf || row.direction_hit == null ? null : Boolean(row.direction_hit),
+      intervalHit: pendingAtAsOf || row.interval_hit == null ? null : Boolean(row.interval_hit),
+      status: pendingAtAsOf ? 'PENDING' : row.status,
+      dataQualityScore: row.data_quality_score
+    };
+  });
+}
+
+function buildReliabilityCenter(db, ticker, asOf) {
+  const models = modelReliabilityRows(db, ticker, asOf);
+  const breakdowns = [];
+  for (const modelVersion of [PREDICTION_MODEL_VERSION, CANDIDATE_MODEL_VERSION]) {
+    for (const horizonDays of PREDICTION_HORIZONS) {
+      breakdowns.push(reliabilityBreakdown(db, ticker, modelVersion, horizonDays, asOf));
+    }
+  }
+  return {
+    models, breakdowns, validationDetails: validationDetails(db, ticker, asOf),
+    methodology: {
+      sample: '方向和市场环境分层只统计截至查询日已到期的非重叠样本。',
+      warning: '分层样本少于5个时只展示原始计数，不用百分比判断稳定性。'
+    }
+  };
+}
+
 export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const dates = allCanonicalDates(db, ticker, asOf);
@@ -1381,6 +1484,7 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
     ticker, asOf: effectiveAsOf || null,
     feature: featureRow ? snapshotFromRow(featureRow) : null,
     predictions: latestByHorizon, reliability, backtest, changes, fixedTargetComparisons, modelComparisons,
+    reliabilityCenter: effectiveAsOf ? buildReliabilityCenter(db, ticker, effectiveAsOf) : null,
     featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION,
     reliabilityGate: config.reliabilityGate
   };

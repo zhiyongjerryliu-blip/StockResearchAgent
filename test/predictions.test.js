@@ -167,6 +167,14 @@ test('回测按交易日到期、幂等保存并自动生成可靠度和最新�
   assert.equal(listModelComparisons(db, 'TEST', asOf).length, 3);
   assert.ok(first.candidate.comparisons.every((item) => ['KEEP_BASELINE', 'PROMOTE_CANDIDATE'].includes(item.decision)));
   assert.ok(first.candidate.comparisons.every((item) => item.trainingSamples > 0));
+  assert.equal(overview.reliabilityCenter.models.length, 6);
+  assert.equal(overview.reliabilityCenter.breakdowns.length, 6);
+  assert.ok(overview.reliabilityCenter.breakdowns.some((item) => item.byDirection.length > 0));
+  assert.ok(overview.reliabilityCenter.validationDetails.length > 0);
+  const historicalCenter = getPredictionOverview(db, 'TEST', dates[180]).reliabilityCenter;
+  assert.ok(historicalCenter.validationDetails.every((item) => (
+    item.status === 'PENDING' || item.actualDate <= dates[180]
+  )));
   const latestCandidate = db.prepare(`
     SELECT details_json FROM prediction_backtest_results
     WHERE ticker = 'TEST' AND as_of = ? AND horizon_days = 21 AND model_version = ?
