@@ -4,6 +4,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { nowIso, openDatabase, toPlainRows } from './db.js';
 import { calculateMonthlyPerformance, calculatePortfolio } from './portfolio.js';
+import { calculatePortfolioRisk } from './portfolio-risk.js';
 import { providerFromName, upsertDailyBars } from './market.js';
 import { createNotification } from './notifications.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
@@ -474,6 +475,9 @@ async function apiRoute(request, response, url) {
 
   if (method === 'GET' && url.pathname === '/api/portfolio') {
     return sendJson(response, 200, calculatePortfolio(db));
+  }
+  if (method === 'GET' && url.pathname === '/api/portfolio/risk') {
+    return sendJson(response, 200, calculatePortfolioRisk(db));
   }
   if (method === 'GET' && url.pathname === '/api/performance/monthly') {
     const month = url.searchParams.get('month') || latestEtDate().slice(0, 7);

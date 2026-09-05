@@ -703,6 +703,16 @@ CREATE TABLE IF NOT EXISTS investment_advice_snapshots (
 CREATE INDEX IF NOT EXISTS idx_advice_ticker_asof
 ON investment_advice_snapshots(ticker, as_of DESC, horizon_days);
 
+CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
+  as_of TEXT NOT NULL,
+  risk_score REAL NOT NULL,
+  risk_level TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL DEFAULT '{}',
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(as_of, model_version)
+);
+
 CREATE TABLE IF NOT EXISTS reliability_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT NOT NULL REFERENCES securities(ticker),

@@ -1,5 +1,5 @@
 const state = {
-  watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
+  watchlist: [], portfolio: null, portfolioRisk: null, transactions: [], notifications: [], reviews: [], config: null,
   eventFeed: { events: [], counts: {}, total: 0 },
   newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
   capitalFlow: null, intradayFlow: null, capitalBehavior: null, capitalLoadedTicker: null,
@@ -435,6 +435,42 @@ function renderPortfolio() {
     </tr>`).join('');
   document.querySelector('#positions-empty').classList.toggle('hidden', held.length > 0);
   document.querySelector('#last-updated').textContent = `更新于 ${new Date(portfolio.asOf || Date.now()).toLocaleString('zh-CN')}`;
+}
+
+function renderPortfolioRisk() {
+  const risk = state.portfolioRisk;
+  const content = document.querySelector('#portfolio-risk-content');
+  const empty = document.querySelector('#portfolio-risk-empty');
+  if (!risk?.positionCount) {
+    content.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const levelLabel = { HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' }[risk.riskLevel] || risk.riskLevel;
+  const sectors = (risk.sectors || []).map((item) => `
+    <span>${escapeHtml(item.sector)} <strong>${percent(item.weight)}</strong></span>`).join('');
+  const positions = (risk.positions || []).map((position) => `
+    <tr>
+      <td><span class="ticker">${escapeHtml(position.ticker)}</span><br><small class="muted">${escapeHtml(position.sector)}</small></td>
+      <td>${percent(position.weight)}</td><td>${money(position.marketValue)}</td>
+      <td class="${pnlClass(position.totalReturn)}">${percent(position.totalReturn)}</td>
+      <td><span class="badge ${position.recommendation.severity}">${escapeHtml(position.recommendation.label)}</span></td>
+      <td class="portfolio-risk-reason">${escapeHtml(position.recommendation.reason)}</td>
+    </tr>`).join('');
+  content.innerHTML = `
+    <div class="portfolio-risk-summary ${escapeHtml(risk.riskLevel)}">
+      <article><span>组合风险评分</span><strong>${decimal(risk.riskScore, 1)}分</strong><small>${escapeHtml(levelLabel)}</small></article>
+      <article><span>最大单股权重</span><strong>${percent(risk.largestPositionWeight)}</strong><small>35%以上触发集中度复核</small></article>
+      <article><span>最大行业权重</span><strong>${percent(risk.largestSectorWeight)}</strong><small>${sectors || '行业尚未分类'}</small></article>
+      <article><span>年化波动率</span><strong>${percent(risk.annualizedVolatility)}</strong><small>最近约90个交易日</small></article>
+      <article><span>平均持仓相关性</span><strong>${decimal(risk.averageCorrelation, 2)}</strong><small>${(risk.correlations || []).length}组可比持仓</small></article>
+      <article><span>已记录最大回撤</span><strong class="${pnlClass(risk.drawdown?.maximumDrawdown)}">${percent(risk.drawdown?.maximumDrawdown)}</strong><small>${risk.drawdown?.sampleDays || 0}个持仓快照日</small></article>
+    </div>
+    <div class="table-wrap portfolio-risk-table-wrap">
+      <table class="portfolio-risk-table"><thead><tr><th>股票</th><th>组合权重</th><th>市值</th><th>累计收益</th><th>复核建议</th><th>触发原因</th></tr></thead><tbody>${positions}</tbody></table>
+    </div>
+    <p class="driver-disclaimer">${escapeHtml((risk.boundaries || []).join(' '))}</p>`;
 }
 
 function summarizeMonthlyPerformance(performance, ticker = null) {
@@ -1537,14 +1573,14 @@ async function loadSystemStatus() {
 }
 
 async function loadAll() {
-  const [watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment] = await Promise.all([
-    api('/api/watchlist'), api('/api/portfolio'), api('/api/transactions'),
+  const [watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment] = await Promise.all([
+    api('/api/watchlist'), api('/api/portfolio'), api('/api/portfolio/risk'), api('/api/transactions'),
     api('/api/notifications'), api('/api/reviews'), api('/api/config'),
     api(`/api/performance/monthly?month=${currentEtMonth()}`), api('/api/events?severity=ALL&limit=200'),
     api('/api/news?limit=100'), api('/api/news/sentiment')
   ]);
-  Object.assign(state, { watchlist, portfolio, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
-  renderWatchlist(); renderPortfolio(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig();
+  Object.assign(state, { watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
+  renderWatchlist(); renderPortfolio(); renderPortfolioRisk(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig();
 }
 
 function formData(form) {

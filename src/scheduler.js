@@ -17,6 +17,7 @@ import {
   notifyCapitalBehaviorTransition, runWatchlistCapitalBehaviorBacktests
 } from './capital-behavior.js';
 import { runWatchlistPredictionBacktests } from './predictions.js';
+import { savePortfolioRisk } from './portfolio-risk.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -68,10 +69,11 @@ export async function runDailyCycle(
     const predictions = runWatchlistPredictionBacktests(db, reviewDate);
     const advice = saveWatchlistAdvice(db, reviewDate);
     const portfolio = saveDailySnapshots(db, reviewDate);
+    const portfolioRisk = savePortfolioRisk(db, reviewDate);
     const reviews = await generateDailyReviews(db, reviewDate);
     const details = {
       market, marketContext, sec, earnings, news, capitalFlow, intradayFlow, capitalBehavior,
-      predictions, advice, reviewDate,
+      predictions, advice, portfolioRisk, reviewDate,
       positions: portfolio.positions.length
     };
     db.prepare(`

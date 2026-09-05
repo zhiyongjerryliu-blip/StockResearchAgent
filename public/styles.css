@@ -225,6 +225,20 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .capital-chart-axis-label.capital-chart-flow-negative { fill: var(--loss); }
 .capital-chart-empty { margin-top: 14px; padding: 34px 16px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 7px; font-size: 11px; }
 .advice-panel { margin-top: 16px; }
+.portfolio-risk-panel { margin-top: 16px; }
+.portfolio-risk-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.portfolio-risk-summary article { padding: 13px; border: 1px solid #263341; border-top: 2px solid #526174; border-radius: 7px; background: #0d151f; }
+.portfolio-risk-summary.HIGH article { border-top-color: var(--danger); }
+.portfolio-risk-summary.MEDIUM article { border-top-color: var(--warning); }
+.portfolio-risk-summary.LOW article { border-top-color: var(--accent); }
+.portfolio-risk-summary span, .portfolio-risk-summary strong, .portfolio-risk-summary small { display: block; }
+.portfolio-risk-summary span { color: var(--muted); font-size: 9px; }
+.portfolio-risk-summary strong { margin-top: 7px; font-size: 17px; }
+.portfolio-risk-summary small { margin-top: 5px; color: #718095; font-size: 8px; line-height: 1.5; }
+.portfolio-risk-summary small span { display: inline-block; margin-right: 8px; }
+.portfolio-risk-table-wrap { margin-top: 14px; }
+.portfolio-risk-table { min-width: 980px; }
+.portfolio-risk-reason { max-width: 420px; white-space: normal; line-height: 1.5; }
 .advice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .advice-card { padding: 16px; border: 1px solid var(--line); border-top: 3px solid #526174; border-radius: 8px; background: #0d141d; }
 .advice-card.BULLISH { border-top-color: #ff6f7d; }
