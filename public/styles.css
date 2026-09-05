@@ -140,6 +140,7 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .driver-event { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 7px; }
 .driver-event p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .capital-flow-panel { margin-top: 16px; }
+.capital-behavior-panel { margin-top: 16px; }
 .intraday-flow-panel { margin-top: 16px; }
 .analysis-toolbar-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .analysis-toolbar-note { margin: 9px 0 0; line-height: 1.6; }
@@ -148,6 +149,24 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .capital-flow-summary { display: grid; grid-template-columns: minmax(230px, .72fr) 1.28fr; gap: 14px; padding: 15px; border: 1px solid var(--line); border-left: 4px solid #526174; border-radius: 8px; background: #0d141d; }
 .capital-flow-summary.STRONG_ACCUMULATION, .capital-flow-summary.ACCUMULATION { border-left-color: var(--profit); }
 .capital-flow-summary.STRONG_DISTRIBUTION, .capital-flow-summary.DISTRIBUTION { border-left-color: var(--loss); }
+.capital-behavior-summary { display: grid; grid-template-columns: minmax(230px, .72fr) 1.28fr; gap: 14px; padding: 15px; border: 1px solid var(--line); border-left: 4px solid #526174; border-radius: 8px; background: #0d141d; }
+.capital-behavior-summary.BULLISH { border-left-color: var(--profit); }
+.capital-behavior-summary.BEARISH { border-left-color: var(--loss); }
+.capital-behavior-primary > span, .capital-behavior-primary > strong, .capital-behavior-primary > div { display: block; }
+.capital-behavior-primary > span { color: var(--muted); font-size: 10px; }
+.capital-behavior-primary > strong { margin: 10px 0 8px; font-size: 21px; }
+.capital-behavior-primary > div { color: var(--muted); font-size: 11px; }
+.capital-behavior-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.capital-behavior-metrics article { padding: 11px; border: 1px solid #202c39; border-radius: 7px; background: #101923; }
+.capital-behavior-metrics span, .capital-behavior-metrics strong { display: block; }
+.capital-behavior-metrics span { min-height: 26px; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.capital-behavior-metrics strong { margin-top: 7px; font-size: 15px; }
+.capital-behavior-history-wrap, .capital-behavior-validation-wrap { margin-top: 9px; }
+.capital-behavior-table { min-width: 1120px; }
+.capital-behavior-validation-table { min-width: 1080px; }
+.badge.capital-stage.BULLISH { background: #3b1f28; color: #ff99a3; }
+.badge.capital-stage.BEARISH { background: #153529; color: var(--accent); }
+.badge.capital-stage.NEUTRAL { background: #253141; color: #aebccc; }
 .intraday-flow-summary { display: grid; grid-template-columns: minmax(230px, .72fr) 1.28fr; gap: 14px; padding: 15px; border: 1px solid var(--line); border-left: 4px solid #526174; border-radius: 8px; background: #0d141d; }
 .intraday-flow-summary.STRONG_INFLOW, .intraday-flow-summary.INFLOW { border-left-color: var(--profit); }
 .intraday-flow-summary.STRONG_OUTFLOW, .intraday-flow-summary.OUTFLOW { border-left-color: var(--loss); }
@@ -405,9 +424,11 @@ code { color: var(--accent); background: #09110d; padding: 2px 5px; border-radiu
   .monthly-toolbar { align-items: stretch; flex-direction: column; }
   .monthly-total { text-align: left; }
   .capital-flow-summary { grid-template-columns: 1fr; }
+  .capital-behavior-summary { grid-template-columns: 1fr; }
   .intraday-flow-summary { grid-template-columns: 1fr; }
   .flow-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .intraday-flow-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .capital-behavior-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .flow-evidence { grid-template-columns: 1fr; }
   .capital-chart-head { flex-direction: column; }
   .capital-chart-controls { justify-content: flex-start; }

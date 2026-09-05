@@ -13,6 +13,7 @@ import { notifyVolumeAnomalies, saveWatchlistCapitalFlow } from './capital-flow.
 import {
   notifyIntradayFlowAnomalies, saveWatchlistIntradayFlow
 } from './intraday-flow.js';
+import { runWatchlistCapitalBehaviorBacktests } from './capital-behavior.js';
 import { runWatchlistPredictionBacktests } from './predictions.js';
 
 function etParts(date = new Date()) {
@@ -57,12 +58,13 @@ export async function runDailyCycle(
       if (!result.ok || !result.analysis.asOf) continue;
       result.notifications = await notifyIntradayFlowAnomalies(db, result.analysis);
     }
+    const capitalBehavior = runWatchlistCapitalBehaviorBacktests(db, reviewDate);
     const predictions = runWatchlistPredictionBacktests(db, reviewDate);
     const advice = saveWatchlistAdvice(db, reviewDate);
     const portfolio = saveDailySnapshots(db, reviewDate);
     const reviews = await generateDailyReviews(db, reviewDate);
     const details = {
-      market, marketContext, sec, earnings, news, capitalFlow, intradayFlow,
+      market, marketContext, sec, earnings, news, capitalFlow, intradayFlow, capitalBehavior,
       predictions, advice, reviewDate,
       positions: portfolio.positions.length
     };

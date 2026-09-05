@@ -331,8 +331,14 @@
               <select id="capital-ticker" aria-label="资金分析股票"><option value="">请选择股票</option></select>
             </label>
             <button id="restart-futu" class="button">连接富途分钟行情</button>
-            <button id="run-capital-flow" class="button primary">识别资金行为</button>
+            <button id="run-capital-flow" class="button primary">识别并验证资金行为</button>
           </div>
+        </article>
+
+        <article class="panel capital-behavior-panel">
+          <div class="panel-head"><div><p class="eyebrow">CONTINUOUS BEHAVIOR · FORWARD VALIDATION</p><h2>连续资金阶段与历史验证</h2></div><small class="muted">1 · 3 · 5 · 10 · 20个交易日</small></div>
+          <div id="capital-behavior-content"></div>
+          <div id="capital-behavior-empty" class="empty">请选择股票并运行资金行为识别。</div>
         </article>
 
         <article class="panel capital-flow-panel">

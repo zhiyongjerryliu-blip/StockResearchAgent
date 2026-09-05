@@ -445,6 +445,9 @@ CREATE TABLE IF NOT EXISTS prices_intraday (
 CREATE INDEX IF NOT EXISTS idx_prices_intraday_ticker_time
 ON prices_intraday(ticker, bar_time_et DESC);
 
+CREATE INDEX IF NOT EXISTS idx_prices_intraday_ticker_date
+ON prices_intraday(ticker, trade_date, interval);
+
 CREATE TABLE IF NOT EXISTS ticks_intraday (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
   sequence TEXT NOT NULL,
@@ -463,6 +466,9 @@ CREATE TABLE IF NOT EXISTS ticks_intraday (
 
 CREATE INDEX IF NOT EXISTS idx_ticks_intraday_ticker_time
 ON ticks_intraday(ticker, trade_time_et DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ticks_intraday_ticker_date
+ON ticks_intraday(ticker, trade_date, direction);
 
 CREATE TABLE IF NOT EXISTS intraday_tick_minutes (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
@@ -485,6 +491,9 @@ CREATE TABLE IF NOT EXISTS intraday_tick_minutes (
 CREATE INDEX IF NOT EXISTS idx_intraday_tick_minutes_ticker_time
 ON intraday_tick_minutes(ticker, minute_et DESC);
 
+CREATE INDEX IF NOT EXISTS idx_intraday_tick_minutes_ticker_date
+ON intraday_tick_minutes(ticker, trade_date, minute_et);
+
 CREATE TABLE IF NOT EXISTS intraday_flow_snapshots (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
   as_of_minute TEXT NOT NULL,
@@ -501,6 +510,59 @@ CREATE TABLE IF NOT EXISTS intraday_flow_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_intraday_flow_ticker_time
 ON intraday_flow_snapshots(ticker, as_of_minute DESC);
+
+CREATE TABLE IF NOT EXISTS capital_behavior_snapshots (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  price_date TEXT,
+  stage TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  score REAL NOT NULL,
+  confidence REAL NOT NULL,
+  close REAL,
+  daily_flow_score REAL,
+  intraday_flow_score REAL,
+  active_turnover_ratio REAL,
+  price_vs_vwap REAL,
+  persistence_score REAL,
+  positive_days_5 INTEGER NOT NULL DEFAULT 0,
+  negative_days_5 INTEGER NOT NULL DEFAULT 0,
+  directional_streak INTEGER NOT NULL DEFAULT 0,
+  data_level TEXT NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  limitations_json TEXT NOT NULL DEFAULT '[]',
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_capital_behavior_ticker_asof
+ON capital_behavior_snapshots(ticker, as_of DESC, model_version);
+
+CREATE TABLE IF NOT EXISTS capital_behavior_validation (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  signal_as_of TEXT NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  target_date TEXT,
+  actual_date TEXT,
+  stage TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  start_price REAL,
+  actual_return REAL,
+  maximum_favorable_excursion REAL,
+  maximum_adverse_excursion REAL,
+  direction_hit INTEGER,
+  status TEXT NOT NULL CHECK(status IN ('PENDING','MATURED','EXCLUDED')),
+  exclusion_reason TEXT,
+  signal_confidence REAL NOT NULL,
+  model_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, signal_as_of, horizon_days, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_capital_behavior_validation_lookup
+ON capital_behavior_validation(ticker, horizon_days, status, signal_as_of DESC);
 
 CREATE TABLE IF NOT EXISTS feature_snapshots (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,

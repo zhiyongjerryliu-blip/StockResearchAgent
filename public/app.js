@@ -2,7 +2,7 @@ const state = {
   watchlist: [], portfolio: null, transactions: [], notifications: [], reviews: [], config: null,
   eventFeed: { events: [], counts: {}, total: 0 },
   newsArticles: [], newsSentiment: null, externalDrivers: null, investmentAdvice: null,
-  capitalFlow: null, intradayFlow: null, capitalLoadedTicker: null,
+  capitalFlow: null, intradayFlow: null, capitalBehavior: null, capitalLoadedTicker: null,
   predictionOverview: null, predictionLoadedTicker: null,
   capitalChartVisible: new Set(['volume', 'averageVolume5d', 'averageVolume20d', 'netActiveTurnover']),
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
@@ -843,6 +843,95 @@ function renderCapitalFlowChart(history) {
   </section>`;
 }
 
+const capitalBehaviorStageLabels = {
+  ACCELERATED_ACCUMULATION: '加速吸筹迹象', ACCUMULATION: '持续吸筹迹象',
+  ABSORPTION: '下跌承接迹象', NEUTRAL: '方向暂不明确',
+  DISTRIBUTION_INTO_STRENGTH: '上涨派发迹象', DISTRIBUTION: '持续派发迹象',
+  ACCELERATED_DISTRIBUTION: '加速派发迹象', INSUFFICIENT: '数据不足'
+};
+
+function renderCapitalBehavior() {
+  const overview = state.capitalBehavior;
+  const content = document.querySelector('#capital-behavior-content');
+  const empty = document.querySelector('#capital-behavior-empty');
+  if (!overview?.latest) {
+    content.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const latest = overview.latest;
+  const compactRatio = (value) => Number.isFinite(value)
+    ? `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%` : '—';
+  const scoreText = (value) => Number.isFinite(value)
+    ? `${value >= 0 ? '+' : ''}${Number(value).toFixed(1)}` : '—';
+  const behaviorHistory = (overview.history || []).map((row) => `
+    <tr>
+      <td>${escapeHtml(row.priceDate || row.asOf)}</td>
+      <td><span class="badge capital-stage ${escapeHtml(row.direction)}">${escapeHtml(row.stageLabel || capitalBehaviorStageLabels[row.stage] || row.stage)}</span></td>
+      <td class="${pnlClass(row.score)}">${scoreText(row.score)}</td>
+      <td>${decimal(row.confidence, 1)}分</td>
+      <td class="${pnlClass(row.dailyFlowScore)}">${scoreText(row.dailyFlowScore)}</td>
+      <td class="${pnlClass(row.intradayFlowScore)}">${scoreText(row.intradayFlowScore)}</td>
+      <td class="${pnlClass(row.activeTurnoverRatio)}">${compactRatio(row.activeTurnoverRatio)}</td>
+      <td class="${pnlClass(row.priceVsVwap)}">${compactRatio(row.priceVsVwap)}</td>
+      <td>${decimal(row.persistenceScore, 0)}%</td>
+    </tr>`).join('');
+  const reliability = (overview.reliability || []).map((row) => {
+    const enoughForRate = Number(row.effectiveSamples) >= 5;
+    const accuracy = enoughForRate && Number.isFinite(row.directionAccuracy)
+      ? `${(row.directionAccuracy * 100).toFixed(1)}%（${row.hits}/${row.effectiveSamples}）`
+      : `${row.hits || 0}/${row.effectiveSamples || 0}`;
+    const statusLabel = row.status === 'PUBLISHED' ? '通过85分门槛'
+      : row.status === 'OBSERVE' ? '继续观察' : '样本不足';
+    return `<tr>
+      <td><strong>${row.horizonDays}日</strong></td>
+      <td>${row.matured || 0}<br><small class="muted">待验证 ${row.pending || 0} · 排除 ${row.excluded || 0}</small></td>
+      <td>${row.effectiveSamples || 0} / ${row.requiredSamples}</td>
+      <td>${accuracy}</td>
+      <td class="${pnlClass(row.averageForwardReturn)}">${percent(row.averageForwardReturn)}</td>
+      <td class="${pnlClass(row.averageMfe)}">${percent(row.averageMfe)}</td>
+      <td class="${pnlClass(row.averageMae)}">${percent(row.averageMae)}</td>
+      <td>${decimal(row.reliabilityScore, 1)}分</td>
+      <td><span class="badge ${escapeHtml(row.status)}">${statusLabel}</span></td>
+    </tr>`;
+  }).join('');
+  const latestDirection = latest.direction || 'NEUTRAL';
+  content.innerHTML = `
+    <div class="capital-behavior-summary ${escapeHtml(latestDirection)}">
+      <article class="capital-behavior-primary">
+        <span>${escapeHtml(latest.priceDate || latest.asOf)} · ${escapeHtml(latest.dataLevel)}</span>
+        <strong class="${pnlClass(latest.score)}">${escapeHtml(latest.stageLabel || capitalBehaviorStageLabels[latest.stage] || latest.stage)}</strong>
+        <div>连续行为评分 <b class="${pnlClass(latest.score)}">${scoreText(latest.score)}</b> · 证据置信 ${decimal(latest.confidence, 1)}分</div>
+      </article>
+      <div class="capital-behavior-metrics">
+        <article><span>近5日正向/负向</span><strong>${latest.positiveDays5 || 0} / ${latest.negativeDays5 || 0}</strong></article>
+        <article><span>方向连续天数</span><strong>${latest.directionalStreak || 0}日</strong></article>
+        <article><span>持续性</span><strong>${decimal(latest.persistenceScore, 0)}%</strong></article>
+        <article><span>日线量价分</span><strong class="${pnlClass(latest.dailyFlowScore)}">${scoreText(latest.dailyFlowScore)}</strong></article>
+        <article><span>主动成交分</span><strong class="${pnlClass(latest.intradayFlowScore)}">${scoreText(latest.intradayFlowScore)}</strong></article>
+        <article><span>收盘价相对VWAP</span><strong class="${pnlClass(latest.priceVsVwap)}">${compactRatio(latest.priceVsVwap)}</strong></article>
+      </div>
+    </div>
+    ${latest.explanation ? `<p class="flow-explanation">${escapeHtml(latest.explanation)}</p>` : ''}
+    <div class="volume-history-head"><strong>最近20个交易日的连续阶段</strong><span>主动成交和VWAP缺失时明确降级为日线代理</span></div>
+    <div class="table-wrap capital-behavior-history-wrap">
+      <table class="capital-behavior-table">
+        <thead><tr><th>交易日</th><th>阶段</th><th>综合分</th><th>置信度</th><th>日线分</th><th>主动成交分</th><th>主动成交差</th><th>相对VWAP</th><th>持续性</th></tr></thead>
+        <tbody>${behaviorHistory}</tbody>
+      </table>
+      ${behaviorHistory ? '' : '<div class="empty">运行一次识别后开始积累连续阶段。</div>'}
+    </div>
+    <div class="volume-history-head"><strong>前向验证与可靠度</strong><span>只用非重叠样本计算；不足5个样本时仅显示原始命中数</span></div>
+    <div class="table-wrap capital-behavior-validation-wrap">
+      <table class="capital-behavior-validation-table">
+        <thead><tr><th>期限</th><th>已到期样本</th><th>有效/最低</th><th>方向命中</th><th>方向调整收益</th><th>平均MFE</th><th>平均MAE</th><th>可靠度</th><th>状态</th></tr></thead>
+        <tbody>${reliability}</tbody>
+      </table>
+    </div>
+    <p class="driver-disclaimer">${escapeHtml(overview.methodology?.directionHit || '')} ${escapeHtml(overview.methodology?.overlap || '')} ${escapeHtml(overview.methodology?.boundary || '')}</p>`;
+}
+
 function renderCapitalFlow() {
   const analysis = state.capitalFlow;
   const content = document.querySelector('#capital-flow-content');
@@ -1008,18 +1097,22 @@ async function loadCapitalFlow() {
   if (!ticker) {
     state.capitalFlow = null;
     state.intradayFlow = null;
+    state.capitalBehavior = null;
     state.capitalLoadedTicker = null;
   }
   else {
-    const [analysis, history, intradayFlow] = await Promise.all([
+    const [analysis, history, intradayFlow, capitalBehavior] = await Promise.all([
       api(`/api/capital-flow?ticker=${encodeURIComponent(ticker)}`),
       api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`),
-      api(`/api/intraday-flow?ticker=${encodeURIComponent(ticker)}&limit=30`)
+      api(`/api/intraday-flow?ticker=${encodeURIComponent(ticker)}&limit=30`),
+      api(`/api/capital-behavior?ticker=${encodeURIComponent(ticker)}`)
     ]);
     state.capitalFlow = { ...analysis, history };
     state.intradayFlow = intradayFlow;
+    state.capitalBehavior = capitalBehavior;
     state.capitalLoadedTicker = ticker;
   }
+  renderCapitalBehavior();
   renderCapitalFlow();
   renderIntradayFlow();
 }
@@ -1544,23 +1637,27 @@ document.querySelector('#run-capital-flow').addEventListener('click', async (eve
   if (!ticker) return showToast('请先选择一只股票', true);
   const button = event.currentTarget;
   button.disabled = true;
-  button.textContent = '正在识别…';
+  button.textContent = '正在识别并回测…';
   try {
     state.capitalFlow = await api('/api/capital-flow/run', {
       method: 'POST', body: JSON.stringify({ ticker })
     });
+    state.capitalBehavior = await api('/api/capital-behavior/backtest', {
+      method: 'POST', body: JSON.stringify({ ticker })
+    });
     state.capitalFlow.history = await api(`/api/capital-flow/history?ticker=${encodeURIComponent(ticker)}&limit=10`);
     state.intradayFlow = await api(`/api/intraday-flow?ticker=${encodeURIComponent(ticker)}&limit=30`);
+    renderCapitalBehavior();
     renderCapitalFlow();
     renderIntradayFlow();
     await loadInvestmentAdvice();
     const notified = state.capitalFlow.volumeNotifications?.length || 0;
-    showToast(`${ticker} 资金行为识别已更新：${state.capitalFlow.signalLabel}${notified ? `，已发送${notified}条放量提醒` : ''}`);
+    showToast(`${ticker} 连续资金行为已更新并验证${state.capitalBehavior.datesProcessed}个交易日${notified ? `，已发送${notified}条放量提醒` : ''}`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
     button.disabled = false;
-    button.textContent = '识别资金行为';
+    button.textContent = '识别并验证资金行为';
   }
 });
 

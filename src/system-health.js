@@ -95,7 +95,8 @@ export function collectSystemStatus(db, options = {}) {
   const rowCounts = {};
   for (const table of [
     'prices_daily', 'prices_intraday', 'ticks_intraday', 'intraday_tick_minutes',
-    'intraday_flow_snapshots', 'news_articles', 'financial_facts', 'prediction_backtest_results'
+    'intraday_flow_snapshots', 'capital_behavior_snapshots', 'capital_behavior_validation',
+    'news_articles', 'financial_facts', 'prediction_backtest_results'
   ]) {
     rowCounts[table] = Number(db.prepare('SELECT COUNT(*) AS count FROM ' + table).get()?.count || 0);
   }

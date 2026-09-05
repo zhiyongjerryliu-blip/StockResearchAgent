@@ -30,6 +30,9 @@ import {
   analyzeCapitalFlow, listRecentCapitalFlowDays,
   notifyVolumeAnomalies, saveCapitalFlow
 } from './capital-flow.js';
+import {
+  getCapitalBehaviorOverview, runCapitalBehaviorBacktest
+} from './capital-behavior.js';
 import { FutuCollector } from './futu.js';
 import {
   analyzeIntradayFlow, ingestFutuBars, ingestFutuTicks,
@@ -572,6 +575,21 @@ async function apiRoute(request, response, url) {
     );
     analysis.volumeNotifications = await notifyVolumeAnomalies(db, analysis);
     return sendJson(response, 200, analysis);
+  }
+  if (method === 'GET' && url.pathname === '/api/capital-behavior') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, getCapitalBehaviorOverview(
+      db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
+    ));
+  }
+  if (method === 'POST' && url.pathname === '/api/capital-behavior/backtest') {
+    const body = await readJson(request);
+    if (!body.ticker) throw new Error('缺少ticker');
+    return sendJson(response, 200, runCapitalBehaviorBacktest(
+      db, body.ticker, body.asOf || latestStableMarketDate(),
+      { maxSessions: body.maxSessions, full: Boolean(body.full) }
+    ));
   }
   if (method === 'GET' && url.pathname === '/api/futu/status') {
     return sendJson(response, 200, futuCollector.status());
