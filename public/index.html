@@ -288,6 +288,13 @@
         </article>
 
         <article class="panel prediction-panel">
+          <div class="panel-head"><div><p class="eyebrow">FIXED TARGET DATE</p><h2>同一目标日的跨期限演变</h2></div><small class="muted">6个月初判 → 3个月修正 → 1个月临近判断</small></div>
+          <p class="muted fixed-target-intro">锁定同一目标日期，回看模型在不同基准日给出的目标价，避免把期限缩短误判成观点变化。</p>
+          <div id="fixed-target-comparison-content" class="fixed-target-grid"></div>
+          <div id="fixed-target-comparison-empty" class="empty">需要足够长的历史预测，才能对齐同一目标日期。</div>
+        </article>
+
+        <article class="panel prediction-panel">
           <div class="panel-head"><div><p class="eyebrow">BACKTEST RELIABILITY</p><h2>Walk-forward验证</h2></div><small class="muted">可靠度使用非重叠样本计算</small></div>
           <div class="table-wrap">
             <table class="prediction-table">
@@ -307,6 +314,7 @@
             <li>可靠度按期限抽取非重叠样本，避免连续每日预测造成虚假的大样本。</li>
             <li>只有样本量达标且综合可靠度不低于85分，预测才会进入PUBLISHED状态。</li>
             <li>预测变化按冻结模型的八类因子进行数学归因，同时分解目标价变化中的市场价格效应和收益预期效应。</li>
+            <li>跨期限演变比较锁定同一目标日期，并允许最多7个自然日的节假日对齐误差；不同起点的收益率不直接比较。</li>
           </ul>
         </article>
       </section>

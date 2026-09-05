@@ -693,6 +693,11 @@ function absolutePoints(value) {
   return `${(Math.abs(Number(value) || 0) * 100).toFixed(2)}个百分点`;
 }
 
+function signedPercentValue(value) {
+  if (!Number.isFinite(value)) return '0.00%';
+  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
+}
+
 function buildChangeSummary(horizonDays, previousAsOf, asOf, type, returnChange, contributions) {
   const drivers = contributions.filter((item) => Math.abs(item.delta) >= 0.00005).slice(0, 3);
   const direction = returnChange > 0 ? '上调' : returnChange < 0 ? '下调' : '基本不变';
@@ -837,6 +842,110 @@ export function listPredictionChanges(db, tickerValue, limitPerHorizon = 10, asO
   }));
 }
 
+function calendarDayDistance(left, right) {
+  const leftTime = Date.parse(`${left}T00:00:00.000Z`);
+  const rightTime = Date.parse(`${right}T00:00:00.000Z`);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return Number.POSITIVE_INFINITY;
+  return Math.round(Math.abs(leftTime - rightTime) / 86_400_000);
+}
+
+function fixedTargetPoint(row, anchorTargetDate) {
+  const targetPrice = (returnValue) => Number.isFinite(row.current_price) && Number.isFinite(returnValue)
+    ? round(row.current_price * (1 + returnValue), 4) : null;
+  return {
+    asOf: row.as_of,
+    horizonDays: row.horizon_days,
+    horizonLabel: HORIZON_CONFIG[row.horizon_days]?.label || `${row.horizon_days}个交易日`,
+    targetDate: row.target_date,
+    targetDateOffsetDays: calendarDayDistance(row.target_date, anchorTargetDate),
+    currentPrice: row.current_price,
+    returnP10: row.return_p10,
+    returnP50: row.return_p50,
+    returnP90: row.return_p90,
+    targetPriceP10: targetPrice(row.return_p10),
+    targetPriceP50: targetPrice(row.return_p50),
+    targetPriceP90: targetPrice(row.return_p90),
+    probabilityUp: row.probability_up,
+    predictedDirection: row.predicted_direction,
+    dataQualityScore: row.data_quality_score,
+    validationStatus: row.status,
+    featureVersion: row.feature_version,
+    modelVersion: row.model_version
+  };
+}
+
+function fixedTargetSummary(anchorTargetDate, points) {
+  const oldest = points[0];
+  const latest = points.at(-1);
+  const targetPriceChange = round(latest.targetPriceP50 - oldest.targetPriceP50, 4);
+  const targetPriceChangePct = oldest.targetPriceP50
+    ? round(targetPriceChange / oldest.targetPriceP50, 8) : null;
+  const revision = targetPriceChangePct > 0.01
+    ? 'UPGRADED' : targetPriceChangePct < -0.01 ? 'DOWNGRADED' : 'STABLE';
+  const revisionLabel = revision === 'UPGRADED' ? '上调' : revision === 'DOWNGRADED' ? '下调' : '基本不变';
+  const prices = points.map((point) => point.targetPriceP50).filter(Number.isFinite);
+  const averagePrice = mean(prices);
+  const targetSpreadPct = prices.length > 1 && averagePrice
+    ? round((Math.max(...prices) - Math.min(...prices)) / Math.abs(averagePrice), 8) : 0;
+  const lowerBound = Math.max(...points.map((point) => point.targetPriceP10).filter(Number.isFinite));
+  const upperBound = Math.min(...points.map((point) => point.targetPriceP90).filter(Number.isFinite));
+  const intervalsOverlap = Number.isFinite(lowerBound) && Number.isFinite(upperBound) && lowerBound <= upperBound;
+  const exactMatches = points.filter((point) => point.targetDateOffsetDays === 0).length;
+  return {
+    revision,
+    targetPriceChange,
+    targetPriceChangePct,
+    targetSpreadPct,
+    intervalsOverlap,
+    commonInterval: intervalsOverlap ? { low: round(lowerBound, 4), high: round(upperBound, 4) } : null,
+    exactMatches,
+    headline: `对${anchorTargetDate}附近的目标中位价由${oldest.targetPriceP50.toFixed(2)}美元${revisionLabel}至${latest.targetPriceP50.toFixed(2)}美元（${signedPercentValue(targetPriceChangePct)}）。`,
+    interpretation: revision === 'STABLE'
+      ? '随着目标日临近，中位目标价变化不超过1%，跨期限观点暂时稳定。'
+      : `随着目标日临近，模型对同一终点的估值已${revisionLabel}；需结合逐日因子归因判断变化来源。`,
+    boundary: '比较使用同一模型版本，并允许估算目标日相差最多7个自然日以容纳节假日；不同起点的收益率不直接互比，结论不代表因果关系。'
+  };
+}
+
+export function buildFixedTargetComparisons(db, tickerValue, asOf = null, options = {}) {
+  const ticker = normalizeTicker(tickerValue);
+  const alignmentWindowDays = Math.min(14, Math.max(0, Number(options.alignmentWindowDays) || 7));
+  const rows = toPlainRows(db.prepare(`
+    SELECT ticker, as_of, horizon_days, target_date, current_price, predicted_direction,
+           probability_up, return_p10, return_p50, return_p90, status,
+           data_quality_score, feature_version, model_version
+    FROM prediction_backtest_results
+    WHERE ticker = ? AND model_version = ? AND (? IS NULL OR as_of <= ?)
+    ORDER BY as_of DESC, horizon_days
+  `).all(ticker, PREDICTION_MODEL_VERSION, asOf, asOf));
+  const comparisons = [];
+  for (const anchorHorizon of [21, 63]) {
+    const anchor = rows.find((row) => row.horizon_days === anchorHorizon);
+    if (!anchor?.target_date) continue;
+    const points = PREDICTION_HORIZONS
+      .filter((horizonDays) => horizonDays >= anchorHorizon)
+      .map((horizonDays) => rows
+        .filter((row) => row.horizon_days === horizonDays && row.as_of <= anchor.as_of && row.target_date)
+        .map((row) => ({ row, distance: calendarDayDistance(row.target_date, anchor.target_date) }))
+        .filter((candidate) => candidate.distance <= alignmentWindowDays)
+        .sort((left, right) => left.distance - right.distance || right.row.as_of.localeCompare(left.row.as_of))[0]?.row)
+      .filter(Boolean)
+      .map((row) => fixedTargetPoint(row, anchor.target_date))
+      .sort((left, right) => right.horizonDays - left.horizonDays);
+    if (points.length < 2) continue;
+    comparisons.push({
+      ticker,
+      anchorTargetDate: anchor.target_date,
+      anchorAsOf: anchor.as_of,
+      anchorHorizonDays: anchorHorizon,
+      alignmentWindowDays,
+      points,
+      summary: fixedTargetSummary(anchor.target_date, points)
+    });
+  }
+  return comparisons;
+}
+
 export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const dates = allCanonicalDates(db, ticker, asOf);
@@ -922,10 +1031,11 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
     return { horizonDays, ...counts };
   });
   const changes = listPredictionChanges(db, ticker, 10, effectiveAsOf);
+  const fixedTargetComparisons = buildFixedTargetComparisons(db, ticker, effectiveAsOf);
   return {
     ticker, asOf: effectiveAsOf || null,
     feature: featureRow ? snapshotFromRow(featureRow) : null,
-    predictions: latestByHorizon, reliability, backtest, changes,
+    predictions: latestByHorizon, reliability, backtest, changes, fixedTargetComparisons,
     featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION,
     reliabilityGate: config.reliabilityGate
   };

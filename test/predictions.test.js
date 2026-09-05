@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { openDatabase, nowIso } from '../src/db.js';
 import { saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import {
-  FEATURE_VERSION, PREDICTION_MODEL_VERSION, buildFeatureSnapshot,
+  FEATURE_VERSION, PREDICTION_MODEL_VERSION, buildFeatureSnapshot, buildFixedTargetComparisons,
   getPredictionOverview, listPredictionChanges, predictFromSnapshot, runPredictionBacktest
 } from '../src/predictions.js';
 
@@ -93,6 +93,31 @@ test('连续交易日预测按因子拆解变化且重复运行不会重复记�
     assert.match(change.summary.headline, /预期收益较/);
     assert.match(change.summary.boundary, /不等同于.*因果关系/);
   }
+  db.close();
+});
+
+test('固定目标日期比较按同一终点串联长期到短期预测', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEST' });
+  const dates = seedPrices(db, 'TEST', 240);
+  const asOf = dates.at(-1);
+
+  runPredictionBacktest(db, 'TEST', asOf, { maxSessions: 240 });
+  const comparisons = buildFixedTargetComparisons(db, 'TEST', asOf);
+  const overview = getPredictionOverview(db, 'TEST', asOf);
+
+  assert.equal(comparisons.length, 2);
+  assert.deepEqual(comparisons[0].points.map((point) => point.horizonDays), [126, 63, 21]);
+  assert.equal(comparisons[0].anchorHorizonDays, 21);
+  assert.ok(comparisons[0].points.every((point) => point.targetDateOffsetDays <= 7));
+  assert.equal(comparisons[0].summary.exactMatches, 3);
+  assert.match(comparisons[0].summary.headline, /目标中位价/);
+  assert.match(comparisons[0].summary.headline, /%/);
+  assert.match(comparisons[0].summary.boundary, /不同起点的收益率不直接互比/);
+  assert.equal(overview.fixedTargetComparisons.length, 2);
+  const historical = buildFixedTargetComparisons(db, 'TEST', dates[180]);
+  assert.ok(historical.flatMap((comparison) => comparison.points)
+    .every((point) => point.asOf <= dates[180]));
   db.close();
 });
 

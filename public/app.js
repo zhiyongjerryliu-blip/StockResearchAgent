@@ -1138,6 +1138,52 @@ function renderPredictionOverview() {
   }).join('');
   document.querySelector('#prediction-change-empty').classList.toggle('hidden', latestChanges.length > 0);
 
+  const fixedTargetComparisons = overview?.fixedTargetComparisons || [];
+  document.querySelector('#fixed-target-comparison-content').innerHTML = fixedTargetComparisons.map((comparison) => {
+    const summary = comparison.summary || {};
+    const points = comparison.points || [];
+    const timeline = points.map((point, index) => {
+      const offset = Number(point.targetDateOffsetDays) || 0;
+      const targetNote = offset === 0 ? '目标日完全一致' : `目标日相差 ${offset} 天`;
+      const stageChange = index > 0 && Number.isFinite(points[index - 1]?.targetPriceP50)
+        ? point.targetPriceP50 - points[index - 1].targetPriceP50 : null;
+      return `<div class="fixed-target-point">
+        <div class="fixed-target-marker"><span>${index + 1}</span></div>
+        <div class="fixed-target-stage">
+          <div class="fixed-target-stage-head">
+            <div><strong>${escapeHtml(point.horizonLabel)}</strong><small>基准日 ${escapeHtml(point.asOf)}</small></div>
+            <span class="badge prediction-direction ${escapeHtml(point.predictedDirection)}">${predictionDirectionLabels[point.predictedDirection] || point.predictedDirection}</span>
+          </div>
+          <div class="fixed-target-values">
+            <div><span>当时股价</span><strong>${money(point.currentPrice)}</strong></div>
+            <div><span>目标中位价</span><strong>${money(point.targetPriceP50)}</strong></div>
+            <div><span>目标区间</span><strong>${money(point.targetPriceP10)} – ${money(point.targetPriceP90)}</strong></div>
+            <div><span>剩余期限收益</span><strong class="${pnlClass(point.returnP50)}">${percent(point.returnP50)}</strong></div>
+          </div>
+          <small class="fixed-target-note">${escapeHtml(targetNote)} · 数据质量 ${decimal(point.dataQualityScore, 1)}分${stageChange == null ? '' : ` · 目标价较上一阶段 <span class="${pnlClass(stageChange)}">${money(stageChange)}</span>`}</small>
+        </div>
+      </div>`;
+    }).join('');
+    const commonInterval = summary.commonInterval
+      ? `${money(summary.commonInterval.low)} – ${money(summary.commonInterval.high)}` : '无共同重叠区间';
+    return `<article class="fixed-target-card ${escapeHtml(summary.revision || 'STABLE')}">
+      <div class="fixed-target-card-head">
+        <div><span>锚定目标日</span><strong>${escapeHtml(comparison.anchorTargetDate)}</strong></div>
+        <span class="badge ${escapeHtml(summary.revision || 'STABLE')}">${summary.revision === 'UPGRADED' ? '目标上调' : summary.revision === 'DOWNGRADED' ? '目标下调' : '目标稳定'}</span>
+      </div>
+      <p>${escapeHtml(summary.headline || '')}</p>
+      <div class="fixed-target-summary">
+        <div><span>首尾目标价变化</span><strong class="${pnlClass(summary.targetPriceChange)}">${money(summary.targetPriceChange)}</strong></div>
+        <div><span>跨阶段目标分歧</span><strong>${percent(summary.targetSpreadPct)}</strong></div>
+        <div><span>共同预测区间</span><strong>${commonInterval}</strong></div>
+      </div>
+      <div class="fixed-target-timeline">${timeline}</div>
+      <p class="fixed-target-interpretation">${escapeHtml(summary.interpretation || '')}</p>
+      <small class="prediction-change-boundary">${escapeHtml(summary.boundary || '')}</small>
+    </article>`;
+  }).join('');
+  document.querySelector('#fixed-target-comparison-empty').classList.toggle('hidden', fixedTargetComparisons.length > 0);
+
   const backtest = overview?.backtest || [];
   document.querySelector('#prediction-backtest-body').innerHTML = backtest.map((counts) => {
     const reliability = reliabilityByHorizon.get(Number(counts.horizonDays));
