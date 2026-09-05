@@ -67,17 +67,26 @@ function priceContext(db, ticker, asOf, horizonDays) {
 }
 
 function latestPrediction(db, ticker, asOf, horizonDays) {
+  const selection = toPlain(db.prepare(`
+    SELECT selected_model_version FROM prediction_model_evaluations
+    WHERE ticker = ? AND horizon_days = ? AND date(as_of) <= date(?)
+    ORDER BY as_of DESC LIMIT 1
+  `).get(ticker, horizonDays, asOf));
+  const selectedModelVersion = selection?.selected_model_version || null;
   const prediction = toPlain(db.prepare(`
     SELECT * FROM predictions
     WHERE ticker = ? AND horizon_days = ? AND date(as_of) <= date(?)
+      AND (? IS NULL OR model_version = ?)
     ORDER BY as_of DESC, id DESC LIMIT 1
-  `).get(ticker, horizonDays, asOf));
+  `).get(ticker, horizonDays, asOf, selectedModelVersion, selectedModelVersion));
+  const reliabilityVersion = prediction?.model_version || selectedModelVersion;
   const reliability = toPlain(db.prepare(`
     SELECT composite_score, status, effective_samples, as_of
     FROM reliability_scores
     WHERE ticker = ? AND horizon_days = ? AND date(as_of) <= date(?)
+      AND (? IS NULL OR model_version = ?)
     ORDER BY as_of DESC, id DESC LIMIT 1
-  `).get(ticker, horizonDays, asOf));
+  `).get(ticker, horizonDays, asOf, reliabilityVersion, reliabilityVersion));
   if (!prediction) return { available: false, reliability: reliability || null };
   return {
     available: true,

@@ -1331,6 +1331,33 @@ export function runCandidateModelEvaluation(db, tickerValue, asOf, dates, baseli
       `).get(ticker, date, FEATURE_VERSION));
       if (!row) continue;
       const snapshot = snapshotFromRow(row);
+      const existing = toPlain(db.prepare(`
+        SELECT * FROM prediction_backtest_results
+        WHERE ticker = ? AND as_of = ? AND horizon_days = ? AND model_version = ?
+      `).get(ticker, date, horizonDays, CANDIDATE_MODEL_VERSION));
+      if (existing) {
+        const details = parseJson(existing.details_json, {});
+        latestTrainingSamples = Math.max(latestTrainingSamples, Number(details.trainingSamples) || 0);
+        if (existing.status !== 'EXCLUDED') {
+          saveBacktestResult(db, {
+            ticker, asOf: date, targetDate: existing.target_date, horizonDays,
+            currentPrice: existing.current_price, returnP10: existing.return_p10,
+            returnP50: existing.return_p50, returnP90: existing.return_p90,
+            probabilityUp: existing.probability_up,
+            predictedDirection: existing.predicted_direction,
+            dataQualityScore: existing.data_quality_score,
+            featureVersion: existing.feature_version, modelVersion: CANDIDATE_MODEL_VERSION,
+            signals: details.signals || {}, factorCoverage: details.factorCoverage || 0,
+            trainingSamples: details.trainingSamples, coefficients: details.coefficients
+          }, evaluatePrediction(db, {
+            ticker, asOf: date, horizonDays,
+            currentPrice: existing.current_price,
+            returnP10: existing.return_p10, returnP90: existing.return_p90,
+            predictedDirection: existing.predicted_direction
+          }, snapshot));
+        }
+        continue;
+      }
       const training = candidateTrainingRows(db, ticker, horizonDays, date);
       latestTrainingSamples = training.length;
       const minimum = CANDIDATE_MIN_TRAINING_SAMPLES[horizonDays];
@@ -1365,6 +1392,23 @@ export function runCandidateModelEvaluation(db, tickerValue, asOf, dates, baseli
     candidateReliability.find((item) => item.horizonDays === horizonDays),
     trainingByHorizon.get(horizonDays) || 0
   ));
+  const currentRow = toPlain(db.prepare(`
+    SELECT * FROM feature_snapshots
+    WHERE ticker = ? AND as_of = ? AND feature_version = ?
+  `).get(ticker, asOf, FEATURE_VERSION));
+  if (currentRow) {
+    const snapshot = snapshotFromRow(currentRow);
+    for (const comparison of comparisons.filter((item) => item.decision === 'PROMOTE_CANDIDATE')) {
+      const training = candidateTrainingRows(db, ticker, comparison.horizonDays, asOf);
+      const model = fitRidgeModel(training);
+      if (!model) continue;
+      saveCurrentPrediction(
+        db,
+        candidatePrediction(snapshot, comparison.horizonDays, model, training.length),
+        candidateReliability.find((item) => item.horizonDays === comparison.horizonDays)
+      );
+    }
+  }
   return { modelVersion: CANDIDATE_MODEL_VERSION, reliability: candidateReliability, comparisons };
 }
 
@@ -1539,18 +1583,21 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
     WHERE ticker = ? AND as_of <= ? AND feature_version = ?
     ORDER BY as_of DESC LIMIT 1
   `).get(ticker, effectiveAsOf, FEATURE_VERSION)) : null;
-  const predictions = toPlainRows(db.prepare(`
-    SELECT * FROM predictions
-    WHERE ticker = ? AND model_version = ?
-      AND (? IS NULL OR as_of <= ?)
-    ORDER BY as_of DESC, horizon_days, id DESC
-  `).all(ticker, PREDICTION_MODEL_VERSION, effectiveAsOf, effectiveAsOf));
   const latestByHorizon = [];
-  const seen = new Set();
-  for (const row of predictions) {
-    if (seen.has(row.horizon_days)) continue;
-    seen.add(row.horizon_days);
-    latestByHorizon.push({ ...row, rationale: parseJson(row.rationale_json, {}) });
+  for (const horizonDays of PREDICTION_HORIZONS) {
+    const selection = effectiveAsOf ? toPlain(db.prepare(`
+      SELECT selected_model_version FROM prediction_model_evaluations
+      WHERE ticker = ? AND horizon_days = ? AND as_of <= ?
+      ORDER BY as_of DESC LIMIT 1
+    `).get(ticker, horizonDays, effectiveAsOf)) : null;
+    const selectedVersion = selection?.selected_model_version || PREDICTION_MODEL_VERSION;
+    const row = toPlain(db.prepare(`
+      SELECT * FROM predictions
+      WHERE ticker = ? AND horizon_days = ? AND model_version = ?
+        AND (? IS NULL OR as_of <= ?)
+      ORDER BY as_of DESC, id DESC LIMIT 1
+    `).get(ticker, horizonDays, selectedVersion, effectiveAsOf, effectiveAsOf));
+    if (row) latestByHorizon.push({ ...row, rationale: parseJson(row.rationale_json, {}) });
   }
   const reliability = PREDICTION_HORIZONS.map((horizonDays) => {
     const row = toPlain(db.prepare(`

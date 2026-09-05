@@ -7,6 +7,9 @@ import {
 } from '../src/advice.js';
 import { ingestFutuBars, ingestFutuTicks } from '../src/intraday-flow.js';
 import { CAPITAL_BEHAVIOR_MODEL_VERSION } from '../src/capital-behavior.js';
+import {
+  CANDIDATE_MODEL_VERSION, PREDICTION_MODEL_VERSION, getPredictionOverview
+} from '../src/predictions.js';
 
 function seedPrices(db, ticker, count = 130, step = 1) {
   const end = new Date('2026-09-01T00:00:00.000Z');
@@ -231,5 +234,60 @@ test('通过20日85分门槛的连续派发才合并资金分并触发减仓复�
   assert.ok(overview.advice.every((item) => item.components.capitalFlow.score < item.components.capitalFlow.rawScore));
   assert.ok(overview.advice.every((item) => item.action === 'REDUCE_REVIEW'));
   assert.ok(overview.advice.every((item) => item.formalReady === false));
+  db.close();
+});
+
+test('投资建议只读取模型评估选中的预测版本', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEST' });
+  seedPrices(db, 'TEST', 130, 0);
+  const timestamp = nowIso();
+  const insertPrediction = db.prepare(`
+    INSERT INTO predictions (
+      ticker, as_of, target_date, horizon_days, current_price,
+      return_p10, return_p50, return_p90, price_p10, price_p50, price_p90,
+      probability_up, reliability_score, publication_status, model_version,
+      feature_version, rationale_json, created_at
+    ) VALUES (
+      'TEST', '2026-09-01', '2026-09-30', 21, 200,
+      ?, ?, ?, ?, ?, ?, ?, 90, 'PUBLISHED', ?, 'test-features', '{}', ?
+    )
+  `);
+  insertPrediction.run(-0.15, -0.10, -0.05, 170, 180, 190, 0.2, PREDICTION_MODEL_VERSION, timestamp);
+  insertPrediction.run(0.05, 0.10, 0.15, 210, 220, 230, 0.8, CANDIDATE_MODEL_VERSION, timestamp);
+  const insertEvaluation = db.prepare(`
+    INSERT INTO prediction_model_evaluations (
+      ticker, as_of, horizon_days, baseline_model_version, candidate_model_version,
+      selected_model_version, decision, training_samples, baseline_metrics_json,
+      candidate_metrics_json, reason, created_at
+    ) VALUES ('TEST', '2026-09-01', 21, ?, ?, ?, ?, 100, '{}', '{}', 'test', ?)
+  `);
+  insertEvaluation.run(
+    PREDICTION_MODEL_VERSION, CANDIDATE_MODEL_VERSION,
+    PREDICTION_MODEL_VERSION, 'KEEP_BASELINE', timestamp
+  );
+
+  let item = buildInvestmentAdvice(db, 'TEST', '2026-09-01').advice
+    .find((candidate) => candidate.horizonDays === 21);
+  assert.equal(item.prediction.modelVersion, PREDICTION_MODEL_VERSION);
+  assert.equal(item.prediction.returnP50, -0.10);
+  assert.equal(
+    getPredictionOverview(db, 'TEST', '2026-09-01').predictions[0].model_version,
+    PREDICTION_MODEL_VERSION
+  );
+
+  db.prepare(`
+    UPDATE prediction_model_evaluations
+    SET selected_model_version = ?, decision = 'PROMOTE_CANDIDATE'
+    WHERE ticker = 'TEST' AND as_of = '2026-09-01' AND horizon_days = 21
+  `).run(CANDIDATE_MODEL_VERSION);
+  item = buildInvestmentAdvice(db, 'TEST', '2026-09-01').advice
+    .find((candidate) => candidate.horizonDays === 21);
+  assert.equal(item.prediction.modelVersion, CANDIDATE_MODEL_VERSION);
+  assert.equal(item.prediction.returnP50, 0.10);
+  assert.equal(
+    getPredictionOverview(db, 'TEST', '2026-09-01').predictions[0].model_version,
+    CANDIDATE_MODEL_VERSION
+  );
   db.close();
 });
