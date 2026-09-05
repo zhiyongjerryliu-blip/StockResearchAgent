@@ -9,7 +9,9 @@ import { nextRegularUsTradingDate } from './trading-calendar.js';
 
 export const FEATURE_VERSION = 'point-in-time-features-v2-2026-09-05';
 export const PREDICTION_MODEL_VERSION = 'explainable-pit-ensemble-v1.1-2026-09-05';
+export const CANDIDATE_MODEL_VERSION = 'ridge-walk-forward-v2-2026-09-05';
 export const PREDICTION_HORIZONS = Object.freeze([21, 63, 126]);
+const CANDIDATE_MIN_TRAINING_SAMPLES = Object.freeze({ 21: 40, 63: 28, 126: 16 });
 
 const HORIZON_CONFIG = Object.freeze({
   21: {
@@ -53,6 +55,39 @@ function median(values) {
   if (!valid.length) return null;
   const middle = Math.floor(valid.length / 2);
   return valid.length % 2 ? valid[middle] : (valid[middle - 1] + valid[middle]) / 2;
+}
+
+function quantile(values, probability) {
+  const valid = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (!valid.length) return null;
+  const position = (valid.length - 1) * probability;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return valid[lower];
+  return valid[lower] + ((valid[upper] - valid[lower]) * (position - lower));
+}
+
+function solveLinearSystem(matrix, vector) {
+  const size = vector.length;
+  const augmented = matrix.map((row, index) => [...row, vector[index]]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+    }
+    if (Math.abs(augmented[pivot][column]) < 1e-10) return null;
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+    const divisor = augmented[column][column];
+    for (let index = column; index <= size; index += 1) augmented[column][index] /= divisor;
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const multiplier = augmented[row][column];
+      for (let index = column; index <= size; index += 1) {
+        augmented[row][index] -= multiplier * augmented[column][index];
+      }
+    }
+  }
+  return augmented.map((row) => row[size]);
 }
 
 function canonicalPrices(db, ticker, asOf, limit = 180) {
@@ -432,6 +467,107 @@ export function saveFeatureSnapshot(db, tickerValue, asOf) {
   return snapshot;
 }
 
+function candidateVector(snapshot, horizonDays) {
+  const features = snapshot.features;
+  const stockReturn = features.price[`return${horizonDays}d`];
+  const marketReturn = features.benchmarks.market?.[`return${horizonDays}d`];
+  const industryReturn = features.benchmarks.industry?.[`return${horizonDays}d`];
+  const rateRegime = { RATE_HEADWIND: -1, RATE_TAILWIND: 1, MIXED: 0, NEUTRAL: 0 }[features.macro.regime] ?? 0;
+  return [
+    features.price.return5d,
+    features.price.return21d,
+    features.price.return63d,
+    features.price.return126d,
+    features.price.volatility20d,
+    features.price.movingAverageGap20d,
+    Number.isFinite(stockReturn) && Number.isFinite(marketReturn) ? stockReturn - marketReturn : null,
+    Number.isFinite(stockReturn) && Number.isFinite(industryReturn) ? stockReturn - industryReturn : null,
+    features.capitalFlow.score,
+    features.continuousCapital.score,
+    features.peerValuation.forwardPePremium ?? features.peerValuation.staticPePremium,
+    mean([features.earnings.revision7d, features.earnings.revision30d]),
+    features.fundamentals.revenueGrowth,
+    features.fundamentals.operatingCashFlowMargin,
+    rateRegime,
+    features.events.score
+  ].map((value) => Number.isFinite(value) ? Number(value) : 0);
+}
+
+function fitRidgeModel(samples, lambda = 2) {
+  if (!samples.length) return null;
+  const dimensions = samples[0].vector.length;
+  const means = Array.from({ length: dimensions }, (_, column) => mean(samples.map((item) => item.vector[column])) || 0);
+  const deviations = Array.from({ length: dimensions }, (_, column) => (
+    standardDeviation(samples.map((item) => item.vector[column])) || 1
+  ));
+  const rows = samples.map((sample) => [
+    1,
+    ...sample.vector.map((value, column) => (value - means[column]) / deviations[column])
+  ]);
+  const size = dimensions + 1;
+  const gram = Array.from({ length: size }, () => Array(size).fill(0));
+  const target = Array(size).fill(0);
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    for (let left = 0; left < size; left += 1) {
+      target[left] += row[left] * samples[rowIndex].actualReturn;
+      for (let right = 0; right < size; right += 1) gram[left][right] += row[left] * row[right];
+    }
+  }
+  for (let index = 1; index < size; index += 1) gram[index][index] += lambda;
+  const coefficients = solveLinearSystem(gram, target);
+  if (!coefficients) return null;
+  const predict = (vector) => coefficients[0] + vector.reduce((sum, value, column) => (
+    sum + (((value - means[column]) / deviations[column]) * coefficients[column + 1])
+  ), 0);
+  const residuals = samples.map((sample) => sample.actualReturn - predict(sample.vector));
+  return {
+    coefficients, means, deviations,
+    residualP10: quantile(residuals, 0.10) ?? -0.1,
+    residualP90: quantile(residuals, 0.90) ?? 0.1,
+    residualDeviation: standardDeviation(residuals) || 0.1,
+    predict
+  };
+}
+
+function candidateTrainingRows(db, ticker, horizonDays, asOf) {
+  return toPlainRows(db.prepare(`
+    SELECT f.*, b.actual_return, b.actual_date
+    FROM feature_snapshots f
+    JOIN prediction_backtest_results b
+      ON b.ticker = f.ticker AND b.as_of = f.as_of
+    WHERE f.ticker = ? AND f.feature_version = ?
+      AND b.horizon_days = ? AND b.model_version = ? AND b.status = 'MATURED'
+      AND b.actual_date < ? AND f.as_of < ?
+    ORDER BY f.as_of
+  `).all(ticker, FEATURE_VERSION, horizonDays, PREDICTION_MODEL_VERSION, asOf, asOf)).map((row) => ({
+    vector: candidateVector(snapshotFromRow(row), horizonDays),
+    actualReturn: row.actual_return
+  }));
+}
+
+function candidatePrediction(snapshot, horizonDays, model, trainingSamples) {
+  const vector = candidateVector(snapshot, horizonDays);
+  const expectedReturn = clamp(model.predict(vector), -0.8, 2);
+  const returnP10 = clamp(expectedReturn + model.residualP10, -0.95, 3);
+  const returnP90 = clamp(expectedReturn + model.residualP90, -0.95, 3);
+  const scale = Math.max(0.02, model.residualDeviation);
+  const probabilityUp = clamp(1 / (1 + Math.exp(-(expectedReturn / scale))), 0.05, 0.95);
+  const currentPrice = snapshot.features.price.currentPrice;
+  return {
+    ticker: snapshot.ticker, asOf: snapshot.asOf,
+    targetDate: estimateTargetDate(snapshot.asOf, horizonDays), horizonDays,
+    currentPrice, returnP10: round(Math.min(returnP10, expectedReturn), 6),
+    returnP50: round(expectedReturn, 6), returnP90: round(Math.max(returnP90, expectedReturn), 6),
+    probabilityUp: round(probabilityUp, 4),
+    predictedDirection: actualDirection(expectedReturn),
+    dataQualityScore: snapshot.dataQualityScore,
+    featureVersion: FEATURE_VERSION, modelVersion: CANDIDATE_MODEL_VERSION,
+    signals: { candidateVector: vector }, factorCoverage: 100,
+    trainingSamples, coefficients: model.coefficients
+  };
+}
+
 function featureSignal(snapshot, horizonDays) {
   const { features } = snapshot;
   const momentumReturn = horizonDays === 21
@@ -614,7 +750,11 @@ function saveBacktestResult(db, prediction, evaluation) {
     evaluation.intervalHit == null ? null : evaluation.intervalHit ? 1 : 0,
     evaluation.status, evaluation.exclusionReason, prediction.dataQualityScore,
     prediction.featureVersion, prediction.modelVersion,
-    JSON.stringify({ signals: prediction.signals, factorCoverage: prediction.factorCoverage }),
+    JSON.stringify({
+      signals: prediction.signals, factorCoverage: prediction.factorCoverage,
+      trainingSamples: prediction.trainingSamples ?? null,
+      coefficients: prediction.coefficients ?? null
+    }),
     timestamp, timestamp
   );
 }
@@ -659,12 +799,12 @@ function reliabilityMetrics(rows, horizonDays) {
   };
 }
 
-function saveAutomaticReliability(db, ticker, horizonDays, asOf) {
+function saveAutomaticReliability(db, ticker, horizonDays, asOf, modelVersion = PREDICTION_MODEL_VERSION) {
   const rows = toPlainRows(db.prepare(`
     SELECT * FROM prediction_backtest_results
     WHERE ticker = ? AND horizon_days = ? AND model_version = ? AND as_of <= ?
     ORDER BY as_of
-  `).all(ticker, horizonDays, PREDICTION_MODEL_VERSION, asOf));
+  `).all(ticker, horizonDays, modelVersion, asOf));
   const metrics = reliabilityMetrics(rows, horizonDays);
   const result = calculateReliability({ horizonDays, ...metrics });
   db.prepare(`
@@ -686,7 +826,7 @@ function saveAutomaticReliability(db, ticker, horizonDays, asOf) {
       status = excluded.status,
       details_json = excluded.details_json
   `).run(
-    ticker, horizonDays, PREDICTION_MODEL_VERSION, asOf,
+    ticker, horizonDays, modelVersion, asOf,
     result.directionAccuracy, result.probabilityCalibration, result.intervalCoverage,
     result.benchmarkSkill, result.regimeStability, result.dataQuality,
     result.effectiveSamples, result.compositeScore, result.status,
@@ -698,7 +838,7 @@ function saveAutomaticReliability(db, ticker, horizonDays, asOf) {
       overlapPolicy: `按每${horizonDays}个交易日抽取一个非重叠样本计算可靠度`
     })
   );
-  return { ticker, horizonDays, asOf, modelVersion: PREDICTION_MODEL_VERSION, ...result, ...metrics };
+  return { ticker, horizonDays, asOf, modelVersion, ...result, ...metrics };
 }
 
 function saveCurrentPrediction(db, prediction, reliability) {
@@ -1046,6 +1186,108 @@ export function buildFixedTargetComparisons(db, tickerValue, asOf = null, option
   return comparisons;
 }
 
+function saveModelEvaluation(db, ticker, asOf, horizonDays, baseline, candidate, trainingSamples) {
+  const candidateBetter = candidate.effectiveSamples >= candidate.requiredSamples
+    && candidate.compositeScore >= baseline.compositeScore + 3
+    && Number.isFinite(candidate.modelMae) && Number.isFinite(baseline.modelMae)
+    && candidate.modelMae <= baseline.modelMae * 0.97;
+  const decision = candidateBetter ? 'PROMOTE_CANDIDATE' : 'KEEP_BASELINE';
+  const selectedModelVersion = candidateBetter ? CANDIDATE_MODEL_VERSION : PREDICTION_MODEL_VERSION;
+  const reason = candidateBetter
+    ? '候选模型有效样本达标、综合可靠度至少高3分且MAE至少改善3%，允许进入替换候选。'
+    : candidate.effectiveSamples < candidate.requiredSamples
+      ? `候选模型有效样本${candidate.effectiveSamples}个，低于最低要求${candidate.requiredSamples}个。`
+      : `候选模型未同时满足可靠度提升3分和MAE改善3%的替换条件，继续保留V1基线。`;
+  db.prepare(`
+    INSERT INTO prediction_model_evaluations (
+      ticker, as_of, horizon_days, baseline_model_version, candidate_model_version,
+      selected_model_version, decision, training_samples, baseline_metrics_json,
+      candidate_metrics_json, reason, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(ticker, as_of, horizon_days, candidate_model_version) DO UPDATE SET
+      selected_model_version = excluded.selected_model_version,
+      decision = excluded.decision, training_samples = excluded.training_samples,
+      baseline_metrics_json = excluded.baseline_metrics_json,
+      candidate_metrics_json = excluded.candidate_metrics_json,
+      reason = excluded.reason, created_at = excluded.created_at
+  `).run(
+    ticker, asOf, horizonDays, PREDICTION_MODEL_VERSION, CANDIDATE_MODEL_VERSION,
+    selectedModelVersion, decision, trainingSamples,
+    JSON.stringify(baseline), JSON.stringify(candidate), reason, nowIso()
+  );
+  return {
+    ticker, asOf, horizonDays, baselineModelVersion: PREDICTION_MODEL_VERSION,
+    candidateModelVersion: CANDIDATE_MODEL_VERSION, selectedModelVersion,
+    decision, trainingSamples, baseline, candidate, reason
+  };
+}
+
+export function runCandidateModelEvaluation(db, tickerValue, asOf, dates, baselineReliability) {
+  const ticker = normalizeTicker(tickerValue);
+  const trainingByHorizon = new Map();
+  for (const horizonDays of PREDICTION_HORIZONS) {
+    let latestTrainingSamples = 0;
+    for (const date of dates) {
+      const row = toPlain(db.prepare(`
+        SELECT * FROM feature_snapshots
+        WHERE ticker = ? AND as_of = ? AND feature_version = ?
+      `).get(ticker, date, FEATURE_VERSION));
+      if (!row) continue;
+      const snapshot = snapshotFromRow(row);
+      const training = candidateTrainingRows(db, ticker, horizonDays, date);
+      latestTrainingSamples = training.length;
+      const minimum = CANDIDATE_MIN_TRAINING_SAMPLES[horizonDays];
+      const model = training.length >= minimum ? fitRidgeModel(training) : null;
+      if (!model) {
+        const placeholder = {
+          ticker, asOf: date, targetDate: estimateTargetDate(date, horizonDays), horizonDays,
+          currentPrice: snapshot.features.price.currentPrice,
+          returnP10: 0, returnP50: 0, returnP90: 0, probabilityUp: 0.5,
+          predictedDirection: 'NEUTRAL', dataQualityScore: snapshot.dataQualityScore,
+          featureVersion: FEATURE_VERSION, modelVersion: CANDIDATE_MODEL_VERSION,
+          signals: {}, factorCoverage: 0, trainingSamples: training.length
+        };
+        saveBacktestResult(db, placeholder, {
+          status: 'EXCLUDED', exclusionReason: `walk-forward训练样本不足：${training.length}/${minimum}`,
+          actualDate: null, actualReturn: null, benchmarkReturn: null, excessReturn: null,
+          directionHit: null, intervalHit: null
+        });
+        continue;
+      }
+      const prediction = candidatePrediction(snapshot, horizonDays, model, training.length);
+      saveBacktestResult(db, prediction, evaluatePrediction(db, prediction, snapshot));
+    }
+    trainingByHorizon.set(horizonDays, latestTrainingSamples);
+  }
+  const candidateReliability = PREDICTION_HORIZONS.map((horizonDays) => (
+    saveAutomaticReliability(db, ticker, horizonDays, asOf, CANDIDATE_MODEL_VERSION)
+  ));
+  const comparisons = PREDICTION_HORIZONS.map((horizonDays) => saveModelEvaluation(
+    db, ticker, asOf, horizonDays,
+    baselineReliability.find((item) => item.horizonDays === horizonDays),
+    candidateReliability.find((item) => item.horizonDays === horizonDays),
+    trainingByHorizon.get(horizonDays) || 0
+  ));
+  return { modelVersion: CANDIDATE_MODEL_VERSION, reliability: candidateReliability, comparisons };
+}
+
+export function listModelComparisons(db, tickerValue, asOf = null) {
+  const ticker = normalizeTicker(tickerValue);
+  return toPlainRows(db.prepare(`
+    SELECT * FROM prediction_model_evaluations
+    WHERE ticker = ? AND (? IS NULL OR as_of <= ?)
+    ORDER BY as_of DESC, horizon_days
+  `).all(ticker, asOf, asOf)).map((row) => ({
+    ticker: row.ticker, asOf: row.as_of, horizonDays: row.horizon_days,
+    baselineModelVersion: row.baseline_model_version,
+    candidateModelVersion: row.candidate_model_version,
+    selectedModelVersion: row.selected_model_version,
+    decision: row.decision, trainingSamples: row.training_samples,
+    baseline: parseJson(row.baseline_metrics_json, {}),
+    candidate: parseJson(row.candidate_metrics_json, {}), reason: row.reason
+  }));
+}
+
 export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const dates = allCanonicalDates(db, ticker, asOf);
@@ -1067,6 +1309,7 @@ export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
   const reliability = PREDICTION_HORIZONS.map((horizonDays) => (
     saveAutomaticReliability(db, ticker, horizonDays, asOf)
   ));
+  const candidate = runCandidateModelEvaluation(db, ticker, asOf, selectedDates, reliability);
   const latestSnapshot = saveFeatureSnapshot(db, ticker, asOf);
   const predictions = PREDICTION_HORIZONS.map((horizonDays) => saveCurrentPrediction(
     db, predictFromSnapshot(latestSnapshot, horizonDays),
@@ -1076,12 +1319,12 @@ export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
   return {
     ticker, asOf, featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION,
     datesProcessed: selectedDates.length, resultsUpdated: generated, excludedDates: excluded,
-    latestFeature: latestSnapshot, predictions, reliability, changes,
+    latestFeature: latestSnapshot, predictions, reliability, changes, candidate,
     methodology: {
       validation: '冻结规则模型按历史交易日逐日生成时点预测，再使用其后第21/63/126个交易日收盘价验证。',
       leakage: '价格只读取基准日及之前日线；财务数据按SEC提交日截断；一致预期按as_of截断。',
       overlap: '可靠度只使用按期限间隔抽取的非重叠样本；全部重叠样本仅用于诊断。',
-      boundary: 'V1是可解释基线模型，不代表已经训练完成；未达到样本量和85分综合可靠度时保持样本不足或观察状态。'
+      boundary: 'V1保持正式基线；岭回归候选只使用预测日之前已到期样本滚动训练。候选需有效样本达标、可靠度提升至少3分且MAE改善至少3%才允许替换。'
     }
   };
 }
@@ -1132,10 +1375,12 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
   });
   const changes = listPredictionChanges(db, ticker, 10, effectiveAsOf);
   const fixedTargetComparisons = buildFixedTargetComparisons(db, ticker, effectiveAsOf);
+  const modelComparisons = listModelComparisons(db, ticker, effectiveAsOf)
+    .filter((row, index, rows) => rows.findIndex((item) => item.horizonDays === row.horizonDays) === index);
   return {
     ticker, asOf: effectiveAsOf || null,
     feature: featureRow ? snapshotFromRow(featureRow) : null,
-    predictions: latestByHorizon, reliability, backtest, changes, fixedTargetComparisons,
+    predictions: latestByHorizon, reliability, backtest, changes, fixedTargetComparisons, modelComparisons,
     featureVersion: FEATURE_VERSION, modelVersion: PREDICTION_MODEL_VERSION,
     reliabilityGate: config.reliabilityGate
   };

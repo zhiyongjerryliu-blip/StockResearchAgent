@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { openDatabase, nowIso } from '../src/db.js';
 import { saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import {
-  FEATURE_VERSION, PREDICTION_MODEL_VERSION, buildFeatureSnapshot, buildFixedTargetComparisons,
-  getPredictionOverview, listPredictionChanges, predictFromSnapshot, runPredictionBacktest
+  CANDIDATE_MODEL_VERSION, FEATURE_VERSION, PREDICTION_MODEL_VERSION,
+  buildFeatureSnapshot, buildFixedTargetComparisons, getPredictionOverview,
+  listModelComparisons, listPredictionChanges, predictFromSnapshot, runPredictionBacktest
 } from '../src/predictions.js';
 
 function businessDates(start, count) {
@@ -151,6 +152,10 @@ test('回测按交易日到期、幂等保存并自动生成可靠度和最新�
     WHERE ticker = 'TEST' AND model_version = ?
   `).get(PREDICTION_MODEL_VERSION).count, 720);
   assert.equal(db.prepare(`
+    SELECT COUNT(*) AS count FROM prediction_backtest_results
+    WHERE ticker = 'TEST' AND model_version = ?
+  `).get(CANDIDATE_MODEL_VERSION).count, 720);
+  assert.equal(db.prepare(`
     SELECT COUNT(*) AS count FROM predictions
     WHERE ticker = 'TEST' AND model_version = ?
   `).get(PREDICTION_MODEL_VERSION).count, 3);
@@ -158,6 +163,21 @@ test('回测按交易日到期、幂等保存并自动生成可靠度和最新�
   assert.ok(overview.backtest.find((item) => item.horizonDays === 126).pending > 0);
   assert.ok(overview.reliability.every((item) => item.status === 'INSUFFICIENT'));
   assert.ok(overview.predictions.every((item) => item.publication_status === 'INSUFFICIENT'));
+  assert.equal(first.candidate.comparisons.length, 3);
+  assert.equal(listModelComparisons(db, 'TEST', asOf).length, 3);
+  assert.ok(first.candidate.comparisons.every((item) => ['KEEP_BASELINE', 'PROMOTE_CANDIDATE'].includes(item.decision)));
+  assert.ok(first.candidate.comparisons.every((item) => item.trainingSamples > 0));
+  const latestCandidate = db.prepare(`
+    SELECT details_json FROM prediction_backtest_results
+    WHERE ticker = 'TEST' AND as_of = ? AND horizon_days = 21 AND model_version = ?
+  `).get(asOf, CANDIDATE_MODEL_VERSION);
+  const candidateDetails = JSON.parse(latestCandidate.details_json);
+  const eligibleTraining = db.prepare(`
+    SELECT COUNT(*) AS count FROM prediction_backtest_results
+    WHERE ticker = 'TEST' AND horizon_days = 21 AND model_version = ?
+      AND status = 'MATURED' AND actual_date < ? AND as_of < ?
+  `).get(PREDICTION_MODEL_VERSION, asOf, asOf).count;
+  assert.equal(candidateDetails.trainingSamples, eligibleTraining);
   db.close();
 });
 

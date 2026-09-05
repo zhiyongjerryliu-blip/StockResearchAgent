@@ -727,6 +727,25 @@ ON reliability_scores(ticker, horizon_days, model_version, as_of DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reliability_snapshot_unique
 ON reliability_scores(ticker, horizon_days, model_version, as_of);
 
+CREATE TABLE IF NOT EXISTS prediction_model_evaluations (
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  baseline_model_version TEXT NOT NULL,
+  candidate_model_version TEXT NOT NULL,
+  selected_model_version TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('KEEP_BASELINE','PROMOTE_CANDIDATE')),
+  training_samples INTEGER NOT NULL DEFAULT 0,
+  baseline_metrics_json TEXT NOT NULL DEFAULT '{}',
+  candidate_metrics_json TEXT NOT NULL DEFAULT '{}',
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(ticker, as_of, horizon_days, candidate_model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_model_evaluations_lookup
+ON prediction_model_evaluations(ticker, as_of DESC, horizon_days);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT,
