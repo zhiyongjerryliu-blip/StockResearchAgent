@@ -15,6 +15,10 @@ function intEnv(name, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function boundedIntEnv(name, fallback, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, intEnv(name, fallback)));
+}
+
 function resolveProjectPath(value) {
   return path.isAbsolute(value) ? value : path.resolve(projectRoot, value);
 }
@@ -45,8 +49,10 @@ export const config = Object.freeze({
     port: intEnv('FUTU_OPEND_PORT', 11111),
     pythonPath: resolveProjectPath(process.env.FUTU_PYTHON_PATH || './.venv-futu/bin/python'),
     session: process.env.FUTU_MARKET_SESSION || 'RTH',
-    backfillDays: Math.min(60, Math.max(0, intEnv('FUTU_BACKFILL_DAYS', 35))),
-    tickRetentionDays: Math.min(30, Math.max(1, intEnv('FUTU_TICK_RETENTION_DAYS', 7)))
+    backfillDays: boundedIntEnv('FUTU_BACKFILL_DAYS', 35, 0, 60),
+    tickRetentionDays: boundedIntEnv('FUTU_TICK_RETENTION_DAYS', 7, 1, 30),
+    ingestBatchMilliseconds: boundedIntEnv('FUTU_INGEST_BATCH_MILLISECONDS', 2000, 250, 10000),
+    snapshotIntervalSeconds: boundedIntEnv('FUTU_SNAPSHOT_INTERVAL_SECONDS', 30, 5, 300)
   },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {

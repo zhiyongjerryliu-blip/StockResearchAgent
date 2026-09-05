@@ -90,6 +90,8 @@ npm install
 npm start
 ```
 
+首次执行 `npm start` 会安装当前用户的 macOS LaunchAgent，并在后台常驻运行。关闭终端、退出 Codex 或短暂休眠不会终止服务；异常退出后 launchd 会自动重新启动。
+
 浏览器打开：
 
 ```text
@@ -110,14 +112,27 @@ npm run dev
 
 修改服务端或前端文件后，Node 会自动重启服务。浏览器页面需要手动刷新。
 
+需要观察前台输出、且不希望注册后台服务时，可以运行：
+
+```bash
+npm run start:foreground
+```
+
 ## 停止和重启
 
 ```bash
 npm stop
 npm restart
+npm run service:status
 ```
 
-服务启动成功后会在 `data/server.pid` 记录进程号。`npm stop` 只会停止由本项目记录的服务，不会按名称批量终止其他 Node 程序。
+服务启动成功后会在 `data/server.pid` 记录进程号。`npm stop` 通过当前用户的 LaunchAgent 精确停止本项目，不会按名称批量终止其他 Node 程序。运行日志分别保存在 `data/logs/server.log` 和 `data/logs/server-error.log`，单个日志超过 10MB 后会在下一次启动或重启时轮换，保留最近 3 份。
+
+如需彻底移除 LaunchAgent，但保留数据库和日志：
+
+```bash
+npm run service:uninstall
+```
 
 如果启动时提示端口 `3789` 已被其他程序占用，先运行 `npm stop`。如果仍然占用，可以在 `.env` 中修改：
 
@@ -231,7 +246,7 @@ npm restart
 
 默认连接 `127.0.0.1:11111`，只订阅股票池中启用标的的美股常规交易时段行情，不创建交易连接，也不会下单。连接参数可通过 `.env` 中的 `FUTU_ENABLED`、`FUTU_OPEND_HOST`、`FUTU_OPEND_PORT`、`FUTU_PYTHON_PATH`、`FUTU_MARKET_SESSION` 和 `FUTU_BACKFILL_DAYS` 修改。
 
-首次接入某只股票且本地不足一个完整交易日的分钟线时才申请历史回补；正常重启会复用已入库分钟线，不重复消耗历史行情额度。实时订阅仍会用富途缓存补齐最近1000根分钟线和1000笔成交。逐笔数据同步汇总为每分钟统计，计算直接读取分钟汇总；原始逐笔默认保留7天用于审计，可用 `FUTU_TICK_RETENTION_DAYS` 调整为1–30天。
+首次接入某只股票且本地不足一个完整交易日的分钟线时才申请历史回补；正常重启会复用已入库分钟线，不重复消耗历史行情额度。实时订阅仍会用富途缓存补齐最近1000根分钟线和1000笔成交。逐笔事件默认缓存2秒后批量提交，同一批次内的分钟统计先在内存聚合再写库；资金流快照默认30秒一次，避免逐笔高峰造成大量SQLite事务。原始逐笔默认保留7天用于审计。可用 `FUTU_INGEST_BATCH_MILLISECONDS`、`FUTU_SNAPSHOT_INTERVAL_SECONDS` 和 `FUTU_TICK_RETENTION_DAYS` 调整，允许范围分别为250–10000毫秒、5–300秒和1–30天。
 
 “资金与成交量”页的“分钟资金流向”按富途逐笔 `BUY/SELL` 方向统计主动买入成交额、主动卖出成交额、净主动成交额、大额成交方向、VWAP位置和最近10分钟明细，并保存分钟快照。历史1分钟K线可以在富途额度允许时回补，但采集器启动前的历史逐笔方向通常不能完整回补，因此页面会区分完整逐笔、部分逐笔和分钟量价代理数据等级；逐笔分钟覆盖不足时会压低评分和置信度。
 

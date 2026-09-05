@@ -77,6 +77,10 @@ const newsProvider = new CompositeNewsProvider([
 const publicDir = path.join(config.projectRoot, 'public');
 const pidFile = path.join(config.projectRoot, 'data', 'server.pid');
 const intradaySnapshotTimers = new Map();
+let futuIngestTimer = null;
+let pendingFutuBars = [];
+let pendingFutuTicks = [];
+let shuttingDown = false;
 
 function enabledWatchlistTickers() {
   return listWatchlist(db).filter((item) => item.enabled).map((item) => item.ticker);
@@ -100,25 +104,47 @@ function scheduleIntradaySnapshot(ticker) {
     } catch (error) {
       console.error(`保存或提醒 ${ticker} 分钟资金流快照失败：`, error.message);
     }
-  }, 1000);
+  }, config.futu.snapshotIntervalSeconds * 1000);
   intradaySnapshotTimers.set(ticker, timer);
+}
+
+function flushFutuEvents() {
+  if (futuIngestTimer) clearTimeout(futuIngestTimer);
+  futuIngestTimer = null;
+  const bars = pendingFutuBars;
+  const ticks = pendingFutuTicks;
+  pendingFutuBars = [];
+  pendingFutuTicks = [];
+  if (!bars.length && !ticks.length) return;
+  const tickers = new Set([
+    ...bars.map((bar) => bar.ticker),
+    ...ticks.map((tick) => tick.ticker)
+  ]);
+  try {
+    if (bars.length) ingestFutuBars(db, bars);
+    if (ticks.length) ingestFutuTicks(db, ticks);
+    for (const ticker of tickers) scheduleIntradaySnapshot(ticker);
+  } catch (error) {
+    console.error('批量写入富途行情失败：', error.message);
+  }
+}
+
+function queueFutuEvent(event) {
+  if (event.type === 'bars') pendingFutuBars.push(...(event.bars || []));
+  if (event.type === 'ticks') pendingFutuTicks.push(...(event.ticks || []));
+  if (pendingFutuBars.length + pendingFutuTicks.length >= 5000) {
+    flushFutuEvents();
+    return;
+  }
+  if (!futuIngestTimer) {
+    futuIngestTimer = setTimeout(flushFutuEvents, config.futu.ingestBatchMilliseconds);
+  }
 }
 
 const futuCollector = new FutuCollector(
   { ...config.futu, projectRoot: config.projectRoot },
   (event) => {
-    if (event.type === 'bars') {
-      ingestFutuBars(db, event.bars);
-      for (const ticker of new Set((event.bars || []).map((bar) => bar.ticker))) {
-        scheduleIntradaySnapshot(ticker);
-      }
-    }
-    if (event.type === 'ticks') {
-      ingestFutuTicks(db, event.ticks);
-      for (const ticker of new Set((event.ticks || []).map((tick) => tick.ticker))) {
-        scheduleIntradaySnapshot(ticker);
-      }
-    }
+    if (event.type === 'bars' || event.type === 'ticks') queueFutuEvent(event);
   }
 );
 
@@ -591,6 +617,21 @@ const server = http.createServer(async (request, response) => {
 
 const stopScheduler = startScheduler(db, provider, config, secProvider, earningsProvider, newsProvider);
 
+function clearStalePidFile() {
+  if (!fs.existsSync(pidFile)) return;
+  const pid = Number.parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+  try {
+    if (Number.isInteger(pid) && pid > 0) process.kill(pid, 0);
+    else fs.unlinkSync(pidFile);
+  } catch (error) {
+    if (error.code === 'ESRCH') {
+      fs.unlinkSync(pidFile);
+      console.warn(`已清理失效的服务进程记录：${pid}`);
+    }
+  }
+}
+
+clearStalePidFile();
 server.listen(config.port, config.host, () => {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid), { encoding: 'utf8' });
@@ -619,17 +660,45 @@ function removeOwnPidFile() {
   }
 }
 
-async function shutdown() {
+async function shutdown(exitCode = 0, reason = 'shutdown') {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`正在关闭 StockResearchAgent：${reason}`);
+  const forceExitTimer = setTimeout(() => {
+    console.error('服务未能在12秒内完成清理，强制退出。');
+    removeOwnPidFile();
+    process.exit(exitCode || 1);
+  }, 12_000);
+  forceExitTimer.unref();
   stopScheduler();
   for (const timer of intradaySnapshotTimers.values()) clearTimeout(timer);
-  await futuCollector.stop();
-  server.close(() => {
+  intradaySnapshotTimers.clear();
+  if (futuIngestTimer) clearTimeout(futuIngestTimer);
+  try {
+    await futuCollector.stop();
+    flushFutuEvents();
+  } catch (error) {
+    console.error('关闭富途采集器失败：', error.message);
+  }
+  const finish = () => {
+    clearTimeout(forceExitTimer);
     removeOwnPidFile();
     db.close();
-    process.exit(0);
-  });
+    process.exit(exitCode);
+  };
+  server.close(finish);
+  server.closeIdleConnections?.();
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => void shutdown(0, 'SIGINT'));
+process.on('SIGTERM', () => void shutdown(0, 'SIGTERM'));
+process.on('SIGHUP', () => void shutdown(0, 'SIGHUP'));
+process.on('uncaughtException', (error) => {
+  console.error('未捕获异常：', error);
+  void shutdown(1, 'uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('未处理的 Promise 拒绝：', reason);
+  void shutdown(1, 'unhandledRejection');
+});
 process.on('exit', removeOwnPidFile);

@@ -102,6 +102,8 @@ export function ingestFutuTicks(db, ticks = []) {
       updated_at = excluded.updated_at
   `);
   let count = 0;
+  const minuteAggregates = new Map();
+  const ingestedAt = nowIso();
   db.exec('BEGIN');
   try {
     for (const tick of ticks) {
@@ -115,25 +117,49 @@ export function ingestFutuTicks(db, ticks = []) {
       const turnover = Number.isFinite(Number(tick.turnover)) ? Number(tick.turnover) : price * volume;
       const direction = normalizeDirection(tick.direction);
       const tradeDate = tick.tradeDate || String(tick.tradeTimeEt).slice(0, 10);
-      const ingestedAt = nowIso();
       const result = statement.run(
         ticker, String(tick.sequence), tick.tradeTimeEt, tradeDate,
         price, volume, turnover, direction, tick.tradeType || null,
         tick.session || 'RTH', ingestedAt
       );
       if (Number(result.changes || 0) > 0) {
-        minuteStatement.run(
-          ticker, String(tick.tradeTimeEt).slice(0, 16), tradeDate, tick.session || 'RTH',
-          direction === 'BUY' ? turnover : 0,
-          direction === 'SELL' ? turnover : 0,
-          direction === 'NEUTRAL' ? turnover : 0,
-          direction === 'BUY' ? 1 : 0,
-          direction === 'SELL' ? 1 : 0,
-          direction === 'NEUTRAL' ? 1 : 0,
-          volume, price, ingestedAt
-        );
+        const minuteEt = String(tick.tradeTimeEt).slice(0, 16);
+        const session = tick.session || 'RTH';
+        const key = `${ticker}\u0000${minuteEt}\u0000${session}`;
+        const aggregate = minuteAggregates.get(key) || {
+          ticker, minuteEt, tradeDate, session,
+          buyTurnover: 0, sellTurnover: 0, neutralTurnover: 0,
+          buyCount: 0, sellCount: 0, neutralCount: 0,
+          volume: 0, lastPrice: price, lastTradeTime: '', lastSequence: ''
+        };
+        aggregate.buyTurnover += direction === 'BUY' ? turnover : 0;
+        aggregate.sellTurnover += direction === 'SELL' ? turnover : 0;
+        aggregate.neutralTurnover += direction === 'NEUTRAL' ? turnover : 0;
+        aggregate.buyCount += direction === 'BUY' ? 1 : 0;
+        aggregate.sellCount += direction === 'SELL' ? 1 : 0;
+        aggregate.neutralCount += direction === 'NEUTRAL' ? 1 : 0;
+        aggregate.volume += volume;
+        const tradeTime = String(tick.tradeTimeEt);
+        const sequence = String(tick.sequence);
+        if (
+          tradeTime > aggregate.lastTradeTime ||
+          (tradeTime === aggregate.lastTradeTime && sequence > aggregate.lastSequence)
+        ) {
+          aggregate.lastPrice = price;
+          aggregate.lastTradeTime = tradeTime;
+          aggregate.lastSequence = sequence;
+        }
+        minuteAggregates.set(key, aggregate);
         count += 1;
       }
+    }
+    for (const aggregate of minuteAggregates.values()) {
+      minuteStatement.run(
+        aggregate.ticker, aggregate.minuteEt, aggregate.tradeDate, aggregate.session,
+        aggregate.buyTurnover, aggregate.sellTurnover, aggregate.neutralTurnover,
+        aggregate.buyCount, aggregate.sellCount, aggregate.neutralCount,
+        aggregate.volume, aggregate.lastPrice, ingestedAt
+      );
     }
     db.exec('COMMIT');
   } catch (error) {
