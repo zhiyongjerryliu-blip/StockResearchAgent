@@ -268,6 +268,15 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .prediction-factor-change span { color: #b8c5d3; }
 .prediction-factor-change small { color: #647285; }
 .prediction-factor-change strong { min-width: 58px; text-align: right; }
+.prediction-input-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid #263240; }
+.prediction-input-section > strong, .prediction-input-section > small { display: block; }
+.prediction-input-section > strong { font-size: 11px; }
+.prediction-input-section > small { margin: 4px 0 7px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.prediction-input-change { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid #1e2835; font-size: 9px; }
+.prediction-input-change span { color: #b8c5d3; }
+.prediction-input-change small { color: #647285; text-align: right; }
+.prediction-input-change strong { grid-column: 1 / -1; color: var(--muted); font-size: 8px; font-weight: 600; }
+.prediction-evidence-note { display: block; margin-top: 10px; color: #7890a8; font-size: 8px; line-height: 1.6; }
 .prediction-change-boundary { display: block; margin-top: 12px; color: #647285; line-height: 1.5; }
 .fixed-target-intro { margin: 0 0 16px; font-size: 11px; line-height: 1.7; }
 .fixed-target-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }

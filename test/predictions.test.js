@@ -102,6 +102,10 @@ test('连续交易日预测按因子拆解变化且重复运行不会重复记�
     assert.ok(Math.abs(change.residual_return_change) < 0.000001);
     assert.match(change.summary.headline, /预期收益较/);
     assert.match(change.summary.boundary, /不等同于.*因果关系/);
+    assert.ok(change.summary.featureChanges.length > 0);
+    assert.ok(change.summary.featureChanges.some((item) => item.key === 'currentPrice'));
+    assert.equal(change.summary.evidence.current.price.date, currentDate);
+    assert.match(change.summary.rootCause, /可复核输入变化/);
   }
   db.close();
 });

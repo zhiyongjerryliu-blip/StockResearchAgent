@@ -1191,6 +1191,18 @@ function metricPercent(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)}%`;
 }
 
+function predictionInputValue(value, unit) {
+  if (value == null) return '—';
+  if (unit === 'TEXT') return String(value);
+  if (!Number.isFinite(Number(value))) return '—';
+  if (unit === 'USD') return money(value);
+  if (unit === 'PERCENT') return percent(value);
+  if (unit === 'BPS') return `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}bp`;
+  if (unit === 'MULTIPLE') return `${Number(value).toFixed(2)}x`;
+  if (unit === 'COUNT') return String(Number(value));
+  return `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(3)}`;
+}
+
 function renderPredictionOverview() {
   const overview = state.predictionOverview;
   const feature = overview?.feature;
@@ -1247,6 +1259,19 @@ function renderPredictionOverview() {
         <strong class="${pnlClass(factor.delta)}">${percent(factor.delta)}</strong>
       </div>`).join('');
     const qualityChange = change.summary?.dataQuality;
+    const inputRows = (change.summary?.featureChanges || []).slice(0, 8).map((input) => `
+      <div class="prediction-input-change">
+        <span>${escapeHtml(input.label)}</span>
+        <small>${escapeHtml(predictionInputValue(input.previous, input.unit))} → ${escapeHtml(predictionInputValue(input.current, input.unit))}</small>
+        <strong class="${pnlClass(input.contributionDelta)}">因子贡献 ${percent(input.contributionDelta)}</strong>
+      </div>`).join('');
+    const currentEvidence = change.summary?.evidence?.current || {};
+    const evidenceNote = [
+      currentEvidence.price?.date ? `行情 ${currentEvidence.price.date} · ${currentEvidence.price.provider || '未知来源'}` : null,
+      currentEvidence.earnings?.asOf ? `EPS ${currentEvidence.earnings.asOf} · ${currentEvidence.earnings.provider || '未知来源'}` : null,
+      currentEvidence.fundamentals?.filedAt ? `财报提交 ${currentEvidence.fundamentals.filedAt}` : null,
+      currentEvidence.continuousCapital?.asOf ? `资金阶段 ${currentEvidence.continuousCapital.asOf} · ${currentEvidence.continuousCapital.dataLevel || '未知层级'}` : null
+    ].filter(Boolean).join('；');
     return `<article class="prediction-change-card ${escapeHtml(change.change_type)}">
       <div class="prediction-change-head">
         <div><span>${predictionHorizonLabels[change.horizon_days] || `${change.horizon_days}日`}</span><strong>${predictionChangeLabels[change.change_type] || change.change_type}</strong></div>
@@ -1262,6 +1287,8 @@ function renderPredictionOverview() {
         <div><span>数据质量变化</span><strong class="${pnlClass(qualityChange?.delta)}">${qualityChange?.delta == null ? '—' : `${qualityChange.delta >= 0 ? '+' : ''}${decimal(qualityChange.delta, 2)}分`}</strong></div>
       </div>
       <div class="prediction-factor-changes">${factorRows}</div>
+      ${inputRows ? `<div class="prediction-input-section"><strong>原始输入变化</strong><small>${escapeHtml(change.summary?.rootCause || '')}</small><div>${inputRows}</div></div>` : ''}
+      ${evidenceNote ? `<small class="prediction-evidence-note">数据时点：${escapeHtml(evidenceNote)}</small>` : ''}
       <small class="prediction-change-boundary">${escapeHtml(change.summary?.boundary || '')}</small>
     </article>`;
   }).join('');

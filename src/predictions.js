@@ -953,6 +953,92 @@ function buildChangeSummary(horizonDays, previousAsOf, asOf, type, returnChange,
   };
 }
 
+const INPUT_CHANGE_DEFINITIONS = Object.freeze([
+  { key: 'currentPrice', label: '基准收盘价', path: ['price', 'currentPrice'], unit: 'USD', factor: 'momentum' },
+  { key: 'return21d', label: '21日价格收益', path: ['price', 'return21d'], unit: 'PERCENT', factor: 'momentum' },
+  { key: 'volatility20d', label: '20日波动率', path: ['price', 'volatility20d'], unit: 'PERCENT', factor: 'momentum' },
+  { key: 'marketReturn21d', label: '大盘21日收益', path: ['benchmarks', 'market', 'return21d'], unit: 'PERCENT', factor: 'relativeStrength' },
+  { key: 'industryReturn21d', label: '行业ETF 21日收益', path: ['benchmarks', 'industry', 'return21d'], unit: 'PERCENT', factor: 'relativeStrength' },
+  { key: 'dailyCapitalScore', label: '日线资金评分', path: ['capitalFlow', 'score'], unit: 'SCORE', factor: 'capitalFlow' },
+  { key: 'continuousCapitalStage', label: '连续资金阶段', path: ['continuousCapital', 'stage'], unit: 'TEXT', factor: 'capitalFlow' },
+  { key: 'continuousCapitalScore', label: '连续资金评分', path: ['continuousCapital', 'score'], unit: 'SCORE', factor: 'capitalFlow' },
+  { key: 'forwardPe', label: '动态PE', path: ['valuation', 'forwardPe'], unit: 'MULTIPLE', factor: 'valuation' },
+  { key: 'peerForwardPePremium', label: '动态PE相对同业', path: ['peerValuation', 'forwardPePremium'], unit: 'PERCENT', factor: 'valuation' },
+  { key: 'epsRevision30d', label: 'EPS 30日修订', path: ['earnings', 'revision30d'], unit: 'PERCENT', factor: 'earnings' },
+  { key: 'revenueGrowth', label: '营收增长', path: ['fundamentals', 'revenueGrowth'], unit: 'PERCENT', factor: 'fundamentals' },
+  { key: 'cashFlowMargin', label: '经营现金流率', path: ['fundamentals', 'operatingCashFlowMargin'], unit: 'PERCENT', factor: 'fundamentals' },
+  { key: 'rateRegime', label: '利率环境', path: ['macro', 'regime'], unit: 'TEXT', factor: 'macro' },
+  { key: 'marketRiskRegime', label: '市场风险状态', path: ['macro', 'riskRegime'], unit: 'TEXT', factor: 'macro' },
+  { key: 'tenYearChangeBps', label: '10年期收益率变化', path: ['macro', 'tenYearChangeBps'], unit: 'BPS', factor: 'macro' },
+  { key: 'eventScore', label: '30日事件评分', path: ['events', 'score'], unit: 'SCORE', factor: 'events' },
+  { key: 'eventCount30d', label: '30日事件数量', path: ['events', 'eventCount30d'], unit: 'COUNT', factor: 'events' }
+]);
+
+function valueAtPath(value, path) {
+  return path.reduce((current, key) => current?.[key], value);
+}
+
+function featureChangeDetails(previousFeatures, currentFeatures, contributions) {
+  const contributionByFactor = new Map(contributions.map((item) => [item.key, item.delta]));
+  return INPUT_CHANGE_DEFINITIONS.map((definition) => {
+    const previous = valueAtPath(previousFeatures, definition.path);
+    const current = valueAtPath(currentFeatures, definition.path);
+    const numeric = Number.isFinite(previous) && Number.isFinite(current);
+    const changed = numeric ? Math.abs(current - previous) > 1e-10 : previous !== current;
+    return {
+      key: definition.key, label: definition.label, factor: definition.factor,
+      unit: definition.unit, previous: previous ?? null, current: current ?? null,
+      delta: numeric ? round(current - previous, 8) : null,
+      changed, contributionDelta: contributionByFactor.get(definition.factor) ?? 0
+    };
+  }).filter((item) => item.changed).sort((left, right) => (
+    Math.abs(right.contributionDelta) - Math.abs(left.contributionDelta)
+  ));
+}
+
+function featureEvidence(features) {
+  return {
+    price: {
+      date: features.price?.priceDate || null,
+      provider: features.price?.priceProvider || null,
+      availableAt: features.price?.priceAvailableAt || null
+    },
+    continuousCapital: {
+      asOf: features.continuousCapital?.asOf || null,
+      dataLevel: features.continuousCapital?.dataLevel || null,
+      modelVersion: features.continuousCapital?.modelVersion || null
+    },
+    earnings: {
+      asOf: features.earnings?.asOf || null,
+      provider: features.earnings?.provider || null,
+      qualityStatus: features.earnings?.qualityStatus || null
+    },
+    fundamentals: {
+      periodEnd: features.fundamentals?.periodEnd || null,
+      filedAt: features.fundamentals?.filedAt || null
+    },
+    events: {
+      total: features.events?.eventCount30d || 0,
+      direct: features.events?.directCount || 0,
+      proxy: features.events?.proxyCount || 0,
+      officialHighRisk: features.events?.officialHighRiskCount || 0
+    }
+  };
+}
+
+function exactFeatureSnapshot(db, ticker, asOf, featureVersion) {
+  const row = toPlain(db.prepare(`
+    SELECT features_json, availability_json, data_quality_score
+    FROM feature_snapshots
+    WHERE ticker = ? AND as_of = ? AND feature_version = ?
+  `).get(ticker, asOf, featureVersion));
+  return row ? {
+    features: parseJson(row.features_json, {}),
+    availability: parseJson(row.availability_json, {}),
+    dataQualityScore: row.data_quality_score
+  } : null;
+}
+
 export function savePredictionChanges(db, tickerValue, asOf) {
   const ticker = normalizeTicker(tickerValue);
   const saved = [];
@@ -996,6 +1082,17 @@ export function savePredictionChanges(db, tickerValue, asOf) {
     const summary = buildChangeSummary(
       horizonDays, previous.as_of, current.as_of, type, returnChange, contributions
     );
+    const previousFeature = exactFeatureSnapshot(db, ticker, previous.as_of, previous.feature_version);
+    const currentFeature = exactFeatureSnapshot(db, ticker, current.as_of, current.feature_version);
+    summary.featureChanges = previousFeature && currentFeature
+      ? featureChangeDetails(previousFeature.features, currentFeature.features, contributions) : [];
+    summary.evidence = {
+      previous: previousFeature ? featureEvidence(previousFeature.features) : null,
+      current: currentFeature ? featureEvidence(currentFeature.features) : null
+    };
+    summary.rootCause = summary.featureChanges.length
+      ? `检测到${summary.featureChanges.length}项可复核输入变化；按对应模型因子贡献变化排序。`
+      : '未检测到可复核的结构化输入变化，需检查数据覆盖或模型版本。';
     summary.dataQuality = {
       previous: previousRationale.dataQualityScore ?? null,
       current: currentRationale.dataQualityScore ?? null,
