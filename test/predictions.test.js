@@ -29,6 +29,15 @@ function seedPrices(db, ticker, count = 240) {
   return dates;
 }
 
+function insertAnnualFact(db, ticker, metricKey, value, filedAt, sourceKey = `${ticker}-${metricKey}`) {
+  db.prepare(`
+    INSERT INTO financial_facts (
+      source_key, ticker, cik, metric_key, taxonomy, tag, unit,
+      period_end, period_type, form, filed_at, value, ingested_at
+    ) VALUES (?, ?, '1', ?, 'us-gaap', ?, 'USD', '2024-12-31', 'annual', '10-K', ?, ?, ?)
+  `).run(sourceKey, ticker, metricKey, metricKey, filedAt, value, nowIso());
+}
+
 test('时点特征只读取基准日及之前的数据', () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'TEST' });
@@ -168,5 +177,47 @@ test('财务事实按提交日截断，后续提交不会进入较早特征快�
   const later = buildFeatureSnapshot(db, 'TEST', dates[71]);
   assert.equal(earlier.features.fundamentals.available, false);
   assert.equal(later.features.fundamentals.available, true);
+  db.close();
+});
+
+test('V2时点快照包含连续资金、行业基准、同业估值和现金流且不读取未来记录', () => {
+  const db = openDatabase(':memory:');
+  for (const ticker of ['TEST', 'PEER', 'SPY', 'SOXX']) upsertWatchlistItem(db, { ticker });
+  const dates = seedPrices(db, 'TEST', 90);
+  seedPrices(db, 'PEER', 90);
+  seedPrices(db, 'SPY', 90);
+  seedPrices(db, 'SOXX', 90);
+  const asOf = dates[70];
+  db.prepare("UPDATE securities SET benchmark = 'SPY', industry_etf = 'SOXX' WHERE ticker = 'TEST'").run();
+  db.prepare(`
+    INSERT INTO company_relationships (
+      ticker, related_ticker, relationship_type, source, active_from
+    ) VALUES ('TEST', 'PEER', 'COMPETITOR', 'test', '2025-01-01')
+  `).run();
+  for (const [metric, value] of [
+    ['revenue', 1000], ['grossProfit', 450], ['netIncome', 100],
+    ['operatingCashFlow', 160], ['capitalExpenditure', 80], ['epsDiluted', 5]
+  ]) insertAnnualFact(db, 'TEST', metric, value, dates[50]);
+  insertAnnualFact(db, 'PEER', 'epsDiluted', 4, dates[50]);
+  const insertBehavior = db.prepare(`
+    INSERT INTO capital_behavior_snapshots (
+      ticker, as_of, price_date, stage, direction, score, confidence, close,
+      data_level, model_version, created_at
+    ) VALUES ('TEST', ?, ?, ?, ?, ?, 70, 110, 'DAILY_PROXY', 'test-model', ?)
+  `);
+  insertBehavior.run(dates[60], dates[60], 'ACCUMULATION', 'BULLISH', 30, nowIso());
+  insertBehavior.run(dates[80], dates[80], 'ACCELERATED_DISTRIBUTION', 'BEARISH', -70, nowIso());
+
+  const snapshot = buildFeatureSnapshot(db, 'TEST', asOf);
+
+  assert.equal(snapshot.features.continuousCapital.asOf, dates[60]);
+  assert.equal(snapshot.features.continuousCapital.stage, 'ACCUMULATION');
+  assert.equal(snapshot.features.benchmarks.industry.symbol, 'SOXX');
+  assert.equal(snapshot.features.peerValuation.sampleSize, 1);
+  assert.ok(Number.isFinite(snapshot.features.peerValuation.staticPePremium));
+  assert.equal(snapshot.features.fundamentals.operatingCashFlowMargin, 0.16);
+  assert.equal(snapshot.features.fundamentals.cashConversion, 1.6);
+  assert.equal(snapshot.availability.cashFlowFundamentals, true);
+  assert.equal(snapshot.featureVersion, FEATURE_VERSION);
   db.close();
 });

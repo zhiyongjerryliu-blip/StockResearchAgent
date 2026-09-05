@@ -1203,7 +1203,8 @@ function renderPredictionOverview() {
   document.querySelector('#prediction-feature-date').textContent = feature?.priceDate || '—';
   document.querySelector('#prediction-feature-version').textContent = feature?.featureVersion || '尚未生成';
   document.querySelector('#prediction-data-quality').textContent = feature ? `${decimal(feature.dataQualityScore, 1)}分` : '—';
-  document.querySelector('#prediction-factor-count').textContent = feature ? `${availableFactors.length}/9` : '—';
+  const factorTotal = feature ? Object.keys(feature.availability || {}).length : 0;
+  document.querySelector('#prediction-factor-count').textContent = feature ? `${availableFactors.length}/${factorTotal}` : '—';
   document.querySelector('#prediction-factor-note').textContent = availableFactors.length
     ? availableFactors.map((key) => allFactorLabels[key]).join(' · ') : '等待特征快照';
   document.querySelector('#prediction-gate').textContent = `${overview?.reliabilityGate || 85}分`;

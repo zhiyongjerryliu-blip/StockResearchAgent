@@ -7,8 +7,8 @@ import { calculateTtmEps } from './valuation.js';
 import { calculateReliability } from './reliability.js';
 import { nextRegularUsTradingDate } from './trading-calendar.js';
 
-export const FEATURE_VERSION = 'point-in-time-features-v1-2026-09-03';
-export const PREDICTION_MODEL_VERSION = 'explainable-pit-ensemble-v1-2026-09-03';
+export const FEATURE_VERSION = 'point-in-time-features-v2-2026-09-05';
+export const PREDICTION_MODEL_VERSION = 'explainable-pit-ensemble-v1.1-2026-09-05';
 export const PREDICTION_HORIZONS = Object.freeze([21, 63, 126]);
 
 const HORIZON_CONFIG = Object.freeze({
@@ -46,6 +46,13 @@ function standardDeviation(values) {
   if (valid.length < 2) return null;
   const average = mean(valid);
   return Math.sqrt(valid.reduce((sum, value) => sum + ((value - average) ** 2), 0) / (valid.length - 1));
+}
+
+function median(values) {
+  const valid = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (!valid.length) return null;
+  const middle = Math.floor(valid.length / 2);
+  return valid.length % 2 ? valid[middle] : (valid[middle - 1] + valid[middle]) / 2;
 }
 
 function canonicalPrices(db, ticker, asOf, limit = 180) {
@@ -179,9 +186,15 @@ function financialMetricRows(db, ticker, metricKey, asOf) {
 function fundamentalFeatures(db, ticker, asOf) {
   const revenue = financialMetricRows(db, ticker, 'revenue', asOf);
   const grossProfit = financialMetricRows(db, ticker, 'grossProfit', asOf);
+  const netIncome = financialMetricRows(db, ticker, 'netIncome', asOf);
+  const operatingCashFlow = financialMetricRows(db, ticker, 'operatingCashFlow', asOf);
+  const capitalExpenditure = financialMetricRows(db, ticker, 'capitalExpenditure', asOf);
   const latest = revenue[0] || null;
   const previous = revenue[1] || null;
   const matchingGross = latest && grossProfit.find((row) => row.period_end === latest.period_end);
+  const matchingNetIncome = latest && netIncome.find((row) => row.period_end === latest.period_end);
+  const matchingOperatingCashFlow = latest && operatingCashFlow.find((row) => row.period_end === latest.period_end);
+  const matchingCapex = latest && capitalExpenditure.find((row) => row.period_end === latest.period_end);
   return {
     available: Boolean(latest),
     periodEnd: latest?.period_end || null,
@@ -189,7 +202,17 @@ function fundamentalFeatures(db, ticker, asOf) {
     revenueGrowth: latest && previous?.value
       ? round((latest.value - previous.value) / Math.abs(previous.value), 6) : null,
     grossMargin: latest?.value && matchingGross
-      ? round(matchingGross.value / latest.value, 6) : null
+      ? round(matchingGross.value / latest.value, 6) : null,
+    netMargin: latest?.value && matchingNetIncome
+      ? round(matchingNetIncome.value / latest.value, 6) : null,
+    operatingCashFlow: matchingOperatingCashFlow?.value ?? null,
+    capitalExpenditure: matchingCapex?.value ?? null,
+    operatingCashFlowMargin: latest?.value && matchingOperatingCashFlow
+      ? round(matchingOperatingCashFlow.value / latest.value, 6) : null,
+    cashConversion: matchingNetIncome?.value && matchingOperatingCashFlow
+      ? round(matchingOperatingCashFlow.value / Math.abs(matchingNetIncome.value), 6) : null,
+    capexIntensity: latest?.value && matchingCapex
+      ? round(Math.abs(matchingCapex.value) / Math.abs(latest.value), 6) : null
   };
 }
 
@@ -205,6 +228,52 @@ function valuationFeatures(db, ticker, asOf, currentPrice, estimate) {
   };
 }
 
+function peerValuationFeatures(db, ticker, asOf, targetValuation) {
+  const relationships = toPlainRows(db.prepare(`
+    SELECT related_ticker FROM company_relationships
+    WHERE ticker = ? AND relationship_type = 'COMPETITOR'
+      AND active_from <= ? AND (active_to IS NULL OR active_to >= ?)
+    ORDER BY related_ticker
+  `).all(ticker, asOf, asOf));
+  const peers = relationships.map(({ related_ticker: peerTicker }) => {
+    const price = priceFeatures(canonicalPrices(db, peerTicker, asOf, 2));
+    const estimate = estimateFeatures(db, peerTicker, asOf);
+    const valuation = valuationFeatures(db, peerTicker, asOf, price.currentPrice, estimate);
+    return {
+      ticker: peerTicker, priceDate: price.priceDate,
+      staticPe: valuation.staticPe, forwardPe: valuation.forwardPe
+    };
+  });
+  const staticPeMedian = median(peers.map((peer) => peer.staticPe));
+  const forwardPeMedian = median(peers.map((peer) => peer.forwardPe));
+  return {
+    available: Number.isFinite(staticPeMedian) || Number.isFinite(forwardPeMedian),
+    peers,
+    staticPeMedian: round(staticPeMedian, 4),
+    forwardPeMedian: round(forwardPeMedian, 4),
+    staticPePremium: Number.isFinite(targetValuation.staticPe) && staticPeMedian > 0
+      ? round((targetValuation.staticPe / staticPeMedian) - 1, 6) : null,
+    forwardPePremium: Number.isFinite(targetValuation.forwardPe) && forwardPeMedian > 0
+      ? round((targetValuation.forwardPe / forwardPeMedian) - 1, 6) : null,
+    sampleSize: peers.filter((peer) => Number.isFinite(peer.staticPe) || Number.isFinite(peer.forwardPe)).length
+  };
+}
+
+function continuousCapitalFeatures(db, ticker, asOf) {
+  const row = toPlain(db.prepare(`
+    SELECT as_of, price_date, stage, direction, score, confidence, data_level, model_version
+    FROM capital_behavior_snapshots
+    WHERE ticker = ? AND as_of <= ? AND price_date <= ?
+    ORDER BY as_of DESC, created_at DESC LIMIT 1
+  `).get(ticker, asOf, asOf));
+  if (!row) return { available: false };
+  return {
+    available: row.stage !== 'INSUFFICIENT', asOf: row.as_of, priceDate: row.price_date,
+    stage: row.stage, direction: row.direction, score: round(row.score / 100, 4),
+    confidence: row.confidence, dataLevel: row.data_level, modelVersion: row.model_version
+  };
+}
+
 function eventFeatures(db, ticker, asOf) {
   const rows = toPlainRows(db.prepare(`
     SELECT event_date, severity, source_type, evidence_json
@@ -213,6 +282,11 @@ function eventFeatures(db, ticker, asOf) {
     ORDER BY event_date DESC
   `).all(ticker, asOf, asOf));
   let score = 0;
+  let positiveCount = 0;
+  let negativeCount = 0;
+  let officialHighRiskCount = 0;
+  let directCount = 0;
+  let proxyCount = 0;
   for (const row of rows) {
     const evidence = parseJson(row.evidence_json, [])[0] || {};
     const magnitude = { P0: 1, P1: 0.75, P2: 0.4, P3: 0.15 }[row.severity] || 0.15;
@@ -222,6 +296,11 @@ function eventFeatures(db, ticker, asOf) {
       direction = evidence.direction === 'POSITIVE' ? 1 : evidence.direction === 'NEGATIVE' ? -1 : 0;
     }
     if (row.source_type === 'SEC_8K' && ['P0', 'P1'].includes(row.severity)) direction = -1;
+    if (direction > 0) positiveCount += 1;
+    if (direction < 0) negativeCount += 1;
+    if (row.source_type === 'SEC_8K' && ['P0', 'P1'].includes(row.severity)) officialHighRiskCount += 1;
+    if (evidence.relationType === 'INDUSTRY_PROXY' || evidence.relationType === 'SUPPLY_CHAIN_PROXY') proxyCount += 1;
+    else directCount += 1;
     score += direction * magnitude;
   }
   const coverage = toPlain(db.prepare(`
@@ -231,16 +310,26 @@ function eventFeatures(db, ticker, asOf) {
   return {
     available: rows.length > 0 || Boolean(coverage?.latest),
     eventCount30d: rows.length,
+    positiveCount, negativeCount, officialHighRiskCount, directCount, proxyCount,
     score: round(clamp(score), 4)
   };
 }
 
 function macroFeatures(db, asOf) {
   const context = buildMarketContext(db, asOf);
+  const marketPrices = priceFeatures(canonicalPrices(db, 'SPY', asOf, 130));
+  const riskRegime = Number.isFinite(marketPrices.volatility20d) && marketPrices.volatility20d >= 0.025
+    ? 'HIGH_VOLATILITY'
+    : Number.isFinite(marketPrices.return21d) && marketPrices.return21d >= 0.03
+      ? 'RISK_ON' : Number.isFinite(marketPrices.return21d) && marketPrices.return21d <= -0.03
+        ? 'RISK_OFF' : 'BALANCED';
   return {
     available: context.available, regime: context.regime, severity: context.severity,
     tenYearChangeBps: context.metrics.US10Y_YIELD?.changeBps ?? null,
-    expectedRateChangeBps: context.metrics.FED_FUNDS_FUTURES?.changeBps ?? null
+    expectedRateChangeBps: context.metrics.FED_FUNDS_FUTURES?.changeBps ?? null,
+    marketReturn21d: marketPrices.return21d,
+    marketVolatility20d: marketPrices.volatility20d,
+    riskRegime
   };
 }
 
@@ -249,20 +338,28 @@ function dataQuality(features) {
     price: features.price.sampleSize >= 22,
     longPriceHistory: features.price.sampleSize >= 127,
     benchmark: Boolean(features.benchmarks.market?.available),
+    industryBenchmark: Boolean(features.benchmarks.industry?.available),
     capitalFlow: features.capitalFlow.available,
+    continuousCapital: features.continuousCapital.available,
     valuation: features.valuation.available,
+    peerValuation: features.peerValuation.available,
     earnings: features.earnings.available,
     fundamentals: features.fundamentals.available,
+    cashFlowFundamentals: Number.isFinite(features.fundamentals.operatingCashFlowMargin),
     macro: features.macro.available,
     events: features.events.available
   };
-  const priceScore = features.price.sampleSize >= 127 ? 40 : features.price.sampleSize >= 64 ? 32 : features.price.sampleSize >= 22 ? 24 : 0;
+  const priceScore = features.price.sampleSize >= 127 ? 30 : features.price.sampleSize >= 64 ? 28 : features.price.sampleSize >= 22 ? 26 : 0;
   const score = priceScore
     + (availability.benchmark ? 6 : 0)
-    + (availability.capitalFlow ? 12 : 0)
-    + (availability.valuation ? 14 : 0)
-    + (availability.earnings ? 10 : 0)
-    + (availability.fundamentals ? 10 : 0)
+    + (availability.industryBenchmark ? 4 : 0)
+    + (availability.capitalFlow ? 9 : 0)
+    + (availability.continuousCapital ? 5 : 0)
+    + (availability.valuation ? 10 : 0)
+    + (availability.peerValuation ? 6 : 0)
+    + (availability.earnings ? 9 : 0)
+    + (availability.fundamentals ? 8 : 0)
+    + (availability.cashFlowFundamentals ? 5 : 0)
     + (availability.macro ? 5 : 0)
     + (availability.events ? 3 : 0);
   const reasons = [];
@@ -282,6 +379,7 @@ export function buildFeatureSnapshot(db, tickerValue, asOf) {
   const prices = canonicalPrices(db, ticker, asOf);
   const price = priceFeatures(prices);
   const earnings = estimateFeatures(db, ticker, asOf);
+  const valuation = valuationFeatures(db, ticker, asOf, price.currentPrice, earnings);
   const features = {
     ticker, asOf,
     price,
@@ -294,8 +392,10 @@ export function buildFeatureSnapshot(db, tickerValue, asOf) {
         relativeVolume: flow.metrics.relativeVolume
       };
     })(),
+    continuousCapital: continuousCapitalFeatures(db, ticker, asOf),
     earnings,
-    valuation: valuationFeatures(db, ticker, asOf, price.currentPrice, earnings),
+    valuation,
+    peerValuation: peerValuationFeatures(db, ticker, asOf, valuation),
     fundamentals: fundamentalFeatures(db, ticker, asOf),
     macro: macroFeatures(db, asOf),
     events: eventFeatures(db, ticker, asOf)
