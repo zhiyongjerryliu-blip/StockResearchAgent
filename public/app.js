@@ -9,7 +9,7 @@ const state = {
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
-  transactionImportToken: null
+  transactionImportToken: null, systemStatus: null
 };
 
 const titles = {
@@ -85,6 +85,7 @@ function showView(view) {
   if (view === 'predictions') loadPredictionOverview().catch((error) => showToast(error.message, true));
   if (view === 'capital') loadCapitalFlow().catch((error) => showToast(error.message, true));
   if (view === 'events') loadEventCenter().catch((error) => showToast(error.message, true));
+  if (view === 'settings') loadSystemStatus().catch((error) => showToast(error.message, true));
 }
 
 function renderWatchlist() {
@@ -1190,11 +1191,97 @@ function renderConfig() {
     ['SEC EDGAR', config.sec.configured ? `已配置（限速 ${config.sec.requestsPerSecond}/秒）` : '尚未配置联系邮箱'],
     ['Alpha Vantage预期', config.alphaVantage?.configured ? '已配置，日终自动更新' : '尚未配置API Key'],
     ['富途分钟行情', config.futu?.enabled ? `${config.futu.collector?.status || '等待连接'} · ${config.futu.host}:${config.futu.port}` : '未启用'],
+    ['自动维护', `每${config.system?.maintenanceCheckMinutes || '—'}分钟检查 · 保留${config.system?.backupRetentionCount || '—'}份备份`],
     ['macOS通知', config.notifications.macosEnabled ? '已启用' : '未启用'],
     ['邮件通知', config.notifications.emailEnabled ? (config.notifications.emailConfigured ? '已配置' : '缺少配置') : '未启用'],
     ['云端LLM', config.llm.enabled ? (config.llm.configured ? config.llm.model : '缺少配置') : '未启用']
   ];
   document.querySelector('#runtime-config').innerHTML = values.map(([key, value]) => `<dt>${key}</dt><dd>${escapeHtml(value)}</dd>`).join('');
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function formatDuration(secondsValue) {
+  const seconds = Math.max(0, Number(secondsValue || 0));
+  if (seconds < 60) return `${Math.round(seconds)}秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}小时${minutes ? `${minutes}分钟` : ''}`;
+}
+
+function systemBadge(status) {
+  if (['HEALTHY', 'CURRENT', 'SUCCESS', 'connected'].includes(status)) return 'buy';
+  if (['WARNING', 'RUNNING', 'starting'].includes(status)) return 'P2';
+  return 'P1';
+}
+
+function renderSystemStatus() {
+  const status = state.systemStatus;
+  if (!status) return;
+  const statusLabels = { HEALTHY: '正常', WARNING: '需关注', ATTENTION: '异常' };
+  const futu = status.futu?.collector || {};
+  const backups = status.backup?.files || [];
+  const currentRows = (status.watchlist || []).filter((item) => item.dailyStatus === 'CURRENT').length;
+  const totalRows = (status.watchlist || []).length;
+  const latestBackup = backups[0];
+  document.querySelector('#system-overall-status').textContent = statusLabels[status.status] || status.status;
+  document.querySelector('#system-overall-status').className = status.status === 'HEALTHY' ? 'positive' : 'negative';
+  document.querySelector('#system-uptime').textContent = `PID ${status.process.pid} · 已运行 ${formatDuration(status.uptimeSeconds)}`;
+  document.querySelector('#system-futu-status').textContent = futu.status === 'connected' ? '已连接' : (futu.status || '未启用');
+  document.querySelector('#system-futu-status').className = futu.status === 'connected' ? 'positive' : 'negative';
+  document.querySelector('#system-futu-heartbeat').textContent = futu.lastHeartbeatAt
+    ? `心跳 ${new Date(futu.lastHeartbeatAt).toLocaleString('zh-CN')} · 自动重连 ${status.futuRecovery?.totalAttempts || 0}次`
+    : '尚无采集器心跳';
+  document.querySelector('#system-database-size').textContent = formatBytes(status.database.totalBytes);
+  document.querySelector('#system-database-size').className = status.database.totalBytes >= status.database.warningBytes ? 'negative' : '';
+  document.querySelector('#system-database-limit').textContent = `预警线 ${formatBytes(status.database.warningBytes)} · 原始逐笔 ${Number(status.database.rowCounts.ticks_intraday || 0).toLocaleString('zh-CN')}条`;
+  document.querySelector('#system-backup-status').textContent = latestBackup ? '已备份' : '待备份';
+  document.querySelector('#system-backup-status').className = latestBackup ? 'positive' : 'negative';
+  document.querySelector('#system-backup-detail').textContent = latestBackup
+    ? `${latestBackup.name} · ${formatBytes(latestBackup.sizeBytes)}`
+    : `保留最近 ${status.backup.retentionCount} 份`;
+  document.querySelector('#system-data-status').textContent = `${currentRows}/${totalRows || 0}`;
+  document.querySelector('#system-data-status').className = currentRows === totalRows && totalRows ? 'positive' : 'negative';
+  document.querySelector('#system-data-detail').textContent = `预期完整交易日 ${status.expectedMarketDate || '—'}`;
+  const maintenance = status.maintenance?.value;
+  document.querySelector('#system-health-summary').textContent = maintenance
+    ? `最近维护 ${new Date(maintenance.completedAt).toLocaleString('zh-CN')} · 数据库检查 ${maintenance.integrity} · 清理过期逐笔 ${maintenance.prunedTicks || 0} 条`
+    : '尚未完成首次维护检查。';
+  document.querySelector('#system-issue-list').innerHTML = status.issues.length
+    ? status.issues.map((issue) => `<div class="system-issue ${escapeHtml(issue.severity)}"><span class="badge ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span><strong>${escapeHtml(issue.ticker || issue.code)}</strong><p>${escapeHtml(issue.message)}</p></div>`).join('')
+    : '<div class="system-ok">当前没有发现需要处理的运行或数据异常。</div>';
+  document.querySelector('#system-data-body').innerHTML = (status.watchlist || []).map((item) => `
+    <tr>
+      <td class="ticker">${escapeHtml(item.ticker)}</td>
+      <td>${escapeHtml(item.latest_daily_date || '—')}<br><small class="muted">${Number(item.daily_rows || 0).toLocaleString('zh-CN')}条</small></td>
+      <td><span class="badge ${systemBadge(item.dailyStatus)}">${item.dailyStatus === 'CURRENT' ? '完整' : item.dailyStatus === 'STALE' ? '滞后' : '缺失'}</span></td>
+      <td>${escapeHtml(item.latest_intraday_at || '—')}</td>
+      <td>${escapeHtml(item.latest_tick_at || '—')}</td>
+    </tr>`).join('');
+  document.querySelector('#system-data-empty').classList.toggle('hidden', totalRows > 0);
+  document.querySelector('#system-jobs-body').innerHTML = (status.jobs || []).map((job) => {
+    const elapsed = job.finished_at
+      ? (new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()) / 1000
+      : (Date.now() - new Date(job.started_at).getTime()) / 1000;
+    return `<tr>
+      <td>${escapeHtml(job.job_name)}</td>
+      <td>${new Date(job.started_at).toLocaleString('zh-CN')}</td>
+      <td>${formatDuration(elapsed)}</td>
+      <td><span class="badge ${systemBadge(job.status)}">${escapeHtml(job.status)}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadSystemStatus() {
+  state.systemStatus = await api('/api/system/status');
+  renderSystemStatus();
 }
 
 async function loadAll() {
@@ -1643,6 +1730,25 @@ document.querySelector('#test-notification').addEventListener('click', async () 
   } catch (error) { showToast(error.message, true); }
 });
 
+document.querySelector('#run-system-maintenance').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在检查与备份…';
+  try {
+    const result = await api('/api/system/maintenance', { method: 'POST', body: '{}' });
+    await loadSystemStatus();
+    state.notifications = await api('/api/notifications');
+    renderNotifications();
+    const backupText = result.backup?.skipped ? '今日备份已存在' : '数据库备份已生成';
+    showToast(`维护完成：数据库${result.integrity === 'ok' ? '正常' : '异常'}，${backupText}`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '立即检查并备份';
+  }
+});
+
 document.querySelector('#valuation-estimate-form').elements.asOf.value = currentEtDate();
 loadAll().catch((error) => showToast(`加载失败：${error.message}`, true));
 
@@ -1657,3 +1763,10 @@ setInterval(async () => {
     // 后台轮询失败时保留最后一次可用结果，手动操作仍会显示明确错误。
   }
 }, 15_000);
+
+setInterval(() => {
+  if (document.hidden || !document.querySelector('#view-settings').classList.contains('active')) return;
+  loadSystemStatus().catch(() => {
+    // 状态页轮询失败时保留最后一次结果，顶部提示仍可反映后续手动操作错误。
+  });
+}, 30_000);

@@ -52,7 +52,15 @@ export const config = Object.freeze({
     backfillDays: boundedIntEnv('FUTU_BACKFILL_DAYS', 35, 0, 60),
     tickRetentionDays: boundedIntEnv('FUTU_TICK_RETENTION_DAYS', 7, 1, 30),
     ingestBatchMilliseconds: boundedIntEnv('FUTU_INGEST_BATCH_MILLISECONDS', 2000, 250, 10000),
-    snapshotIntervalSeconds: boundedIntEnv('FUTU_SNAPSHOT_INTERVAL_SECONDS', 30, 5, 300)
+    snapshotIntervalSeconds: boundedIntEnv('FUTU_SNAPSHOT_INTERVAL_SECONDS', 30, 5, 300),
+    healthCheckSeconds: boundedIntEnv('FUTU_HEALTH_CHECK_SECONDS', 30, 10, 300),
+    heartbeatTimeoutSeconds: boundedIntEnv('FUTU_HEARTBEAT_TIMEOUT_SECONDS', 120, 60, 900),
+    reconnectMaxSeconds: boundedIntEnv('FUTU_RECONNECT_MAX_SECONDS', 300, 30, 1800)
+  },
+  system: {
+    backupRetentionCount: boundedIntEnv('DATABASE_BACKUP_RETENTION_COUNT', 7, 1, 30),
+    databaseWarningBytes: boundedIntEnv('DATABASE_WARNING_MB', 512, 100, 10240) * 1024 * 1024,
+    maintenanceCheckMinutes: boundedIntEnv('SYSTEM_MAINTENANCE_CHECK_MINUTES', 60, 15, 1440)
   },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {

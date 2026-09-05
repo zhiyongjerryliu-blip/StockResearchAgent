@@ -535,13 +535,50 @@
       </section>
 
       <section class="view" id="view-settings">
+        <div class="metric-grid system-metric-grid">
+          <article class="metric-card"><span>服务状态</span><strong id="system-overall-status">—</strong><small id="system-uptime">等待检查</small></article>
+          <article class="metric-card"><span>富途采集</span><strong id="system-futu-status">—</strong><small id="system-futu-heartbeat">等待检查</small></article>
+          <article class="metric-card"><span>数据库占用</span><strong id="system-database-size">—</strong><small id="system-database-limit">等待检查</small></article>
+          <article class="metric-card"><span>最近备份</span><strong id="system-backup-status">—</strong><small id="system-backup-detail">等待检查</small></article>
+          <article class="metric-card"><span>日线完整度</span><strong id="system-data-status">—</strong><small id="system-data-detail">等待检查</small></article>
+        </div>
+
         <div class="content-grid settings-grid">
           <article class="panel"><p class="eyebrow">RUNTIME</p><h2>运行环境</h2><dl id="runtime-config"></dl></article>
           <article class="panel"><p class="eyebrow">DATA POLICY</p><h2>数据与模型原则</h2><ul class="principle-list"><li>免费数据源优先，Provider可替换</li><li>所有预测和复盘保留历史版本</li><li>综合可靠度低于85分不发布正式预测</li><li>公开成交仅用于资金行为概率推断</li><li>云端LLM只解释结构化事实</li></ul></article>
         </div>
+        <article class="panel system-health-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">HEALTH &amp; MAINTENANCE</p><h2>健康检查与本地维护</h2></div>
+            <button id="run-system-maintenance" class="button secondary">立即检查并备份</button>
+          </div>
+          <p id="system-health-summary" class="muted system-health-summary">打开页面后自动检查。</p>
+          <div id="system-issue-list" class="system-issue-list"></div>
+        </article>
+        <div class="content-grid settings-grid system-detail-grid">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>股票池数据完整性</h2></div></div>
+            <div class="table-wrap">
+              <table class="system-table">
+                <thead><tr><th>股票</th><th>完整日线</th><th>状态</th><th>分钟线截至</th><th>逐笔截至</th></tr></thead>
+                <tbody id="system-data-body"></tbody>
+              </table>
+            </div>
+            <div id="system-data-empty" class="empty hidden">股票池中没有启用的股票。</div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">RECENT JOBS</p><h2>最近后台任务</h2></div></div>
+            <div class="table-wrap">
+              <table class="system-table">
+                <thead><tr><th>任务</th><th>开始时间</th><th>耗时</th><th>结果</th></tr></thead>
+                <tbody id="system-jobs-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
         <article class="panel setup-panel">
           <p class="eyebrow">LOCAL CONFIGURATION</p><h2>配置说明</h2>
-          <p>复制 <code>.env.example</code> 为 <code>.env</code>，再配置云端LLM、SMTP和通知开关。密钥仅保存在本机，不通过界面回显。</p>
+          <p>复制 <code>.env.example</code> 为 <code>.env</code>，再配置云端LLM、SMTP和通知开关。数据库每天自动备份一次，默认保留7份；密钥仅保存在本机，不通过界面回显。</p>
         </article>
       </section>
     </main>

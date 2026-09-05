@@ -74,7 +74,8 @@ export class FutuCollector {
     this.child = child;
     this.state = {
       ...this.state, status: 'starting', symbols, pid: child.pid,
-      startedAt: new Date().toISOString(), lastError: null, backfill: {}
+      startedAt: new Date().toISOString(), lastHeartbeatAt: null,
+      lastDataAt: null, lastError: null, backfill: {}
     };
     const stdout = readline.createInterface({ input: child.stdout });
     stdout.on('line', (line) => {

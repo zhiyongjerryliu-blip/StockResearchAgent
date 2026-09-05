@@ -19,6 +19,9 @@
 - OpenAI-compatible 云端 LLM 接口；
 - 收盘后单股和股票池基础复盘；
 - 定时行情更新和日终任务；
+- 独立系统状态页，展示服务运行时间、富途心跳、数据库容量、备份和股票池数据完整度；
+- 每日SQLite完整性检查、WAL检查点、过期逐笔清理和本地数据库备份，默认保留最近7份；
+- 富途采集器心跳超时检测和指数退避自动重连；
 - SEC 股票代码/CIK 映射、10-K/10-Q/8-K 文件同步；
 - SEC Company Facts 核心 US-GAAP 指标标准化；
 - 年度、季度财务趋势和 SEC 原文追溯；
@@ -127,6 +130,19 @@ npm run service:status
 ```
 
 服务启动成功后会在 `data/server.pid` 记录进程号。`npm stop` 通过当前用户的 LaunchAgent 精确停止本项目，不会按名称批量终止其他 Node 程序。运行日志分别保存在 `data/logs/server.log` 和 `data/logs/server-error.log`，单个日志超过 10MB 后会在下一次启动或重启时轮换，保留最近 3 份。
+
+“系统状态”页面会每30秒刷新运行信息。自动维护每天至少执行一次，包括数据库完整性检查、WAL检查点、过期逐笔清理和一致性备份；也可以点击“立即检查并备份”手动执行。备份位于 `data/backups/`，不会包含 `.env` 中的密钥。
+
+维护参数可在 `.env` 中调整：
+
+```dotenv
+DATABASE_BACKUP_RETENTION_COUNT=7
+DATABASE_WARNING_MB=512
+SYSTEM_MAINTENANCE_CHECK_MINUTES=60
+FUTU_HEALTH_CHECK_SECONDS=30
+FUTU_HEARTBEAT_TIMEOUT_SECONDS=120
+FUTU_RECONNECT_MAX_SECONDS=300
+```
 
 如需彻底移除 LaunchAgent，但保留数据库和日志：
 

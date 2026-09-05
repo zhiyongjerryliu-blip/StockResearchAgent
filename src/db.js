@@ -694,6 +694,16 @@ CREATE TABLE IF NOT EXISTS job_runs (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS system_health_snapshots (
+  check_date TEXT PRIMARY KEY,
+  checked_at TEXT NOT NULL,
+  expected_market_date TEXT,
+  status TEXT NOT NULL,
+  summary_json TEXT NOT NULL DEFAULT '{}',
+  issues_json TEXT NOT NULL DEFAULT '[]',
+  model_version TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL,

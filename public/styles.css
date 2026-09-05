@@ -311,6 +311,16 @@ dt, dd { padding: 10px 0; border-bottom: 1px solid #202b38; font-size: 12px; mar
 dt { color: var(--muted); } dd { text-align: right; }
 .principle-list { color: #b8c5d3; padding-left: 18px; line-height: 2; font-size: 13px; }
 .setup-panel p:last-child { color: var(--muted); margin: 14px 0 0; font-size: 13px; }
+.system-health-panel { margin-bottom: 16px; }
+.system-health-summary { margin: 0 0 14px; line-height: 1.7; }
+.system-issue-list { display: grid; gap: 8px; }
+.system-issue { display: grid; grid-template-columns: auto minmax(110px, .3fr) 1fr; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warning); border-radius: 7px; background: #0d141d; }
+.system-issue.P0, .system-issue.P1 { border-left-color: var(--danger); }
+.system-issue strong { font-size: 11px; }
+.system-issue p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.system-ok { padding: 14px; border: 1px solid #28543f; border-radius: 7px; background: #102018; color: var(--accent); font-size: 12px; }
+.system-detail-grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); }
+.system-table { min-width: 620px; }
 code { color: var(--accent); background: #09110d; padding: 2px 5px; border-radius: 4px; }
 .toast { position: fixed; right: 26px; top: 22px; z-index: 10; max-width: 380px; padding: 12px 16px; border: 1px solid #325444; border-radius: 7px; background: #12251c; color: var(--text); font-size: 12px; box-shadow: 0 12px 35px #0008; }
 .toast.error { background: #2c171b; border-color: #69303a; }
@@ -347,6 +357,8 @@ code { color: var(--accent); background: #09110d; padding: 2px 5px; border-radiu
   .topbar { align-items: flex-start; flex-direction: column; }
   .top-actions { flex-wrap: wrap; }
   .metric-grid, .sec-metric-grid, .settings-grid, .historical-valuation-summary { grid-template-columns: 1fr; }
+  .system-issue { grid-template-columns: auto 1fr; }
+  .system-issue p { grid-column: 1 / -1; }
   .sec-toolbar-panel { grid-template-columns: 1fr; }
   .sec-toolbar { align-items: stretch; flex-direction: column; }
   .sec-toolbar select { width: 100%; max-width: none; }

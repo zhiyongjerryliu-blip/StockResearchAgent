@@ -83,9 +83,27 @@ function loaded() {
   return launchctl(['print', serviceTarget], true).status === 0;
 }
 
+function pause(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
 function bootout() {
   if (!loaded()) return;
   launchctl(['bootout', serviceTarget]);
+  const deadline = Date.now() + 5000;
+  while (loaded() && Date.now() < deadline) pause(100);
+  if (loaded()) throw new Error('LaunchAgent 未能在5秒内完成卸载');
+}
+
+function bootstrap() {
+  let lastResult = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    lastResult = launchctl(['bootstrap', domain, plistPath], true);
+    if (lastResult.status === 0) return;
+    pause(attempt * 500);
+  }
+  const message = String(lastResult?.stderr || lastResult?.stdout || '').trim();
+  throw new Error(message || 'LaunchAgent 注册失败');
 }
 
 function rotateLog(filePath, maximumBytes = 10 * 1024 * 1024, copies = 3) {
@@ -124,7 +142,7 @@ function start() {
   ensureServiceFiles();
   rotateLog(stdoutPath);
   rotateLog(stderrPath);
-  launchctl(['bootstrap', domain, plistPath]);
+  bootstrap();
   console.log(`StockResearchAgent 已由 launchd 启动：http://127.0.0.1:3789`);
   console.log(`运行日志：${stdoutPath}`);
   console.log(`错误日志：${stderrPath}`);

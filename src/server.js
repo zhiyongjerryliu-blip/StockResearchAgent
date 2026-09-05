@@ -59,7 +59,11 @@ import {
 } from './repository.js';
 import { latestStableUsMarketDate } from './trading-calendar.js';
 import { getPredictionOverview, runPredictionBacktest } from './predictions.js';
+import {
+  collectSystemStatus, maintenanceDue, runSystemMaintenance
+} from './system-health.js';
 
+const applicationStartedAt = nowIso();
 const db = openDatabase();
 rebuildMissingIntradayMinutes(db);
 pruneIntradayTicks(db, config.futu.tickRetentionDays);
@@ -81,6 +85,18 @@ let futuIngestTimer = null;
 let pendingFutuBars = [];
 let pendingFutuTicks = [];
 let shuttingDown = false;
+let futuHealthTimer = null;
+let maintenanceTimer = null;
+let maintenanceInitialTimer = null;
+let maintenanceRunning = false;
+const futuRecovery = {
+  totalAttempts: 0,
+  consecutiveFailures: 0,
+  lastAttemptAt: null,
+  nextAttemptAt: null,
+  lastRecoveredAt: null,
+  lastReason: null
+};
 
 function enabledWatchlistTickers() {
   return listWatchlist(db).filter((item) => item.enabled).map((item) => item.ticker);
@@ -153,6 +169,92 @@ function refreshFutuCollectorSymbols() {
   futuCollector.start(tickers, missingIntradayHistory(tickers)).catch((error) => {
     console.error('刷新富途订阅失败：', error.message);
   });
+}
+
+function systemHealthOptions() {
+  return {
+    databasePath: config.databasePath,
+    backupDirectory: path.join(path.dirname(config.databasePath), 'backups'),
+    backupRetentionCount: config.system.backupRetentionCount,
+    databaseWarningBytes: config.system.databaseWarningBytes,
+    tickRetentionDays: config.futu.tickRetentionDays,
+    timezone: config.timezone,
+    expectedMarketDate: latestStableMarketDate(),
+    startedAt: applicationStartedAt,
+    futu: {
+      enabled: config.futu.enabled,
+      host: config.futu.host,
+      port: config.futu.port,
+      session: config.futu.session,
+      collector: futuCollector.status()
+    },
+    futuRecovery: { ...futuRecovery }
+  };
+}
+
+async function checkFutuCollectorHealth() {
+  if (shuttingDown || !config.futu.enabled) return;
+  const tickers = enabledWatchlistTickers();
+  if (!tickers.length) return;
+  const status = futuCollector.status();
+  const heartbeatTime = status.lastHeartbeatAt || status.startedAt;
+  const heartbeatAge = heartbeatTime ? Date.now() - new Date(heartbeatTime).getTime() : Infinity;
+  const heartbeatFresh = heartbeatAge <= config.futu.heartbeatTimeoutSeconds * 1000;
+  if (status.status === 'connected' && heartbeatFresh) {
+    if (futuRecovery.consecutiveFailures > 0) futuRecovery.lastRecoveredAt = nowIso();
+    futuRecovery.consecutiveFailures = 0;
+    futuRecovery.nextAttemptAt = null;
+    futuRecovery.lastReason = null;
+    return;
+  }
+  if (status.status === 'starting' && heartbeatFresh) return;
+  if (status.status === 'missing_sdk' || status.status === 'disabled') return;
+  const now = Date.now();
+  if (futuRecovery.nextAttemptAt && now < new Date(futuRecovery.nextAttemptAt).getTime()) return;
+  futuRecovery.totalAttempts += 1;
+  futuRecovery.consecutiveFailures += 1;
+  futuRecovery.lastAttemptAt = nowIso();
+  futuRecovery.lastReason = status.status === 'connected'
+    ? 'heartbeat_timeout' : status.status || 'unknown';
+  const delaySeconds = Math.min(
+    config.futu.reconnectMaxSeconds,
+    15 * (2 ** Math.max(0, futuRecovery.consecutiveFailures - 1))
+  );
+  futuRecovery.nextAttemptAt = new Date(now + delaySeconds * 1000).toISOString();
+  console.warn(
+    `富途采集器异常（${futuRecovery.lastReason}），正在执行第${futuRecovery.totalAttempts}次自动重连。`
+  );
+  await futuCollector.restart(tickers, missingIntradayHistory(tickers));
+}
+
+async function runMaintenanceIfDue(force = false) {
+  if (shuttingDown || maintenanceRunning) return null;
+  if (!force && !maintenanceDue(db, config.timezone)) return null;
+  maintenanceRunning = true;
+  try {
+    return await runSystemMaintenance(db, systemHealthOptions());
+  } catch (error) {
+    console.error('系统维护任务失败：', error.message);
+    if (force) throw error;
+    return { error: error.message };
+  } finally {
+    maintenanceRunning = false;
+  }
+}
+
+function startRuntimeMonitors() {
+  futuHealthTimer = setInterval(() => {
+    checkFutuCollectorHealth().catch((error) => {
+      futuRecovery.lastReason = error.message;
+      console.error('富途健康检查失败：', error.message);
+    });
+  }, config.futu.healthCheckSeconds * 1000);
+  maintenanceInitialTimer = setTimeout(() => {
+    runMaintenanceIfDue().catch((error) => console.error('首次系统维护失败：', error.message));
+  }, 60_000);
+  maintenanceTimer = setInterval(() => {
+    runMaintenanceIfDue().catch((error) => console.error('定时系统维护失败：', error.message));
+  }, config.system.maintenanceCheckMinutes * 60_000);
 }
 
 const contentTypes = {
@@ -263,8 +365,18 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/health') {
     return sendJson(response, 200, {
       status: 'ok', time: nowIso(), version: '0.1.0', database: config.databasePath,
-      marketDataProvider: config.marketDataProvider
+      marketDataProvider: config.marketDataProvider,
+      startedAt: applicationStartedAt,
+      uptimeSeconds: Math.round(process.uptime())
     });
+  }
+
+  if (method === 'GET' && url.pathname === '/api/system/status') {
+    return sendJson(response, 200, collectSystemStatus(db, systemHealthOptions()));
+  }
+
+  if (method === 'POST' && url.pathname === '/api/system/maintenance') {
+    return sendJson(response, 200, await runMaintenanceIfDue(true));
   }
 
   if (method === 'GET' && url.pathname === '/api/config') {
@@ -286,7 +398,14 @@ async function apiRoute(request, response, url) {
         host: config.futu.host,
         port: config.futu.port,
         session: config.futu.session,
+        healthCheckSeconds: config.futu.healthCheckSeconds,
+        heartbeatTimeoutSeconds: config.futu.heartbeatTimeoutSeconds,
         collector: futuCollector.status()
+      },
+      system: {
+        backupRetentionCount: config.system.backupRetentionCount,
+        databaseWarningBytes: config.system.databaseWarningBytes,
+        maintenanceCheckMinutes: config.system.maintenanceCheckMinutes
       },
       notifications: {
         macosEnabled: config.notifications.macosEnabled,
@@ -637,6 +756,7 @@ server.listen(config.port, config.host, () => {
   fs.writeFileSync(pidFile, String(process.pid), { encoding: 'utf8' });
   console.log(`美股投研工作台已启动：http://${config.host}:${config.port}`);
   refreshFutuCollectorSymbols();
+  startRuntimeMonitors();
 });
 
 server.on('error', (error) => {
@@ -671,6 +791,9 @@ async function shutdown(exitCode = 0, reason = 'shutdown') {
   }, 12_000);
   forceExitTimer.unref();
   stopScheduler();
+  if (futuHealthTimer) clearInterval(futuHealthTimer);
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
+  if (maintenanceInitialTimer) clearTimeout(maintenanceInitialTimer);
   for (const timer of intradaySnapshotTimers.values()) clearTimeout(timer);
   intradaySnapshotTimers.clear();
   if (futuIngestTimer) clearTimeout(futuIngestTimer);
