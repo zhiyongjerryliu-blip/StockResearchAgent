@@ -161,9 +161,10 @@ h2 { font-size: 17px; margin-bottom: 0; }
 .capital-behavior-metrics span, .capital-behavior-metrics strong { display: block; }
 .capital-behavior-metrics span { min-height: 26px; color: var(--muted); font-size: 9px; line-height: 1.4; }
 .capital-behavior-metrics strong { margin-top: 7px; font-size: 15px; }
-.capital-behavior-history-wrap, .capital-behavior-validation-wrap { margin-top: 9px; }
+.capital-behavior-history-wrap, .capital-behavior-validation-wrap, .capital-behavior-detail-wrap { margin-top: 9px; }
 .capital-behavior-table { min-width: 1120px; }
 .capital-behavior-validation-table { min-width: 1080px; }
+.capital-behavior-detail-table { min-width: 1040px; }
 .badge.capital-stage.BULLISH { background: #3b1f28; color: #ff99a3; }
 .badge.capital-stage.BEARISH { background: #153529; color: var(--accent); }
 .badge.capital-stage.NEUTRAL { background: #253141; color: #aebccc; }

@@ -13,7 +13,9 @@ import { notifyVolumeAnomalies, saveWatchlistCapitalFlow } from './capital-flow.
 import {
   notifyIntradayFlowAnomalies, saveWatchlistIntradayFlow
 } from './intraday-flow.js';
-import { runWatchlistCapitalBehaviorBacktests } from './capital-behavior.js';
+import {
+  notifyCapitalBehaviorTransition, runWatchlistCapitalBehaviorBacktests
+} from './capital-behavior.js';
 import { runWatchlistPredictionBacktests } from './predictions.js';
 
 function etParts(date = new Date()) {
@@ -59,6 +61,10 @@ export async function runDailyCycle(
       result.notifications = await notifyIntradayFlowAnomalies(db, result.analysis);
     }
     const capitalBehavior = runWatchlistCapitalBehaviorBacktests(db, reviewDate);
+    for (const result of capitalBehavior) {
+      if (!result.ok || !result.result.latest) continue;
+      result.notifications = await notifyCapitalBehaviorTransition(db, result.result);
+    }
     const predictions = runWatchlistPredictionBacktests(db, reviewDate);
     const advice = saveWatchlistAdvice(db, reviewDate);
     const portfolio = saveDailySnapshots(db, reviewDate);

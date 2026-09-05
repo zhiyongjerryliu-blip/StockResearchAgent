@@ -564,6 +564,19 @@ CREATE TABLE IF NOT EXISTS capital_behavior_validation (
 CREATE INDEX IF NOT EXISTS idx_capital_behavior_validation_lookup
 ON capital_behavior_validation(ticker, horizon_days, status, signal_as_of DESC);
 
+CREATE TABLE IF NOT EXISTS capital_behavior_alerts (
+  event_key TEXT PRIMARY KEY,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  trade_date TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  notified_at TEXT NOT NULL,
+  basis_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_capital_behavior_alerts_ticker_date
+ON capital_behavior_alerts(ticker, trade_date DESC, stage);
+
 CREATE TABLE IF NOT EXISTS feature_snapshots (
   ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
   as_of TEXT NOT NULL,

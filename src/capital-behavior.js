@@ -2,6 +2,7 @@ import { nowIso, toPlain, toPlainRows } from './db.js';
 import { normalizeTicker, parseJson, round } from './domain.js';
 import { analyzeCapitalFlow } from './capital-flow.js';
 import { analyzeIntradayFlow } from './intraday-flow.js';
+import { createNotification } from './notifications.js';
 
 export const CAPITAL_BEHAVIOR_MODEL_VERSION = 'continuous-capital-behavior-v1-2026-09-05';
 export const CAPITAL_BEHAVIOR_HORIZONS = Object.freeze([1, 3, 5, 10, 20]);
@@ -366,6 +367,32 @@ export function listCapitalBehaviorHistory(db, tickerValue, limit = 20, asOf = n
   `).all(ticker, CAPITAL_BEHAVIOR_MODEL_VERSION, asOf, asOf, boundedLimit)).map(snapshotFromRow);
 }
 
+export function listCapitalBehaviorValidation(db, tickerValue, limit = 30, asOf = null) {
+  const ticker = normalizeTicker(tickerValue);
+  const boundedLimit = Math.min(200, Math.max(1, Number(limit) || 30));
+  return toPlainRows(db.prepare(`
+    SELECT * FROM capital_behavior_validation
+    WHERE ticker = ? AND model_version = ? AND status <> 'EXCLUDED'
+      AND (? IS NULL OR signal_as_of <= ?)
+    ORDER BY signal_as_of DESC, horizon_days LIMIT ?
+  `).all(ticker, CAPITAL_BEHAVIOR_MODEL_VERSION, asOf, asOf, boundedLimit)).map((row) => {
+    const notYetMatured = asOf && row.status === 'MATURED' && row.actual_date > asOf;
+    return {
+      ticker: row.ticker, signalAsOf: row.signal_as_of, horizonDays: row.horizon_days,
+      targetDate: notYetMatured ? null : row.target_date,
+      actualDate: notYetMatured ? null : row.actual_date,
+      stage: row.stage, stageLabel: STAGE_LABELS[row.stage] || row.stage,
+      direction: row.direction, startPrice: row.start_price,
+      actualReturn: notYetMatured ? null : row.actual_return,
+      maximumFavorableExcursion: notYetMatured ? null : row.maximum_favorable_excursion,
+      maximumAdverseExcursion: notYetMatured ? null : row.maximum_adverse_excursion,
+      directionHit: notYetMatured ? null : row.direction_hit == null ? null : Boolean(row.direction_hit),
+      status: notYetMatured ? 'PENDING' : row.status,
+      signalConfidence: row.signal_confidence, modelVersion: row.model_version
+    };
+  });
+}
+
 export function getCapitalBehaviorOverview(db, tickerValue, asOf = null) {
   const ticker = normalizeTicker(tickerValue);
   const latestDate = asOf || toPlain(db.prepare(`
@@ -376,6 +403,7 @@ export function getCapitalBehaviorOverview(db, tickerValue, asOf = null) {
     ? history[0] : latestDate ? analyzeCapitalBehavior(db, ticker, latestDate) : null;
   return {
     ticker, asOf: latestDate || null, latest, history,
+    validationDetails: listCapitalBehaviorValidation(db, ticker, 30, latestDate),
     reliability: CAPITAL_BEHAVIOR_HORIZONS.map((horizon) => reliabilityForHorizon(db, ticker, horizon, latestDate)),
     modelVersion: CAPITAL_BEHAVIOR_MODEL_VERSION,
     reliabilityGate: 85,
@@ -385,6 +413,49 @@ export function getCapitalBehaviorOverview(db, tickerValue, asOf = null) {
       boundary: '未达到最低有效样本和85分综合可靠度时，资金阶段不得作为正式买卖依据。'
     }
   };
+}
+
+export async function notifyCapitalBehaviorTransition(db, overview, options = {}) {
+  const notifier = options.notifier || createNotification;
+  const [latest, previous, beforePrevious] = overview?.history || [];
+  if (!latest || !previous || latest.direction === 'NEUTRAL') return [];
+  const confirmedTransition = latest.stage === previous.stage
+    && beforePrevious?.stage !== latest.stage;
+  if (!confirmedTransition || latest.confidence < 60) return [];
+  const reliability = (overview.reliability || []).find((item) => item.horizonDays === 20);
+  const formallyValidated = reliability?.status === 'PUBLISHED'
+    && reliability.reliabilityScore >= (overview.reliabilityGate || 85);
+  const highRiskStage = latest.stage === 'ACCELERATED_DISTRIBUTION';
+  const severity = formallyValidated && highRiskStage ? 'P1' : 'P2';
+  const eventKey = `CAPITAL_BEHAVIOR:${latest.ticker}:${latest.priceDate}:${latest.stage}:${CAPITAL_BEHAVIOR_MODEL_VERSION}`;
+  if (db.prepare('SELECT 1 FROM capital_behavior_alerts WHERE event_key = ?').get(eventKey)) return [];
+  const reliabilityText = reliability
+    ? `${reliability.reliabilityScore.toFixed(1)}分（${reliability.effectiveSamples}个有效样本）`
+    : '尚无验证样本';
+  const input = {
+    ticker: latest.ticker,
+    severity,
+    category: 'CAPITAL_BEHAVIOR_TRANSITION',
+    title: `${latest.ticker} 连续资金阶段确认：${latest.stageLabel}`,
+    body: `${latest.priceDate} 连续两日处于“${latest.stageLabel}”，行为评分${latest.score >= 0 ? '+' : ''}${latest.score.toFixed(1)}，置信度${latest.confidence.toFixed(1)}分，20日验证可靠度${reliabilityText}。${formallyValidated ? '该信号已通过资金行为可靠度门槛，仍需结合价格、事件和风险预算。' : '该信号尚未通过85分门槛，仅作研究提醒。'}不能据此确认机构账户身份。`,
+    evidence: [{
+      eventKey, tradeDate: latest.priceDate, stage: latest.stage,
+      direction: latest.direction, score: latest.score, confidence: latest.confidence,
+      previousDate: previous.priceDate, dataLevel: latest.dataLevel,
+      reliability: reliability || null, formallyValidated,
+      confirmationRule: '同一连续阶段出现两个交易日，且前一阶段不同'
+    }]
+  };
+  const notification = await notifier(db, input);
+  db.prepare(`
+    INSERT INTO capital_behavior_alerts (
+      event_key, ticker, trade_date, stage, severity, notified_at, basis_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    eventKey, latest.ticker, latest.priceDate, latest.stage,
+    severity, nowIso(), JSON.stringify(input.evidence[0])
+  );
+  return [notification];
 }
 
 export function runCapitalBehaviorBacktest(db, tickerValue, asOf, options = {}) {

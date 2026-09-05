@@ -6,8 +6,9 @@ import { calculatePosition } from './portfolio.js';
 import { getValuationOverview } from './valuation.js';
 import { analyzeCapitalFlow } from './capital-flow.js';
 import { analyzeIntradayFlow } from './intraday-flow.js';
+import { getCapitalBehaviorOverview } from './capital-behavior.js';
 
-export const ADVICE_MODEL_VERSION = 'evidence-impact-advice-v3-2026-09-03';
+export const ADVICE_MODEL_VERSION = 'evidence-impact-advice-v4-2026-09-05';
 export const ADVICE_HORIZONS = Object.freeze([21, 63, 126]);
 
 const HORIZON_LABELS = { 21: '1个月', 63: '3个月', 126: '6个月' };
@@ -231,7 +232,34 @@ function weightedImpact(components, horizonDays, corporateAdjustment) {
   };
 }
 
-function determineAction({ score, prediction, position, eventContext, intradayFlow, confidenceScore }) {
+function continuousCapitalBehaviorContext(overview) {
+  const latest = overview?.latest;
+  const reliability = (overview?.reliability || []).find((item) => item.horizonDays === 20) || null;
+  const evidenceAvailable = Boolean(latest)
+    && latest.stage !== 'INSUFFICIENT'
+    && latest.confidence >= 60;
+  const formallyValidated = evidenceAvailable
+    && latest.direction !== 'NEUTRAL'
+    && reliability?.status === 'PUBLISHED'
+    && reliability.reliabilityScore >= config.reliabilityGate;
+  return {
+    available: evidenceAvailable,
+    score: evidenceAvailable ? latest.score : null,
+    stage: latest?.stage || 'INSUFFICIENT',
+    stageLabel: latest?.stageLabel || '数据不足',
+    direction: latest?.direction || 'NEUTRAL',
+    confidence: latest?.confidence ?? 0,
+    dataLevel: latest?.dataLevel || 'NO_DATA',
+    reliability,
+    usedInImpact: formallyValidated,
+    publicationStatus: formallyValidated ? 'PUBLISHED' : 'OBSERVE',
+    explanation: latest?.explanation || '连续资金行为尚未生成。'
+  };
+}
+
+function determineAction({
+  score, prediction, position, eventContext, intradayFlow, capitalBehavior, confidenceScore
+}) {
   const reliabilityScore = Number(prediction.reliabilityScore);
   const formalReady = prediction.available
     && prediction.publicationStatus === 'PUBLISHED'
@@ -247,6 +275,16 @@ function determineAction({ score, prediction, position, eventContext, intradayFl
     && intradayFlow.confidence >= 60
     && intradayFlow.anomalies.some((item) => item.code === 'ACTIVE_SELL_IMBALANCE' && item.severity === 'P1');
   if (confirmedTacticalOutflow) {
+    return {
+      action: hasPosition ? 'REDUCE_REVIEW' : 'AVOID',
+      publicationStatus: 'OBSERVE',
+      formalReady: false
+    };
+  }
+  const validatedContinuousOutflow = capitalBehavior.usedInImpact
+    && capitalBehavior.direction === 'BEARISH'
+    && capitalBehavior.score <= -20;
+  if (validatedContinuousOutflow) {
     return {
       action: hasPosition ? 'REDUCE_REVIEW' : 'AVOID',
       publicationStatus: 'OBSERVE',
@@ -292,10 +330,19 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
   const earningsComponent = earningsScore(valuation);
   const fundamentalsComponent = fundamentalsScore(valuation);
   const capitalFlow = analyzeCapitalFlow(db, ticker, asOf);
+  const capitalBehavior = continuousCapitalBehaviorContext(
+    getCapitalBehaviorOverview(db, ticker, asOf)
+  );
   const capitalFlowReady = capitalFlow.signal !== 'INSUFFICIENT' && capitalFlow.confidence >= 60;
+  const rawCapitalFlowScore = capitalFlowReady ? capitalFlow.score : null;
+  const blendedCapitalFlowScore = capitalFlowReady && capitalBehavior.usedInImpact
+    ? round((capitalFlow.score * 0.55) + (capitalBehavior.score * 0.45), 2)
+    : rawCapitalFlowScore;
   const capitalFlowComponent = {
     available: capitalFlowReady,
-    score: capitalFlowReady ? capitalFlow.score : null,
+    score: blendedCapitalFlowScore,
+    rawScore: rawCapitalFlowScore,
+    continuousBehaviorApplied: capitalFlowReady && capitalBehavior.usedInImpact,
     signal: capitalFlow.signal,
     signalLabel: capitalFlow.signalLabel,
     confidence: capitalFlow.confidence,
@@ -327,6 +374,7 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
     const components = {
       price: priceContext(db, ticker, asOf, horizonDays),
       capitalFlow: capitalFlowComponent,
+      capitalBehavior,
       intradayFlow: intradayFlowComponent,
       events: eventContext(db, ticker, asOf, horizonDays),
       macro: macroScore(externalDrivers.macro, horizonDays),
@@ -346,7 +394,8 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
     const stance = impact.score >= 20 ? 'BULLISH' : impact.score <= -20 ? 'BEARISH' : 'NEUTRAL';
     const decision = determineAction({
       score: impact.score, prediction, position,
-      eventContext: components.events, intradayFlow: components.intradayFlow, confidenceScore
+      eventContext: components.events, intradayFlow: components.intradayFlow,
+      capitalBehavior: components.capitalBehavior, confidenceScore
     });
     const currentPrice = components.price.currentPrice;
     const targetPrice = decision.formalReady && Number.isFinite(prediction.priceP50)
@@ -365,12 +414,16 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
       components,
       conditions: [
         decision.formalReady ? '预测保持PUBLISHED且综合可靠度不低于发布门槛' : '等待预测通过综合可靠度及样本量门槛',
+        components.capitalBehavior.usedInImpact
+          ? '连续资金行为已通过20日验证可靠度门槛'
+          : '连续资金行为只作研究证据，等待20日验证可靠度达到85分',
         '事件原文与官方披露不存在相互冲突',
         '日线及高置信分钟资金行为没有出现与研究方向相反的确认信号'
       ],
       invalidation: [
         '出现新的SEC P0/P1官方风险事件',
         '富途完整逐笔显示高置信主动卖出显著占优',
+        '已验证的连续资金阶段反转为持续或加速派发',
         'EPS一致预期或行业需求方向显著反转',
         '实际价格越过已验证模型的失效位或预测区间'
       ]
@@ -389,7 +442,7 @@ export function buildInvestmentAdvice(db, tickerValue, asOf) {
     advice,
     policy: {
       formalGate: `候选买入、加仓和减仓必须有PUBLISHED预测且综合可靠度≥${config.reliabilityGate}分。`,
-      riskOverride: 'SEC官方P0/P1可触发风险优先评估；高置信分钟主动卖出最多触发减仓复核，不能单独触发清仓。',
+      riskOverride: 'SEC官方P0/P1可触发风险优先评估；高置信分钟主动卖出或已验证的连续派发最多触发减仓复核，不能单独触发清仓。',
       personalization: '尚未配置个人风险承受度、流动性需求及最大单股仓位，因此不输出仓位百分比。',
       llmBoundary: 'LLM只能解释结构化结果，不得改变分数、可靠度闸门、目标位或止损位。'
     }

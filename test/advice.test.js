@@ -6,6 +6,7 @@ import {
   ADVICE_MODEL_VERSION, buildInvestmentAdvice, saveInvestmentAdvice
 } from '../src/advice.js';
 import { ingestFutuBars, ingestFutuTicks } from '../src/intraday-flow.js';
+import { CAPITAL_BEHAVIOR_MODEL_VERSION } from '../src/capital-behavior.js';
 
 function seedPrices(db, ticker, count = 130, step = 1) {
   const end = new Date('2026-09-01T00:00:00.000Z');
@@ -14,6 +15,9 @@ function seedPrices(db, ticker, count = 130, step = 1) {
     date.setUTCDate(date.getUTCDate() - index);
     saveManualPrice(db, {
       ticker, tradeDate: date.toISOString().slice(0, 10),
+      open: 200 + (step * (count - 1 - index)),
+      high: (200 + (step * (count - 1 - index))) * 1.01,
+      low: (200 + (step * (count - 1 - index))) * 0.99,
       close: 200 + (step * (count - 1 - index)), volume: 1000
     });
   }
@@ -59,6 +63,41 @@ function seedFullSessionOutflow(db, ticker) {
   ingestFutuTicks(db, ticks);
 }
 
+function seedValidatedContinuousDistribution(db, ticker) {
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO capital_behavior_snapshots (
+      ticker, as_of, price_date, stage, direction, score, confidence, close,
+      daily_flow_score, intraday_flow_score, active_turnover_ratio, price_vs_vwap,
+      persistence_score, positive_days_5, negative_days_5, directional_streak,
+      data_level, evidence_json, limitations_json, model_version, created_at
+    ) VALUES (
+      ?, '2026-09-01', '2026-09-01', 'ACCELERATED_DISTRIBUTION', 'BEARISH',
+      -70, 80, 200, -30, -85, -0.75, -0.03, 100, 0, 5, 5,
+      'DAILY_AND_FUTU_TICK', '[]', '[]', ?, ?
+    )
+  `).run(ticker, CAPITAL_BEHAVIOR_MODEL_VERSION, timestamp);
+  const insert = db.prepare(`
+    INSERT INTO capital_behavior_validation (
+      ticker, signal_as_of, horizon_days, target_date, actual_date, stage, direction,
+      start_price, actual_return, maximum_favorable_excursion, maximum_adverse_excursion,
+      direction_hit, status, exclusion_reason, signal_confidence, model_version,
+      created_at, updated_at
+    ) VALUES (
+      ?, ?, 20, ?, ?, 'ACCELERATED_DISTRIBUTION', 'BEARISH',
+      200, -0.08, 0.10, -0.02, 1, 'MATURED', NULL, 80, ?, ?, ?
+    )
+  `);
+  for (let index = 0; index < 10; index += 1) {
+    const signalDate = new Date(Date.UTC(2025, 0, 2 + (index * 35))).toISOString().slice(0, 10);
+    const actualDate = new Date(Date.UTC(2025, 0, 23 + (index * 35))).toISOString().slice(0, 10);
+    insert.run(
+      ticker, signalDate, actualDate, actualDate,
+      CAPITAL_BEHAVIOR_MODEL_VERSION, timestamp, timestamp
+    );
+  }
+}
+
 test('没有通过可靠度闸门时只输出观察建议且不发布目标位', () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'TEST' });
@@ -70,6 +109,7 @@ test('没有通过可靠度闸门时只输出观察建议且不发布目标位',
   assert.ok(overview.advice.every((item) => item.targetPrice == null));
   assert.equal(overview.position.currentPrice, 229);
   assert.match(overview.policy.formalGate, /综合可靠度≥85分/);
+  assert.ok(overview.advice.every((item) => !item.components.capitalBehavior.usedInImpact));
   db.close();
 });
 
@@ -170,5 +210,26 @@ test('高置信分钟主动卖出进入建议但不能单独触发清仓结论',
   assert.ok(overview.advice.every((item) => item.formalReady === false));
   assert.ok(overview.advice.every((item) => item.targetPrice == null));
   assert.match(overview.policy.riskOverride, /不能单独触发清仓/);
+  db.close();
+});
+
+test('通过20日85分门槛的连续派发才合并资金分并触发减仓复核', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'TEST' });
+  addTransaction(db, {
+    ticker: 'TEST', side: 'BUY', tradeTime: '2026-08-01', quantity: 10, price: 100
+  });
+  seedPrices(db, 'TEST', 130, 0);
+  seedValidatedContinuousDistribution(db, 'TEST');
+
+  const overview = buildInvestmentAdvice(db, 'TEST', '2026-09-01');
+
+  assert.ok(overview.advice.every((item) => item.components.capitalBehavior.usedInImpact));
+  assert.ok(overview.advice.every((item) => item.components.capitalBehavior.publicationStatus === 'PUBLISHED'));
+  assert.ok(overview.advice.every((item) => item.components.capitalBehavior.reliability.reliabilityScore >= 85));
+  assert.ok(overview.advice.every((item) => item.components.capitalFlow.continuousBehaviorApplied));
+  assert.ok(overview.advice.every((item) => item.components.capitalFlow.score < item.components.capitalFlow.rawScore));
+  assert.ok(overview.advice.every((item) => item.action === 'REDUCE_REVIEW'));
+  assert.ok(overview.advice.every((item) => item.formalReady === false));
   db.close();
 });

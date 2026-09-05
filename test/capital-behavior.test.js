@@ -5,7 +5,8 @@ import { saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import { ingestFutuBars, ingestFutuTicks } from '../src/intraday-flow.js';
 import {
   analyzeCapitalBehavior, CAPITAL_BEHAVIOR_MODEL_VERSION,
-  getCapitalBehaviorOverview, runCapitalBehaviorBacktest, saveCapitalBehavior
+  getCapitalBehaviorOverview, listCapitalBehaviorValidation,
+  notifyCapitalBehaviorTransition, runCapitalBehaviorBacktest, saveCapitalBehavior
 } from '../src/capital-behavior.js';
 
 function businessDates(start, count) {
@@ -55,6 +56,12 @@ test('连续资金模型识别持续吸筹并幂等生成多周期验证账本',
   `).get(CAPITAL_BEHAVIOR_MODEL_VERSION).count, 600);
   assert.equal(overview.history.length, 20);
   assert.equal(overview.reliability.length, 5);
+  assert.equal(overview.validationDetails.length, 30);
+  assert.ok(overview.validationDetails.every((row) => row.status !== 'EXCLUDED'));
+  assert.deepEqual(
+    overview.validationDetails,
+    listCapitalBehaviorValidation(db, 'BUILD', 30, dates.at(-1))
+  );
   assert.ok(overview.reliability.find((row) => row.horizonDays === 1).directionAccuracy > 0.9);
   assert.equal(overview.reliability.find((row) => row.horizonDays === 1).status, 'PUBLISHED');
   db.close();
@@ -109,5 +116,51 @@ test('存在富途逐笔时合并主动成交方向和VWAP证据', () => {
   assert.ok(Number.isFinite(analysis.priceVsVwap));
   assert.ok(analysis.evidence.find((item) => item.key === 'activeFlow').available);
   assert.match(analysis.explanation, /不能确认机构或最终账户身份/);
+  db.close();
+});
+
+test('连续两日确认阶段切换只提醒一次且未过门槛明确标记为研究提醒', async () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'ALERT' });
+  const calls = [];
+  const overview = {
+    reliabilityGate: 85,
+    history: [
+      {
+        ticker: 'ALERT', priceDate: '2026-09-03', stage: 'ACCUMULATION',
+        stageLabel: '持续吸筹迹象', direction: 'BULLISH', score: 32,
+        confidence: 72, dataLevel: 'DAILY_PROXY'
+      },
+      {
+        ticker: 'ALERT', priceDate: '2026-09-02', stage: 'ACCUMULATION',
+        stageLabel: '持续吸筹迹象', direction: 'BULLISH', score: 28,
+        confidence: 68, dataLevel: 'DAILY_PROXY'
+      },
+      {
+        ticker: 'ALERT', priceDate: '2026-09-01', stage: 'NEUTRAL',
+        stageLabel: '方向暂不明确', direction: 'NEUTRAL', score: 2,
+        confidence: 65, dataLevel: 'DAILY_PROXY'
+      }
+    ],
+    reliability: [{
+      horizonDays: 20, reliabilityScore: 61.2, effectiveSamples: 4, status: 'INSUFFICIENT'
+    }]
+  };
+  const notifier = async (_db, input) => {
+    calls.push(input);
+    return { id: calls.length, ...input };
+  };
+
+  const first = await notifyCapitalBehaviorTransition(db, overview, { notifier });
+  const second = await notifyCapitalBehaviorTransition(db, overview, { notifier });
+
+  assert.equal(first.length, 1);
+  assert.equal(second.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].severity, 'P2');
+  assert.equal(calls[0].category, 'CAPITAL_BEHAVIOR_TRANSITION');
+  assert.match(calls[0].body, /尚未通过85分门槛，仅作研究提醒/);
+  assert.match(calls[0].body, /不能据此确认机构账户身份/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM capital_behavior_alerts').get().count, 1);
   db.close();
 });

@@ -31,7 +31,7 @@ import {
   notifyVolumeAnomalies, saveCapitalFlow
 } from './capital-flow.js';
 import {
-  getCapitalBehaviorOverview, runCapitalBehaviorBacktest
+  getCapitalBehaviorOverview, notifyCapitalBehaviorTransition, runCapitalBehaviorBacktest
 } from './capital-behavior.js';
 import { FutuCollector } from './futu.js';
 import {
@@ -586,10 +586,12 @@ async function apiRoute(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/capital-behavior/backtest') {
     const body = await readJson(request);
     if (!body.ticker) throw new Error('缺少ticker');
-    return sendJson(response, 200, runCapitalBehaviorBacktest(
+    const result = runCapitalBehaviorBacktest(
       db, body.ticker, body.asOf || latestStableMarketDate(),
       { maxSessions: body.maxSessions, full: Boolean(body.full) }
-    ));
+    );
+    result.notifications = await notifyCapitalBehaviorTransition(db, result);
+    return sendJson(response, 200, result);
   }
   if (method === 'GET' && url.pathname === '/api/futu/status') {
     return sendJson(response, 200, futuCollector.status());

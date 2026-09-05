@@ -724,12 +724,19 @@ function renderInvestmentAdvice() {
   empty.classList.add('hidden');
   const componentLabels = {
     price: '价格趋势', capitalFlow: '日线资金行为', intradayFlow: '分钟主动成交',
+    capitalBehavior: '连续资金阶段',
     events: '事件影响', macro: '美债/利率',
     valuation: '估值', earnings: 'EPS修订', fundamentals: '基本面'
   };
   content.innerHTML = `<div class="advice-grid">${(overview.advice || []).map((item) => {
-    const factors = Object.entries(item.components || {}).map(([key, value]) => `
-      <div class="factor-row"><span>${escapeHtml(componentLabels[key] || key)}${value.available ? '' : '（缺失）'}</span><strong class="${pnlClass(value.score)}">${Number.isFinite(value.score) ? `${value.score >= 0 ? '+' : ''}${Number(value.score).toFixed(1)}` : '—'}</strong></div>`).join('');
+    const factors = Object.entries(item.components || {}).map(([key, value]) => {
+      const suffix = key === 'capitalBehavior'
+        ? value.usedInImpact ? '（已验证纳入）' : value.available ? '（研究，未过85分）' : '（缺失）'
+        : value.available ? '' : '（缺失）';
+      const reliability = key === 'capitalBehavior' && Number.isFinite(value.reliability?.reliabilityScore)
+        ? ` title="20日验证可靠度 ${Number(value.reliability.reliabilityScore).toFixed(1)}分"` : '';
+      return `<div class="factor-row"><span${reliability}>${escapeHtml(componentLabels[key] || key)}${suffix}</span><strong class="${pnlClass(value.score)}">${Number.isFinite(value.score) ? `${value.score >= 0 ? '+' : ''}${Number(value.score).toFixed(1)}` : '—'}</strong></div>`;
+    }).join('');
     const statusLabel = item.publicationStatus === 'PUBLISHED'
       ? '正式候选' : item.publicationStatus === 'RISK_OVERRIDE' ? '风险优先' : '观察输出';
     return `<article class="advice-card ${escapeHtml(item.stance)}">
@@ -896,6 +903,24 @@ function renderCapitalBehavior() {
       <td><span class="badge ${escapeHtml(row.status)}">${statusLabel}</span></td>
     </tr>`;
   }).join('');
+  const validationDetails = (overview.validationDetails || []).map((row) => {
+    const statusLabel = row.status === 'MATURED' ? '已到期' : '待验证';
+    const hitLabel = row.directionHit === true ? '命中'
+      : row.directionHit === false ? '未命中' : '—';
+    const hitClass = row.directionHit === true ? 'positive'
+      : row.directionHit === false ? 'negative' : '';
+    return `<tr>
+      <td>${escapeHtml(row.signalAsOf)}</td>
+      <td><span class="badge capital-stage ${escapeHtml(row.direction)}">${escapeHtml(row.stageLabel || capitalBehaviorStageLabels[row.stage] || row.stage)}</span></td>
+      <td>${row.horizonDays}日</td>
+      <td><span class="badge ${row.status === 'MATURED' ? 'PUBLISHED' : 'INSUFFICIENT'}">${statusLabel}</span></td>
+      <td>${escapeHtml(row.actualDate || '—')}</td>
+      <td class="${pnlClass(row.actualReturn)}">${percent(row.actualReturn)}</td>
+      <td class="${pnlClass(row.maximumFavorableExcursion)}">${percent(row.maximumFavorableExcursion)}</td>
+      <td class="${pnlClass(row.maximumAdverseExcursion)}">${percent(row.maximumAdverseExcursion)}</td>
+      <td class="${hitClass}">${hitLabel}</td>
+    </tr>`;
+  }).join('');
   const latestDirection = latest.direction || 'NEUTRAL';
   content.innerHTML = `
     <div class="capital-behavior-summary ${escapeHtml(latestDirection)}">
@@ -928,6 +953,14 @@ function renderCapitalBehavior() {
         <thead><tr><th>期限</th><th>已到期样本</th><th>有效/最低</th><th>方向命中</th><th>方向调整收益</th><th>平均MFE</th><th>平均MAE</th><th>可靠度</th><th>状态</th></tr></thead>
         <tbody>${reliability}</tbody>
       </table>
+    </div>
+    <div class="volume-history-head"><strong>最近验证明细</strong><span>尚未到期的期限只显示“待验证”，不提前判定命中</span></div>
+    <div class="table-wrap capital-behavior-detail-wrap">
+      <table class="capital-behavior-detail-table">
+        <thead><tr><th>信号日</th><th>阶段</th><th>期限</th><th>状态</th><th>结果日</th><th>实际收益</th><th>MFE</th><th>MAE</th><th>方向结果</th></tr></thead>
+        <tbody>${validationDetails}</tbody>
+      </table>
+      ${validationDetails ? '' : '<div class="empty">尚无可验证的方向信号。</div>'}
     </div>
     <p class="driver-disclaimer">${escapeHtml(overview.methodology?.directionHit || '')} ${escapeHtml(overview.methodology?.overlap || '')} ${escapeHtml(overview.methodology?.boundary || '')}</p>`;
 }
