@@ -4,8 +4,10 @@ import { backup } from 'node:sqlite';
 import { nowIso, toPlainRows } from './db.js';
 import { createNotification } from './notifications.js';
 import { pruneIntradayTicks } from './intraday-flow.js';
+import { dailyCycleAutomationStatus } from './daily-cycle-automation.js';
+import { runtimeContinuityStatus } from './runtime-monitor.js';
 
-export const SYSTEM_HEALTH_VERSION = 'system-health-v1-2026-09-05';
+export const SYSTEM_HEALTH_VERSION = 'system-health-v2-2026-09-06';
 
 function fileBytes(filePath) {
   try {
@@ -73,6 +75,12 @@ export function collectSystemStatus(db, options = {}) {
     databasePath === ':memory:' ? '' : path.join(path.dirname(databasePath), 'backups')
   );
   const expectedMarketDate = options.expectedMarketDate || null;
+  const automation = options.automation
+    ? {
+      ...dailyCycleAutomationStatus(db, expectedMarketDate, options.automation),
+      worker: options.automation.worker || { running: false }
+    } : null;
+  const runtime = options.runtime ? runtimeContinuityStatus(db, options.runtime.now || new Date()) : null;
   const files = databaseFiles(databasePath);
   const maintenance = setting(db, 'system:last_maintenance');
   const watchlist = toPlainRows(db.prepare(
@@ -108,9 +116,38 @@ export function collectSystemStatus(db, options = {}) {
     });
   }
   if (options.futu?.enabled && options.futu.collector?.status !== 'connected') {
+    const collector = options.futu.collector || {};
     issues.push({
       code: 'FUTU_DISCONNECTED', severity: 'P1',
-      message: '富途采集器状态为 ' + (options.futu.collector?.status || 'unknown')
+      message: '富途采集器状态为 ' + (collector.status || 'unknown') +
+        (collector.lastError ? '：' + collector.lastError : '') +
+        (collector.openD?.attempts ? '；已尝试拉起OpenD ' + collector.openD.attempts + '次' : '')
+    });
+  }
+  if (automation?.status === 'MISSING') {
+    issues.push({
+      code: 'DAILY_CYCLE_MISSING', severity: 'P1',
+      message: automation.expectedDate + ' 的自动日终任务尚未完成，调度器将自动补跑'
+    });
+  } else if (automation?.status === 'FAILED') {
+    issues.push({
+      code: 'DAILY_CYCLE_FAILED', severity: 'P1',
+      message: automation.expectedDate + ' 的自动日终任务失败' +
+        (automation.attemptsExhausted ? '，自动重试次数已用尽，请人工复核' : '，等待自动重试')
+    });
+  } else if (
+    automation?.status === 'RUNNING' &&
+    automation.runningAgeMinutes > Number(options.automation?.claimStaleMinutes || 180)
+  ) {
+    issues.push({
+      code: 'DAILY_CYCLE_STALE', severity: 'P1',
+      message: automation.expectedDate + ' 的自动日终任务运行超时，将由任务租约自动接管'
+    });
+  }
+  if (runtime?.recentInterruptions) {
+    issues.push({
+      code: 'RUNTIME_INTERRUPTION', severity: 'P2',
+      message: '最近24小时检测到 ' + runtime.recentInterruptions + ' 次非正常运行中断，launchd已负责重新拉起'
     });
   }
   for (const item of watchlist.filter((entry) => entry.dailyStatus !== 'CURRENT')) {
@@ -149,6 +186,8 @@ export function collectSystemStatus(db, options = {}) {
       files: listBackups(databasePath, backupDirectory)
     },
     expectedMarketDate,
+    automation,
+    runtime,
     watchlist,
     futu: options.futu || null,
     futuRecovery: options.futuRecovery || null,
@@ -252,7 +291,9 @@ export async function runSystemMaintenance(db, options = {}) {
         backup: health.backup.files[0] || null,
         watchlist: health.watchlist,
         futu: health.futu,
-        futuRecovery: health.futuRecovery
+        futuRecovery: health.futuRecovery,
+        automation: health.automation,
+        runtime: health.runtime
       }),
       JSON.stringify(health.issues),
       SYSTEM_HEALTH_VERSION

@@ -26,6 +26,11 @@
 - 支持从运行中心按美股交易日和单只股票幂等重跑；同一进程禁止并发执行两条日终流水线，持续失败以应用内、macOS和邮件渠道幂等提醒；
 - 每日SQLite完整性检查、WAL检查点、过期逐笔清理和本地数据库备份，默认保留最近7份；
 - 富途采集器心跳超时检测和指数退避自动重连；
+- 富途采集异常时自动拉起本机OpenD，设置冷却时间防止频繁启动；连续失败和恢复均生成本地通知；
+- 自动日终严格按美股交易日历运行；Mac休眠、退出登录或服务中断错过任务后，启动及运行中会顺序补跑遗漏交易日；
+- 自动日终使用SQLite持久化任务租约，同一交易日不会因服务重启或并发进程重复执行，失败任务按冷却时间有限重试；
+- 自动日终和手动重跑均在独立工作线程执行，长时间预测与历史回测不会阻塞网页、健康检查或富途采集心跳；
+- 运行进程每分钟保存心跳，重新启动时识别上次非正常中断，并在系统状态页展示自动日终和近24小时运行连续性；
 - SEC 股票代码/CIK 映射、10-K/10-Q/8-K 文件同步；
 - SEC Company Facts 核心 US-GAAP 指标标准化；
 - 年度、季度财务趋势和 SEC 原文追溯；
@@ -119,7 +124,7 @@ npm install
 npm start
 ```
 
-首次执行 `npm start` 会安装当前用户的 macOS LaunchAgent，并在后台常驻运行。关闭终端、退出 Codex 或短暂休眠不会终止服务；异常退出后 launchd 会自动重新启动。
+首次执行 `npm start` 会安装当前用户的 macOS LaunchAgent，并在后台常驻运行。关闭终端、退出 Codex 或短暂休眠不会终止服务；任何未通过`npm stop`执行的退出都会由launchd自动重新启动。
 
 浏览器打开：
 
@@ -168,9 +173,19 @@ SYSTEM_MAINTENANCE_CHECK_MINUTES=60
 FUTU_HEALTH_CHECK_SECONDS=30
 FUTU_HEARTBEAT_TIMEOUT_SECONDS=120
 FUTU_RECONNECT_MAX_SECONDS=300
+FUTU_AUTO_LAUNCH_OPEND=true
+FUTU_OPEND_LAUNCH_COOLDOWN_SECONDS=300
 DAILY_CYCLE_RETRY_ATTEMPTS=2
 DAILY_CYCLE_RETRY_DELAY_MS=1000
+DAILY_CYCLE_CATCHUP_LIMIT=5
+DAILY_CYCLE_AUTOMATION_MAX_ATTEMPTS=3
+DAILY_CYCLE_AUTOMATION_RETRY_MINUTES=15
+DAILY_CYCLE_CLAIM_STALE_MINUTES=30
+DAILY_CYCLE_WORKER_TIMEOUT_MINUTES=60
+RUNTIME_HEARTBEAT_SECONDS=60
 ```
+
+自动日终不再依赖“恰好在18:15 ET保持唤醒”。调度器每分钟计算最近一个已稳定收盘的美股交易日，并与SQLite中的完成记录核对；发现遗漏后自动补跑。休市日不会创建新的交易日任务，进程崩溃留下的超时租约会在冷却后由新进程接管。日终流水线在独立工作线程运行；默认单次最多顺序补跑5个交易日、整个任务最多自动尝试3次，单次超过60分钟将终止并进入安全重试。
 
 ## 每日运行中心
 

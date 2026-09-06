@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FutuCollector, FUTU_EVENT_PREFIX, parseFutuCollectorLine } from '../src/futu.js';
+import {
+  FutuCollector, FutuOpenDManager, FUTU_EVENT_PREFIX, parseFutuCollectorLine
+} from '../src/futu.js';
 
 test('富途采集协议只解析带标记的JSON事件', () => {
   assert.equal(parseFutuCollectorLine('普通SDK日志'), null);
@@ -33,4 +35,34 @@ test('禁用富途时保留规范化股票列表且不启动进程', async () =>
   const status = await collector.start(['sndk', 'LITE']);
   assert.equal(status.status, 'disabled');
   assert.deepEqual(status.symbols, ['LITE', 'SNDK']);
+});
+
+test('OpenD管理器自动拉起应用并通过冷却时间防止频繁重复启动', async () => {
+  let now = new Date('2026-09-06T00:00:00.000Z');
+  const launches = [];
+  const manager = new FutuOpenDManager({
+    enabled: true, appName: 'Futu_OpenD', cooldownSeconds: 300,
+    now: () => now,
+    launcher: async (appName) => launches.push(appName)
+  });
+  const first = await manager.ensure('startup');
+  const cooldown = await manager.ensure('retry');
+  now = new Date('2026-09-06T00:06:00.000Z');
+  const retry = await manager.ensure('retry');
+  assert.equal(first.launched, true);
+  assert.equal(cooldown.reason, 'cooldown');
+  assert.equal(retry.launched, true);
+  assert.deepEqual(launches, ['Futu_OpenD', 'Futu_OpenD']);
+  assert.equal(manager.status().attempts, 2);
+});
+
+test('OpenD启动失败会保留诊断但不抛出导致主服务退出', async () => {
+  const manager = new FutuOpenDManager({
+    enabled: true,
+    launcher: async () => { throw new Error('OpenD unavailable'); }
+  });
+  const result = await manager.ensure('reconnect');
+  assert.equal(result.launched, false);
+  assert.match(result.lastError, /OpenD unavailable/);
+  assert.equal(manager.status().lastReason, 'reconnect');
 });

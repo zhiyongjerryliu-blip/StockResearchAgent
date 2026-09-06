@@ -798,6 +798,37 @@ CREATE TABLE IF NOT EXISTS job_runs (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS daily_cycle_claims (
+  analysis_date TEXT PRIMARY KEY,
+  state TEXT NOT NULL CHECK(state IN ('RUNNING','COMPLETED','FAILED')),
+  claim_token TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  claimed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  job_run_id INTEGER REFERENCES job_runs(id) ON DELETE SET NULL,
+  result_status TEXT,
+  error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_cycle_claims_state
+ON daily_cycle_claims(state, analysis_date DESC);
+
+CREATE TABLE IF NOT EXISTS runtime_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instance_id TEXT NOT NULL UNIQUE,
+  pid INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  heartbeat_at TEXT NOT NULL,
+  stopped_at TEXT,
+  stop_reason TEXT,
+  status TEXT NOT NULL CHECK(status IN ('RUNNING','STOPPED','INTERRUPTED'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_sessions_started
+ON runtime_sessions(started_at DESC);
+
 CREATE TABLE IF NOT EXISTS job_step_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_run_id INTEGER NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,

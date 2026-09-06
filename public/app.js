@@ -1496,9 +1496,10 @@ function renderConfig() {
     ['行情数据源', config.marketDataProvider], ['可靠度门槛', `${config.reliabilityGate}分`],
     ['SEC EDGAR', config.sec.configured ? `已配置（限速 ${config.sec.requestsPerSecond}/秒）` : '尚未配置联系邮箱'],
     ['Alpha Vantage预期', config.alphaVantage?.configured ? '已配置，日终自动更新' : '尚未配置API Key'],
-    ['富途分钟行情', config.futu?.enabled ? `${config.futu.collector?.status || '等待连接'} · ${config.futu.host}:${config.futu.port}` : '未启用'],
+    ['富途分钟行情', config.futu?.enabled ? `${config.futu.collector?.status || '等待连接'} · ${config.futu.host}:${config.futu.port}${config.futu.autoLaunchOpenD ? ' · OpenD自动拉起' : ''}` : '未启用'],
     ['自动维护', `每${config.system?.maintenanceCheckMinutes || '—'}分钟检查 · 保留${config.system?.backupRetentionCount || '—'}份备份`],
     ['日终重试', `网络步骤最多${config.system?.dailyCycleRetryAttempts || '—'}次 · 间隔${config.system?.dailyCycleRetryDelayMs ?? '—'}毫秒`],
+    ['无人值守日终', `独立线程 · 最多补跑${config.system?.dailyCycleCatchupLimit || '—'}日 · 整体最多尝试${config.system?.dailyCycleAutomationMaxAttempts || '—'}次 · ${config.system?.dailyCycleAutomationRetryMinutes || '—'}分钟后重试 · ${config.system?.dailyCycleWorkerTimeoutMinutes || '—'}分钟超时`],
     ['macOS通知', config.notifications.macosEnabled ? '已启用' : '未启用'],
     ['邮件通知', config.notifications.emailEnabled ? (config.notifications.emailConfigured ? '已配置' : '缺少配置') : '未启用'],
     ['云端LLM', config.llm.enabled ? (config.llm.configured ? config.llm.model : '缺少配置') : '未启用']
@@ -1544,8 +1545,8 @@ function renderSystemStatus() {
   document.querySelector('#system-futu-status').textContent = futu.status === 'connected' ? '已连接' : (futu.status || '未启用');
   document.querySelector('#system-futu-status').className = futu.status === 'connected' ? 'positive' : 'negative';
   document.querySelector('#system-futu-heartbeat').textContent = futu.lastHeartbeatAt
-    ? `心跳 ${new Date(futu.lastHeartbeatAt).toLocaleString('zh-CN')} · 自动重连 ${status.futuRecovery?.totalAttempts || 0}次`
-    : '尚无采集器心跳';
+    ? `心跳 ${new Date(futu.lastHeartbeatAt).toLocaleString('zh-CN')} · 自动重连 ${status.futuRecovery?.totalAttempts || 0}次 · OpenD拉起 ${futu.openD?.attempts || 0}次`
+    : `尚无采集器心跳 · OpenD拉起 ${futu.openD?.attempts || 0}次`;
   document.querySelector('#system-database-size').textContent = formatBytes(status.database.totalBytes);
   document.querySelector('#system-database-size').className = status.database.totalBytes >= status.database.warningBytes ? 'negative' : '';
   document.querySelector('#system-database-limit').textContent = `预警线 ${formatBytes(status.database.warningBytes)} · 原始逐笔 ${Number(status.database.rowCounts.ticks_intraday || 0).toLocaleString('zh-CN')}条`;
@@ -1557,9 +1558,19 @@ function renderSystemStatus() {
   document.querySelector('#system-data-status').textContent = `${currentRows}/${totalRows || 0}`;
   document.querySelector('#system-data-status').className = currentRows === totalRows && totalRows ? 'positive' : 'negative';
   document.querySelector('#system-data-detail').textContent = `预期完整交易日 ${status.expectedMarketDate || '—'}`;
+  const automation = status.automation || {};
+  const automationLabels = {
+    CURRENT: '已完成', RUNNING: '运行中', FAILED: '失败', MISSING: '待补跑'
+  };
+  document.querySelector('#system-automation-status').textContent = automationLabels[automation.status] || '未启用';
+  document.querySelector('#system-automation-status').className = automation.status === 'CURRENT'
+    ? 'positive' : ['FAILED', 'MISSING'].includes(automation.status) ? 'negative' : '';
+  document.querySelector('#system-automation-detail').textContent = automation.expectedDate
+    ? `交易日 ${automation.expectedDate} · 待补 ${automation.missingDates?.length || 0}日${automation.latest?.attempts ? ` · 已尝试${automation.latest.attempts}次` : ''}${automation.worker?.running ? ' · 独立线程运行' : ''}`
+    : '尚无自动调度状态';
   const maintenance = status.maintenance?.value;
   document.querySelector('#system-health-summary').textContent = maintenance
-    ? `最近维护 ${new Date(maintenance.completedAt).toLocaleString('zh-CN')} · 数据库检查 ${maintenance.integrity} · 清理过期逐笔 ${maintenance.prunedTicks || 0} 条`
+    ? `最近维护 ${new Date(maintenance.completedAt).toLocaleString('zh-CN')} · 数据库检查 ${maintenance.integrity} · 清理过期逐笔 ${maintenance.prunedTicks || 0} 条 · 近24小时异常中断 ${status.runtime?.recentInterruptions || 0}次`
     : '尚未完成首次维护检查。';
   document.querySelector('#system-issue-list').innerHTML = status.issues.length
     ? status.issues.map((issue) => `<div class="system-issue ${escapeHtml(issue.severity)}"><span class="badge ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span><strong>${escapeHtml(issue.ticker || issue.code)}</strong><p>${escapeHtml(issue.message)}</p></div>`).join('')

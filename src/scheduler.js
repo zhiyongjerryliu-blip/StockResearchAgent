@@ -21,6 +21,9 @@ import { savePortfolioRisk } from './portfolio-risk.js';
 import {
   DAILY_OPERATIONS_VERSION, collectDailyDataQuality, runRecordedStep
 } from './daily-operations.js';
+import {
+  claimDailyCycle, finishDailyCycleClaim, heartbeatDailyCycleClaim, missingDailyCycleDates
+} from './daily-cycle-automation.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -254,6 +257,82 @@ export async function runDailyCycle(...args) {
   }
 }
 
+export async function reconcileDailyCycles(
+  db, provider, date = new Date(), secProvider = null, earningsProvider = null,
+  newsProvider = null, options = {}
+) {
+  const analysisDate = latestStableUsMarketDate(
+    date, options.dailyReviewHourEt, options.dailyReviewMinuteEt
+  );
+  const system = options.system || {};
+  const missing = missingDailyCycleDates(
+    db, analysisDate, system.dailyCycleCatchupLimit
+  );
+  const results = [];
+  const cycleRunner = options.executeCycle || runDailyCycle;
+  for (const missingDate of missing) {
+    const claim = claimDailyCycle(db, {
+      analysisDate: missingDate,
+      trigger: options.automationTrigger || 'SCHEDULED_RECONCILE',
+      maximumAttempts: system.dailyCycleAutomationMaxAttempts,
+      retryDelayMinutes: system.dailyCycleAutomationRetryMinutes,
+      staleMinutes: system.dailyCycleClaimStaleMinutes,
+      now: date
+    });
+    if (!claim.claimed) {
+      results.push({ analysisDate: missingDate, skipped: true, reason: claim.reason });
+      continue;
+    }
+    const heartbeatMilliseconds = Math.min(
+      60_000,
+      Math.max(5_000, Number(system.dailyCycleClaimStaleMinutes || 30) * 20_000)
+    );
+    const claimHeartbeat = setInterval(() => {
+      try {
+        heartbeatDailyCycleClaim(db, {
+          analysisDate: missingDate, token: claim.token
+        });
+      } catch (error) {
+        console.error(`自动日终任务 ${missingDate} 租约心跳失败：`, error.message);
+      }
+    }, heartbeatMilliseconds);
+    claimHeartbeat.unref?.();
+    try {
+      const result = await cycleRunner(
+        db, provider, date, secProvider, earningsProvider, newsProvider,
+        {
+          analysisDate: missingDate, trigger: claim.trigger,
+          futuEnabled: options.futu?.enabled,
+          retryAttempts: system.dailyCycleRetryAttempts,
+          retryDelayMs: system.dailyCycleRetryDelayMs
+        }
+      );
+      finishDailyCycleClaim(db, {
+        analysisDate: missingDate, token: claim.token,
+        resultStatus: result.status, jobRunId: result.jobRunId
+      });
+      results.push({
+        analysisDate: missingDate, claimed: true, attempts: claim.attempts,
+        jobRunId: result.jobRunId, status: result.status
+      });
+      if (result.status === 'FAILED') break;
+    } catch (error) {
+      finishDailyCycleClaim(db, {
+        analysisDate: missingDate, token: claim.token,
+        resultStatus: 'FAILED', error: error.message
+      });
+      results.push({
+        analysisDate: missingDate, claimed: true, attempts: claim.attempts,
+        status: 'FAILED', error: error.message
+      });
+      break;
+    } finally {
+      clearInterval(claimHeartbeat);
+    }
+  }
+  return { analysisDate, missing, results };
+}
+
 export async function runMarketRefreshCycle(db, provider, date = new Date()) {
   const market = await refreshWatchlistPrices(db, provider);
   const reviewDate = etDate(date);
@@ -262,7 +341,8 @@ export async function runMarketRefreshCycle(db, provider, date = new Date()) {
 }
 
 export function startScheduler(
-  db, provider, options, secProvider = null, earningsProvider = null, newsProvider = null
+  db, provider, options, secProvider = null, earningsProvider = null, newsProvider = null,
+  dependencies = {}
 ) {
   const refreshMs = Math.max(5, options.marketRefreshIntervalMinutes) * 60_000;
   const timers = [];
@@ -274,30 +354,30 @@ export function startScheduler(
   }, refreshMs);
   timers.push(refreshTimer);
 
-  let lastDailyDate = null;
-  const dailyTimer = setInterval(() => {
-    const parts = etParts();
-    const currentDate = `${parts.year}-${parts.month}-${parts.day}`;
-    const weekday = parts.weekday;
-    if (['Sat', 'Sun'].includes(weekday)) return;
-    if (
-      Number(parts.hour) === options.dailyReviewHourEt &&
-      Number(parts.minute) >= options.dailyReviewMinuteEt &&
-      lastDailyDate !== currentDate
-    ) {
-      lastDailyDate = currentDate;
-      runDailyCycle(
+  let reconciliationRunning = false;
+  const reconcile = async (automationTrigger) => {
+    if (reconciliationRunning) return;
+    reconciliationRunning = true;
+    try {
+      const result = await reconcileDailyCycles(
         db, provider, new Date(), secProvider, earningsProvider, newsProvider,
-        {
-          trigger: 'SCHEDULED', futuEnabled: options.futu?.enabled,
-          retryAttempts: options.system?.dailyCycleRetryAttempts,
-          retryDelayMs: options.system?.dailyCycleRetryDelayMs
-        }
-      ).catch((error) => {
-        console.error('日终任务失败：', error.message);
-        lastDailyDate = null;
-      });
+        { ...options, automationTrigger, executeCycle: dependencies.executeCycle }
+      );
+      for (const item of result.results.filter((entry) => entry.status === 'FAILED')) {
+        console.error(`自动日终任务 ${item.analysisDate} 失败：`, item.error || '流水线返回FAILED');
+      }
+    } catch (error) {
+      console.error('自动日终补跑检查失败：', error.message);
+    } finally {
+      reconciliationRunning = false;
     }
+  };
+  const initialTimer = setTimeout(() => {
+    void reconcile('STARTUP_CATCHUP');
+  }, 5_000);
+  timers.push(initialTimer);
+  const dailyTimer = setInterval(() => {
+    void reconcile('SCHEDULED_RECONCILE');
   }, 60_000);
   timers.push(dailyTimer);
 

@@ -5,6 +5,58 @@ import readline from 'node:readline';
 
 export const FUTU_EVENT_PREFIX = '__FUTU_EVENT__';
 
+function launchMacApplication(appName) {
+  if (process.platform !== 'darwin') return Promise.resolve({ skipped: true, reason: 'not_macos' });
+  return new Promise((resolve, reject) => {
+    const child = spawn('/usr/bin/open', ['-gj', '-a', appName], { stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) resolve({ launched: true });
+      else reject(new Error(`启动${appName}失败，open退出码${code}`));
+    });
+  });
+}
+
+export class FutuOpenDManager {
+  constructor(options = {}) {
+    this.enabled = Boolean(options.enabled);
+    this.appName = options.appName || 'Futu_OpenD';
+    this.cooldownSeconds = Math.max(60, Number(options.cooldownSeconds) || 300);
+    this.launcher = options.launcher || launchMacApplication;
+    this.now = options.now || (() => new Date());
+    this.state = {
+      enabled: this.enabled, attempts: 0, lastAttemptAt: null,
+      lastSuccessAt: null, lastError: null, lastReason: null
+    };
+  }
+
+  status() {
+    return { ...this.state };
+  }
+
+  async ensure(reason = 'collector_start') {
+    if (!this.enabled) return { ...this.status(), skipped: true, reason: 'disabled' };
+    const now = this.now();
+    const lastAttempt = this.state.lastAttemptAt
+      ? new Date(this.state.lastAttemptAt).getTime() : 0;
+    if (lastAttempt && now.getTime() - lastAttempt < this.cooldownSeconds * 1000) {
+      return { ...this.status(), skipped: true, reason: 'cooldown' };
+    }
+    this.state.attempts += 1;
+    this.state.lastAttemptAt = now.toISOString();
+    this.state.lastReason = reason;
+    try {
+      await this.launcher(this.appName);
+      this.state.lastSuccessAt = now.toISOString();
+      this.state.lastError = null;
+      return { ...this.status(), launched: true };
+    } catch (error) {
+      this.state.lastError = error.message;
+      return { ...this.status(), launched: false, error: error.message };
+    }
+  }
+}
+
 export function parseFutuCollectorLine(line) {
   if (!String(line).startsWith(FUTU_EVENT_PREFIX)) return null;
   try {
@@ -20,6 +72,11 @@ export class FutuCollector {
     this.onEvent = onEvent;
     this.child = null;
     this.stopping = false;
+    this.openDManager = options.openDManager || new FutuOpenDManager({
+      enabled: options.enabled && options.autoLaunchOpenD,
+      appName: options.openDAppName,
+      cooldownSeconds: options.openDLaunchCooldownSeconds
+    });
     this.state = {
       enabled: Boolean(options.enabled), status: options.enabled ? 'idle' : 'disabled',
       symbols: [], session: options.session, pid: null,
@@ -29,7 +86,10 @@ export class FutuCollector {
   }
 
   status() {
-    return { ...this.state, symbols: [...this.state.symbols], backfill: { ...this.state.backfill } };
+    return {
+      ...this.state, symbols: [...this.state.symbols], backfill: { ...this.state.backfill },
+      openD: this.openDManager.status()
+    };
   }
 
   async start(tickers = [], backfillTickers = tickers) {
@@ -55,6 +115,8 @@ export class FutuCollector {
       };
       return this.status();
     }
+
+    await this.openDManager.ensure('collector_start');
 
     const scriptPath = path.join(this.options.projectRoot, 'scripts', 'futu_collector.py');
     const args = [

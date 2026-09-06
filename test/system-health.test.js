@@ -7,6 +7,7 @@ import { openDatabase } from '../src/db.js';
 import {
   collectSystemStatus, maintenanceDue, runSystemMaintenance
 } from '../src/system-health.js';
+import { claimDailyCycle, finishDailyCycleClaim } from '../src/daily-cycle-automation.js';
 
 function seedWatchlist(db) {
   const now = new Date().toISOString();
@@ -72,4 +73,29 @@ test('每日维护执行完整性检查、清理过期逐笔并幂等备份', as
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM system_health_snapshots').get().count, 1);
   db.close();
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('系统状态会报告遗漏的自动日终任务并在补跑完成后恢复', () => {
+  const db = openDatabase(':memory:');
+  seedWatchlist(db);
+  const options = {
+    expectedMarketDate: '2026-09-04',
+    futu: { enabled: false },
+    automation: { catchupLimit: 5, maximumAttempts: 3, claimStaleMinutes: 180 }
+  };
+  const missing = collectSystemStatus(db, options);
+  assert.equal(missing.automation.status, 'MISSING');
+  assert.ok(missing.issues.some((item) => item.code === 'DAILY_CYCLE_MISSING'));
+
+  const claim = claimDailyCycle(db, {
+    analysisDate: '2026-09-04', now: '2026-09-05T00:00:00.000Z'
+  });
+  finishDailyCycleClaim(db, {
+    analysisDate: '2026-09-04', token: claim.token,
+    resultStatus: 'SUCCESS', now: '2026-09-05T00:01:00.000Z'
+  });
+  const recovered = collectSystemStatus(db, options);
+  assert.equal(recovered.automation.status, 'CURRENT');
+  assert.ok(!recovered.issues.some((item) => item.code === 'DAILY_CYCLE_MISSING'));
+  db.close();
 });

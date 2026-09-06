@@ -55,14 +55,23 @@ export const config = Object.freeze({
     snapshotIntervalSeconds: boundedIntEnv('FUTU_SNAPSHOT_INTERVAL_SECONDS', 30, 5, 300),
     healthCheckSeconds: boundedIntEnv('FUTU_HEALTH_CHECK_SECONDS', 30, 10, 300),
     heartbeatTimeoutSeconds: boundedIntEnv('FUTU_HEARTBEAT_TIMEOUT_SECONDS', 120, 60, 900),
-    reconnectMaxSeconds: boundedIntEnv('FUTU_RECONNECT_MAX_SECONDS', 300, 30, 1800)
+    reconnectMaxSeconds: boundedIntEnv('FUTU_RECONNECT_MAX_SECONDS', 300, 30, 1800),
+    autoLaunchOpenD: boolEnv('FUTU_AUTO_LAUNCH_OPEND', true),
+    openDAppName: process.env.FUTU_OPEND_APP_NAME || 'Futu_OpenD',
+    openDLaunchCooldownSeconds: boundedIntEnv('FUTU_OPEND_LAUNCH_COOLDOWN_SECONDS', 300, 60, 1800)
   },
   system: {
     backupRetentionCount: boundedIntEnv('DATABASE_BACKUP_RETENTION_COUNT', 7, 1, 30),
     databaseWarningBytes: boundedIntEnv('DATABASE_WARNING_MB', 512, 100, 10240) * 1024 * 1024,
     maintenanceCheckMinutes: boundedIntEnv('SYSTEM_MAINTENANCE_CHECK_MINUTES', 60, 15, 1440),
     dailyCycleRetryAttempts: boundedIntEnv('DAILY_CYCLE_RETRY_ATTEMPTS', 2, 1, 5),
-    dailyCycleRetryDelayMs: boundedIntEnv('DAILY_CYCLE_RETRY_DELAY_MS', 1000, 0, 30000)
+    dailyCycleRetryDelayMs: boundedIntEnv('DAILY_CYCLE_RETRY_DELAY_MS', 1000, 0, 30000),
+    dailyCycleCatchupLimit: boundedIntEnv('DAILY_CYCLE_CATCHUP_LIMIT', 5, 1, 20),
+    dailyCycleAutomationMaxAttempts: boundedIntEnv('DAILY_CYCLE_AUTOMATION_MAX_ATTEMPTS', 3, 1, 10),
+    dailyCycleAutomationRetryMinutes: boundedIntEnv('DAILY_CYCLE_AUTOMATION_RETRY_MINUTES', 15, 1, 240),
+    dailyCycleClaimStaleMinutes: boundedIntEnv('DAILY_CYCLE_CLAIM_STALE_MINUTES', 30, 10, 1440),
+    dailyCycleWorkerTimeoutMinutes: boundedIntEnv('DAILY_CYCLE_WORKER_TIMEOUT_MINUTES', 60, 15, 240),
+    runtimeHeartbeatSeconds: boundedIntEnv('RUNTIME_HEARTBEAT_SECONDS', 60, 15, 300)
   },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {

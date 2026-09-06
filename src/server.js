@@ -8,7 +8,7 @@ import { calculatePortfolioRisk } from './portfolio-risk.js';
 import { providerFromName, upsertDailyBars } from './market.js';
 import { createNotification } from './notifications.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
-import { runDailyCycle, runMarketRefreshCycle, startScheduler } from './scheduler.js';
+import { runMarketRefreshCycle, startScheduler } from './scheduler.js';
 import { getSecOverview, SecEdgarProvider, syncSecCompany } from './sec.js';
 import { commitTransactionImport, validateTransactionImport } from './transaction-import.js';
 import { configureAutomaticPeers } from './peer-selection.js';
@@ -67,6 +67,10 @@ import {
   collectSystemStatus, maintenanceDue, runSystemMaintenance
 } from './system-health.js';
 import { getDailyOperation, getDailyOperationsCenter } from './daily-operations.js';
+import {
+  finishRuntimeSession, heartbeatRuntimeSession, startRuntimeSession
+} from './runtime-monitor.js';
+import { DailyCycleWorkerRunner } from './daily-cycle-worker-runner.js';
 
 const applicationStartedAt = nowIso();
 const db = openDatabase();
@@ -94,13 +98,20 @@ let futuHealthTimer = null;
 let maintenanceTimer = null;
 let maintenanceInitialTimer = null;
 let maintenanceRunning = false;
+let runtimeHeartbeatTimer = null;
+let runtimeSession = null;
+const dailyCycleWorker = new DailyCycleWorkerRunner({
+  databasePath: config.databasePath,
+  timeoutMilliseconds: config.system.dailyCycleWorkerTimeoutMinutes * 60_000
+});
 const futuRecovery = {
   totalAttempts: 0,
   consecutiveFailures: 0,
   lastAttemptAt: null,
   nextAttemptAt: null,
   lastRecoveredAt: null,
-  lastReason: null
+  lastReason: null,
+  lastNotificationAt: null
 };
 
 function enabledWatchlistTickers() {
@@ -193,7 +204,14 @@ function systemHealthOptions() {
       session: config.futu.session,
       collector: futuCollector.status()
     },
-    futuRecovery: { ...futuRecovery }
+    futuRecovery: { ...futuRecovery },
+    automation: {
+      catchupLimit: config.system.dailyCycleCatchupLimit,
+      maximumAttempts: config.system.dailyCycleAutomationMaxAttempts,
+      claimStaleMinutes: config.system.dailyCycleClaimStaleMinutes,
+      worker: dailyCycleWorker.status()
+    },
+    runtime: {}
   };
 }
 
@@ -206,7 +224,16 @@ async function checkFutuCollectorHealth() {
   const heartbeatAge = heartbeatTime ? Date.now() - new Date(heartbeatTime).getTime() : Infinity;
   const heartbeatFresh = heartbeatAge <= config.futu.heartbeatTimeoutSeconds * 1000;
   if (status.status === 'connected' && heartbeatFresh) {
-    if (futuRecovery.consecutiveFailures > 0) futuRecovery.lastRecoveredAt = nowIso();
+    const recoveredFailures = futuRecovery.consecutiveFailures;
+    if (recoveredFailures > 0) {
+      futuRecovery.lastRecoveredAt = nowIso();
+      if (recoveredFailures >= 3) {
+        await createNotification(db, {
+          severity: 'INFO', category: 'FUTU_RECOVERY', title: '富途行情采集已恢复',
+          body: `富途采集器在${recoveredFailures}次自动重连后恢复，分钟行情和逐笔采集将继续运行。`
+        });
+      }
+    }
     futuRecovery.consecutiveFailures = 0;
     futuRecovery.nextAttemptAt = null;
     futuRecovery.lastReason = null;
@@ -230,6 +257,23 @@ async function checkFutuCollectorHealth() {
     `富途采集器异常（${futuRecovery.lastReason}），正在执行第${futuRecovery.totalAttempts}次自动重连。`
   );
   await futuCollector.restart(tickers, missingIntradayHistory(tickers));
+  const lastNotification = futuRecovery.lastNotificationAt
+    ? new Date(futuRecovery.lastNotificationAt).getTime() : 0;
+  if (
+    futuRecovery.consecutiveFailures >= 3 &&
+    Date.now() - lastNotification >= 6 * 60 * 60 * 1000
+  ) {
+    const collector = futuCollector.status();
+    await createNotification(db, {
+      severity: 'P1', category: 'FUTU_RECOVERY', title: '富途行情采集持续中断',
+      body: `富途采集器已连续${futuRecovery.consecutiveFailures}次重连失败。系统已尝试拉起OpenD；请检查OpenD登录和行情权限。`,
+      evidence: [{
+        status: collector.status, lastError: collector.lastError,
+        openD: collector.openD, attempts: futuRecovery.totalAttempts
+      }]
+    });
+    futuRecovery.lastNotificationAt = nowIso();
+  }
 }
 
 async function runMaintenanceIfDue(force = false) {
@@ -260,6 +304,14 @@ function startRuntimeMonitors() {
   maintenanceTimer = setInterval(() => {
     runMaintenanceIfDue().catch((error) => console.error('定时系统维护失败：', error.message));
   }, config.system.maintenanceCheckMinutes * 60_000);
+  runtimeHeartbeatTimer = setInterval(() => {
+    if (!runtimeSession) return;
+    try {
+      heartbeatRuntimeSession(db, runtimeSession.instanceId);
+    } catch (error) {
+      console.error('运行心跳保存失败：', error.message);
+    }
+  }, config.system.runtimeHeartbeatSeconds * 1000);
 }
 
 const contentTypes = {
@@ -401,15 +453,12 @@ async function apiRoute(request, response, url) {
       throw new Error('重跑日期必须是有效的美股交易日');
     }
     if (analysisDate > latestStableMarketDate()) throw new Error('不能重跑尚未稳定收盘的交易日');
-    return sendJson(response, 200, await runDailyCycle(
-      db, provider, new Date(), secProvider, earningsProvider, newsProvider,
-      {
-        analysisDate, ticker: input.ticker || null, trigger: 'RERUN',
-        futuEnabled: config.futu.enabled,
-        retryAttempts: config.system.dailyCycleRetryAttempts,
-        retryDelayMs: config.system.dailyCycleRetryDelayMs
-      }
-    ));
+    return sendJson(response, 200, await dailyCycleWorker.run({
+      analysisDate, ticker: input.ticker || null, trigger: 'RERUN',
+      futuEnabled: config.futu.enabled,
+      retryAttempts: config.system.dailyCycleRetryAttempts,
+      retryDelayMs: config.system.dailyCycleRetryDelayMs
+    }));
   }
 
   if (method === 'GET' && url.pathname === '/api/config') {
@@ -431,6 +480,7 @@ async function apiRoute(request, response, url) {
         host: config.futu.host,
         port: config.futu.port,
         session: config.futu.session,
+        autoLaunchOpenD: config.futu.autoLaunchOpenD,
         healthCheckSeconds: config.futu.healthCheckSeconds,
         heartbeatTimeoutSeconds: config.futu.heartbeatTimeoutSeconds,
         collector: futuCollector.status()
@@ -440,7 +490,13 @@ async function apiRoute(request, response, url) {
         databaseWarningBytes: config.system.databaseWarningBytes,
         maintenanceCheckMinutes: config.system.maintenanceCheckMinutes,
         dailyCycleRetryAttempts: config.system.dailyCycleRetryAttempts,
-        dailyCycleRetryDelayMs: config.system.dailyCycleRetryDelayMs
+        dailyCycleRetryDelayMs: config.system.dailyCycleRetryDelayMs,
+        dailyCycleCatchupLimit: config.system.dailyCycleCatchupLimit,
+        dailyCycleAutomationMaxAttempts: config.system.dailyCycleAutomationMaxAttempts,
+        dailyCycleAutomationRetryMinutes: config.system.dailyCycleAutomationRetryMinutes,
+        dailyCycleClaimStaleMinutes: config.system.dailyCycleClaimStaleMinutes,
+        dailyCycleWorkerTimeoutMinutes: config.system.dailyCycleWorkerTimeoutMinutes,
+        runtimeHeartbeatSeconds: config.system.runtimeHeartbeatSeconds
       },
       notifications: {
         macosEnabled: config.notifications.macosEnabled,
@@ -758,14 +814,11 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, await generateDailyReviews(db, latestEtDate()));
   }
   if (method === 'POST' && url.pathname === '/api/daily-cycle') {
-    return sendJson(response, 200, await runDailyCycle(
-      db, provider, new Date(), secProvider, earningsProvider, newsProvider,
-      {
-        trigger: 'MANUAL', futuEnabled: config.futu.enabled,
-        retryAttempts: config.system.dailyCycleRetryAttempts,
-        retryDelayMs: config.system.dailyCycleRetryDelayMs
-      }
-    ));
+    return sendJson(response, 200, await dailyCycleWorker.run({
+      trigger: 'MANUAL', futuEnabled: config.futu.enabled,
+      retryAttempts: config.system.dailyCycleRetryAttempts,
+      retryDelayMs: config.system.dailyCycleRetryDelayMs
+    }));
   }
 
   return sendJson(response, 404, { error: '接口不存在' });
@@ -794,7 +847,14 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-const stopScheduler = startScheduler(db, provider, config, secProvider, earningsProvider, newsProvider);
+const stopScheduler = startScheduler(
+  db, provider, config, secProvider, earningsProvider, newsProvider,
+  {
+    executeCycle: (_db, _provider, _date, _sec, _earnings, _news, cycleOptions) => (
+      dailyCycleWorker.run(cycleOptions)
+    )
+  }
+);
 
 function clearStalePidFile() {
   if (!fs.existsSync(pidFile)) return;
@@ -814,6 +874,9 @@ clearStalePidFile();
 server.listen(config.port, config.host, () => {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid), { encoding: 'utf8' });
+  runtimeSession = startRuntimeSession(db, {
+    startedAt: applicationStartedAt, pid: process.pid
+  });
   console.log(`美股投研工作台已启动：http://${config.host}:${config.port}`);
   refreshFutuCollectorSymbols();
   startRuntimeMonitors();
@@ -844,6 +907,14 @@ async function shutdown(exitCode = 0, reason = 'shutdown') {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`正在关闭 StockResearchAgent：${reason}`);
+  if (runtimeSession) {
+    try {
+      finishRuntimeSession(db, runtimeSession.instanceId, reason);
+      runtimeSession = null;
+    } catch (error) {
+      console.error('保存服务停止状态失败：', error.message);
+    }
+  }
   const forceExitTimer = setTimeout(() => {
     console.error('服务未能在12秒内完成清理，强制退出。');
     removeOwnPidFile();
@@ -851,9 +922,16 @@ async function shutdown(exitCode = 0, reason = 'shutdown') {
   }, 12_000);
   forceExitTimer.unref();
   stopScheduler();
+  try {
+    await dailyCycleWorker.stop();
+    await new Promise((resolve) => setImmediate(resolve));
+  } catch (error) {
+    console.error('关闭日终工作线程失败：', error.message);
+  }
   if (futuHealthTimer) clearInterval(futuHealthTimer);
   if (maintenanceTimer) clearInterval(maintenanceTimer);
   if (maintenanceInitialTimer) clearTimeout(maintenanceInitialTimer);
+  if (runtimeHeartbeatTimer) clearInterval(runtimeHeartbeatTimer);
   for (const timer of intradaySnapshotTimers.values()) clearTimeout(timer);
   intradaySnapshotTimers.clear();
   if (futuIngestTimer) clearTimeout(futuIngestTimer);
