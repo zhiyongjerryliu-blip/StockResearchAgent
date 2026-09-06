@@ -421,7 +421,7 @@ async function apiRoute(request, response, url) {
 
   if (method === 'GET' && url.pathname === '/api/health') {
     return sendJson(response, 200, {
-      status: 'ok', time: nowIso(), version: '0.1.0', database: config.databasePath,
+      status: 'ok', time: nowIso(), version: '1.0.0', database: config.databasePath,
       marketDataProvider: config.marketDataProvider,
       startedAt: applicationStartedAt,
       uptimeSeconds: Math.round(process.uptime())

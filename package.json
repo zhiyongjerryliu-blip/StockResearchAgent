@@ -1,6 +1,6 @@
 {
   "name": "us-equity-research-workbench",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "个人自用的美股投研、持仓跟踪与多周期预测工作台",
