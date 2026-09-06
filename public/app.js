@@ -12,6 +12,24 @@ const state = {
   transactionImportToken: null, systemStatus: null, dailyOperations: null
 };
 
+const THEME_STORAGE_KEY = 'stockresearchagent.theme';
+const THEME_VALUES = new Set(['system', 'light', 'dark']);
+
+function applyTheme(theme, persist = false) {
+  const selected = THEME_VALUES.has(theme) ? theme : 'system';
+  document.documentElement.dataset.theme = selected;
+  const selector = document.querySelector('#theme-select');
+  if (selector) selector.value = selected;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, selected);
+    } catch {
+      // 隐私模式或浏览器禁用本地存储时，当前会话内仍可正常切换主题。
+    }
+  }
+  return selected;
+}
+
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
   financials: '财报分析', valuation: '估值与竞争对手', predictions: '多周期预测与历史验证',
@@ -2129,6 +2147,13 @@ document.querySelector('#run-system-maintenance').addEventListener('click', asyn
     button.disabled = false;
     button.textContent = '立即检查并备份';
   }
+});
+
+applyTheme(document.documentElement.dataset.theme || 'system');
+document.querySelector('#theme-select').addEventListener('change', (event) => {
+  const selected = applyTheme(event.target.value, true);
+  const labels = { system: '跟随系统', light: '浅色', dark: '深色' };
+  showToast(`桌面主题已切换为${labels[selected]}`);
 });
 
 document.querySelector('#valuation-estimate-form').elements.asOf.value = currentEtDate();
