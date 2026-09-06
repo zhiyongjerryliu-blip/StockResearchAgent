@@ -332,7 +332,7 @@ function adviceText(action, horizonLabel, stance, formalReady) {
 
 export function buildInvestmentAdvice(db, tickerValue, asOf) {
   const ticker = normalizeTicker(tickerValue);
-  const position = calculatePosition(db, ticker);
+  const position = calculatePosition(db, ticker, asOf);
   const externalDrivers = getExternalDriversOverview(db, ticker, asOf);
   const valuation = getValuationOverview(db, ticker, { lookbackYears: 5, asOf });
   const valuationComponent = valuationScore(valuation);

@@ -206,11 +206,12 @@ async function saveReview(db, reviewDate, ticker, type, structured, narrative, m
   );
 }
 
-export async function generateDailyReviews(db, reviewDate) {
-  const portfolio = calculatePortfolio(db);
+export async function generateDailyReviews(db, reviewDate, options = {}) {
+  const portfolio = calculatePortfolio(db, reviewDate);
   const stockReviews = [];
+  const targetTicker = options.ticker ? String(options.ticker).trim().toUpperCase() : null;
 
-  for (const position of portfolio.positions) {
+  for (const position of portfolio.positions.filter((item) => !targetTicker || item.ticker === targetTicker)) {
     const structured = {
       reviewDate,
       type: 'STOCK',
@@ -241,6 +242,10 @@ export async function generateDailyReviews(db, reviewDate) {
     }
     await saveReview(db, reviewDate, position.ticker, 'STOCK', structured, narrative, 'review-v2');
     stockReviews.push({ ticker: position.ticker, structured, narrative });
+  }
+
+  if (targetTicker) {
+    return { reviewDate, stockReviews, portfolio: null };
   }
 
   const portfolioStructured = {
@@ -336,7 +341,7 @@ export async function refreshDailyReviewsIfNeeded(db, reviewDate) {
     row.ticker,
     parseJson(row.structured_json, {}).position
   ]));
-  const portfolio = calculatePortfolio(db);
+  const portfolio = calculatePortfolio(db, reviewDate);
   const staleTickers = portfolio.positions
     .filter((position) => !storedPositionMatches(existing.get(position.ticker), position))
     .map((position) => position.ticker);

@@ -45,6 +45,30 @@ test('上一交易日行情缺失时不会跨日期计算日涨跌', () => {
   db.close();
 });
 
+test('历史持仓计算不会读取截止日之后的交易和行情', () => {
+  const db = openDatabase(':memory:');
+  upsertWatchlistItem(db, { ticker: 'AAPL' });
+  addTransaction(db, {
+    ticker: 'AAPL', side: 'BUY', tradeTime: '2026-08-03', quantity: 10, price: 100, fee: 0
+  });
+  addTransaction(db, {
+    ticker: 'AAPL', side: 'SELL', tradeTime: '2026-08-10', quantity: 10, price: 150, fee: 0
+  });
+  saveManualPrice(db, { ticker: 'AAPL', tradeDate: '2026-08-03', close: 105 });
+  saveManualPrice(db, { ticker: 'AAPL', tradeDate: '2026-08-04', close: 110 });
+  saveManualPrice(db, { ticker: 'AAPL', tradeDate: '2026-08-10', close: 160 });
+
+  const historical = calculatePosition(db, 'AAPL', '2026-08-04');
+  const current = calculatePosition(db, 'AAPL');
+  assert.equal(historical.quantity, 10);
+  assert.equal(historical.currentPrice, 110);
+  assert.equal(historical.priceDate, '2026-08-04');
+  assert.equal(historical.realizedPnl, 0);
+  assert.equal(current.quantity, 0);
+  assert.equal(current.realizedPnl, 500);
+  db.close();
+});
+
 test('超过持仓的卖出会被拒绝且交易回滚', () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'MSFT' });

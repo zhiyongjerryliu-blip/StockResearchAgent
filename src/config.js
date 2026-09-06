@@ -60,7 +60,9 @@ export const config = Object.freeze({
   system: {
     backupRetentionCount: boundedIntEnv('DATABASE_BACKUP_RETENTION_COUNT', 7, 1, 30),
     databaseWarningBytes: boundedIntEnv('DATABASE_WARNING_MB', 512, 100, 10240) * 1024 * 1024,
-    maintenanceCheckMinutes: boundedIntEnv('SYSTEM_MAINTENANCE_CHECK_MINUTES', 60, 15, 1440)
+    maintenanceCheckMinutes: boundedIntEnv('SYSTEM_MAINTENANCE_CHECK_MINUTES', 60, 15, 1440),
+    dailyCycleRetryAttempts: boundedIntEnv('DAILY_CYCLE_RETRY_ATTEMPTS', 2, 1, 5),
+    dailyCycleRetryDelayMs: boundedIntEnv('DAILY_CYCLE_RETRY_DELAY_MS', 1000, 0, 30000)
   },
   reliabilityGate: intEnv('RELIABILITY_GATE', 85),
   notifications: {

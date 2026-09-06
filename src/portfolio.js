@@ -80,7 +80,7 @@ export function calculateLots(transactions) {
   };
 }
 
-function latestPrices(db, ticker) {
+function latestPrices(db, ticker, asOf = null) {
   const latest = toPlainRows(db.prepare(`
     SELECT trade_date, open, high, low, close, volume, provider
     FROM (
@@ -90,12 +90,12 @@ function latestPrices(db, ticker) {
                ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
              ) AS row_number
       FROM prices_daily
-      WHERE ticker = ?
+      WHERE ticker = ? ${asOf ? 'AND trade_date <= ?' : ''}
     )
     WHERE row_number = 1
     ORDER BY trade_date DESC
     LIMIT 1
-  `).all(ticker))[0] || null;
+  `).all(...(asOf ? [ticker, asOf] : [ticker])))[0] || null;
   if (!latest) return { latest: null, previous: null, expectedPreviousDate: null };
 
   const expectedPreviousDate = previousRegularUsTradingDate(latest.trade_date);
@@ -115,13 +115,14 @@ function latestPrices(db, ticker) {
   return { latest, previous, expectedPreviousDate };
 }
 
-function transactionsForTicker(db, ticker) {
-  return toPlainRows(db.prepare(`
+function transactionsForTicker(db, ticker, asOf = null) {
+  const rows = toPlainRows(db.prepare(`
     SELECT id, ticker, side, trade_time, quantity, price, fee, note
     FROM transactions
     WHERE ticker = ?
     ORDER BY trade_time ASC, id ASC
   `).all(ticker));
+  return asOf ? rows.filter((transaction) => transactionTradeDate(transaction) <= asOf) : rows;
 }
 
 function calculateDailyPnl(transactions, latest, previous, endingQuantity) {
@@ -153,10 +154,10 @@ function calculateDailyPnl(transactions, latest, previous, endingQuantity) {
   return endingValue + sellCash - buyCash - beginningValue;
 }
 
-export function calculatePosition(db, ticker) {
-  const transactions = transactionsForTicker(db, ticker);
+export function calculatePosition(db, ticker, asOf = null) {
+  const transactions = transactionsForTicker(db, ticker, asOf);
   const lotResult = calculateLots(transactions);
-  const { latest, previous, expectedPreviousDate } = latestPrices(db, ticker);
+  const { latest, previous, expectedPreviousDate } = latestPrices(db, ticker, asOf);
   const currentPrice = latest?.close ?? null;
   const marketValue = currentPrice == null ? null : lotResult.quantity * currentPrice;
   const unrealizedPnl = marketValue == null ? null : marketValue - lotResult.remainingCost;
@@ -200,13 +201,13 @@ export function calculatePosition(db, ticker) {
   };
 }
 
-export function calculatePortfolio(db) {
+export function calculatePortfolio(db, asOf = null) {
   const stocks = toPlainRows(db.prepare(`
     SELECT s.ticker, s.name, s.benchmark, s.industry_etf, w.note, w.enabled
     FROM watchlist_items w
     JOIN securities s ON s.ticker = w.ticker
     ORDER BY s.ticker
-  `).all()).map((stock) => ({ ...stock, ...calculatePosition(db, stock.ticker) }));
+  `).all()).map((stock) => ({ ...stock, ...calculatePosition(db, stock.ticker, asOf) }));
 
   const totals = stocks.reduce((result, position) => {
     for (const field of ['marketValue', 'dailyPnl', 'unrealizedPnl', 'realizedPnl', 'totalPnl']) {
@@ -216,7 +217,7 @@ export function calculatePortfolio(db) {
   }, { marketValue: 0, dailyPnl: 0, unrealizedPnl: 0, realizedPnl: 0, totalPnl: 0 });
 
   return {
-    asOf: nowIso(),
+    asOf: asOf || nowIso(),
     positions: stocks,
     totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, round(value)]))
   };
@@ -367,7 +368,7 @@ export function calculateMonthlyPerformance(db, month) {
 }
 
 export function saveDailySnapshots(db, snapshotDate) {
-  const portfolio = calculatePortfolio(db);
+  const portfolio = calculatePortfolio(db, snapshotDate);
   const statement = db.prepare(`
     INSERT INTO daily_position_snapshots (
       ticker, snapshot_date, quantity, average_cost, remaining_cost,

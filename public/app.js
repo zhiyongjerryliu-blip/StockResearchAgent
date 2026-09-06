@@ -9,7 +9,7 @@ const state = {
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
-  transactionImportToken: null, systemStatus: null
+  transactionImportToken: null, systemStatus: null, dailyOperations: null
 };
 
 const titles = {
@@ -1480,6 +1480,7 @@ function renderConfig() {
     ['Alpha Vantage预期', config.alphaVantage?.configured ? '已配置，日终自动更新' : '尚未配置API Key'],
     ['富途分钟行情', config.futu?.enabled ? `${config.futu.collector?.status || '等待连接'} · ${config.futu.host}:${config.futu.port}` : '未启用'],
     ['自动维护', `每${config.system?.maintenanceCheckMinutes || '—'}分钟检查 · 保留${config.system?.backupRetentionCount || '—'}份备份`],
+    ['日终重试', `网络步骤最多${config.system?.dailyCycleRetryAttempts || '—'}次 · 间隔${config.system?.dailyCycleRetryDelayMs ?? '—'}毫秒`],
     ['macOS通知', config.notifications.macosEnabled ? '已启用' : '未启用'],
     ['邮件通知', config.notifications.emailEnabled ? (config.notifications.emailConfigured ? '已配置' : '缺少配置') : '未启用'],
     ['云端LLM', config.llm.enabled ? (config.llm.configured ? config.llm.model : '缺少配置') : '未启用']
@@ -1506,7 +1507,7 @@ function formatDuration(secondsValue) {
 
 function systemBadge(status) {
   if (['HEALTHY', 'CURRENT', 'SUCCESS', 'connected'].includes(status)) return 'buy';
-  if (['WARNING', 'RUNNING', 'starting'].includes(status)) return 'P2';
+  if (['WARNING', 'RUNNING', 'starting', 'DEGRADED', 'STALE', 'SKIPPED'].includes(status)) return 'P2';
   return 'P1';
 }
 
@@ -1567,9 +1568,72 @@ function renderSystemStatus() {
   }).join('');
 }
 
+function renderDailyOperations() {
+  const center = state.dailyOperations;
+  const latest = center?.latest;
+  const dateInput = document.querySelector('#operation-rerun-date');
+  const tickerSelect = document.querySelector('#operation-rerun-ticker');
+  if (!dateInput.value && state.systemStatus?.expectedMarketDate) {
+    dateInput.value = state.systemStatus.expectedMarketDate;
+  }
+  const selectedTicker = tickerSelect.value;
+  tickerSelect.innerHTML = '<option value="">全部股票</option>' + state.watchlist
+    .filter((item) => item.enabled)
+    .map((item) => `<option value="${escapeHtml(item.ticker)}">${escapeHtml(item.ticker)} · ${escapeHtml(item.name || '未填写名称')}</option>`)
+    .join('');
+  if ([...tickerSelect.options].some((option) => option.value === selectedTicker)) {
+    tickerSelect.value = selectedTicker;
+  }
+  const statusLabels = {
+    SUCCESS: '成功', DEGRADED: '降级', FAILED: '失败', RUNNING: '运行中', SKIPPED: '跳过'
+  };
+  if (!latest) {
+    document.querySelector('#operation-summary').textContent = '尚无日终运行记录。';
+    document.querySelector('#operation-steps-body').innerHTML = '';
+    document.querySelector('#operation-quality-body').innerHTML = '';
+    document.querySelector('#operation-steps-empty').classList.remove('hidden');
+    document.querySelector('#operation-quality-empty').classList.remove('hidden');
+    return;
+  }
+  const details = latest.details || {};
+  const duration = latest.finished_at
+    ? (new Date(latest.finished_at) - new Date(latest.started_at)) / 1000
+    : (Date.now() - new Date(latest.started_at)) / 1000;
+  document.querySelector('#operation-summary').innerHTML = `最近任务 <strong>#${latest.id}</strong> · ${escapeHtml(details.reviewDate || '—')} · ${escapeHtml(details.ticker || '全部股票')} · ${escapeHtml(statusLabels[latest.status] || latest.status)} · ${formatDuration(duration)}；数据质量 ${escapeHtml(details.qualityStatus || '待检查')}。`;
+  const steps = latest.steps || [];
+  document.querySelector('#operation-steps-body').innerHTML = steps.map((step) => `
+    <tr>
+      <td><strong>${escapeHtml(step.step_label)}</strong><br><small class="muted">${escapeHtml(step.step_key)}</small></td>
+      <td>第${Number(step.attempt)}次</td>
+      <td>${Number(step.item_succeeded)}/${Number(step.item_total)}<br>${step.item_failed ? `<small class="negative">失败${Number(step.item_failed)}项</small>` : ''}</td>
+      <td>${step.durationMs == null ? '运行中' : formatDuration(step.durationMs / 1000)}</td>
+      <td><span class="badge ${systemBadge(step.status)}">${escapeHtml(statusLabels[step.status] || step.status)}</span>${step.error_message ? `<br><small class="negative">${escapeHtml(step.error_message)}</small>` : ''}</td>
+    </tr>`).join('');
+  document.querySelector('#operation-steps-empty').classList.toggle('hidden', steps.length > 0);
+  const quality = [...(latest.quality || [])].sort((left, right) => {
+    const rank = { INCONSISTENT: 0, MISSING: 1, STALE: 2, DEGRADED: 3, CURRENT: 4 };
+    return (rank[left.status] ?? 9) - (rank[right.status] ?? 9) || String(left.ticker || '').localeCompare(String(right.ticker || ''));
+  });
+  const qualityLabels = {
+    CURRENT: '正常', STALE: '滞后', MISSING: '缺失', INCONSISTENT: '口径异常', DEGRADED: '降级'
+  };
+  document.querySelector('#operation-quality-body').innerHTML = quality.map((item) => `
+    <tr>
+      <td class="ticker">${escapeHtml(item.ticker || '全局')}</td>
+      <td>${escapeHtml(item.source_key)}<br><small class="muted">${escapeHtml(item.check_key)}</small></td>
+      <td>${escapeHtml(item.actual_date || '—')}<br><small class="muted">预期 ${escapeHtml(item.expected_date || '—')}</small></td>
+      <td><span class="badge ${systemBadge(item.status)}">${escapeHtml(qualityLabels[item.status] || item.status)}</span></td>
+      <td>${escapeHtml(item.message)}</td>
+    </tr>`).join('');
+  document.querySelector('#operation-quality-empty').classList.toggle('hidden', quality.length > 0);
+}
+
 async function loadSystemStatus() {
-  state.systemStatus = await api('/api/system/status');
+  [state.systemStatus, state.dailyOperations] = await Promise.all([
+    api('/api/system/status'), api('/api/operations/daily?limit=20')
+  ]);
   renderSystemStatus();
+  renderDailyOperations();
 }
 
 async function loadAll() {
@@ -1580,7 +1644,7 @@ async function loadAll() {
     api('/api/news?limit=100'), api('/api/news/sentiment')
   ]);
   Object.assign(state, { watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
-  renderWatchlist(); renderPortfolio(); renderPortfolioRisk(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig();
+  renderWatchlist(); renderPortfolio(); renderPortfolioRisk(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig(); renderDailyOperations();
 }
 
 function formData(form) {
@@ -2003,8 +2067,9 @@ document.querySelector('#refresh-market').addEventListener('click', async () => 
 document.querySelector('#run-daily').addEventListener('click', async () => {
   try {
     showToast('正在执行日终任务…');
-    await api('/api/daily-cycle', { method: 'POST' });
-    await loadAll(); showToast('日终收益与复盘已完成');
+    const result = await api('/api/daily-cycle', { method: 'POST' });
+    await loadAll();
+    showToast(result.status === 'SUCCESS' ? '日终收益与复盘已完成' : '日终任务完成，但存在降级或失败项', result.status !== 'SUCCESS');
   } catch (error) { showToast(error.message, true); }
 });
 
@@ -2020,6 +2085,31 @@ document.querySelector('#test-notification').addEventListener('click', async () 
     await api('/api/notifications/test', { method: 'POST' });
     await loadAll(); showToast('测试通知已发送');
   } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('#operation-rerun').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const analysisDate = document.querySelector('#operation-rerun-date').value;
+  const ticker = document.querySelector('#operation-rerun-ticker').value;
+  button.disabled = true;
+  button.textContent = '正在重新运行…';
+  try {
+    const result = await api('/api/operations/daily/rerun', {
+      method: 'POST', body: JSON.stringify({ analysisDate, ticker: ticker || null })
+    });
+    await Promise.all([loadAll(), loadSystemStatus()]);
+    showToast(
+      result.status === 'SUCCESS'
+        ? `${analysisDate} ${ticker || '全部股票'}重新运行完成`
+        : `重新运行完成，但状态为${result.status}`,
+      result.status !== 'SUCCESS'
+    );
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '重新运行';
+  }
 });
 
 document.querySelector('#run-system-maintenance').addEventListener('click', async (event) => {

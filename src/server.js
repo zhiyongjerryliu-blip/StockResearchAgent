@@ -61,11 +61,12 @@ import {
   updateWatchlistItem,
   upsertWatchlistItem
 } from './repository.js';
-import { latestStableUsMarketDate } from './trading-calendar.js';
+import { isRegularUsTradingDay, latestStableUsMarketDate } from './trading-calendar.js';
 import { getPredictionOverview, runPredictionBacktest } from './predictions.js';
 import {
   collectSystemStatus, maintenanceDue, runSystemMaintenance
 } from './system-health.js';
+import { getDailyOperation, getDailyOperationsCenter } from './daily-operations.js';
 
 const applicationStartedAt = nowIso();
 const db = openDatabase();
@@ -383,6 +384,34 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, await runMaintenanceIfDue(true));
   }
 
+  if (method === 'GET' && url.pathname === '/api/operations/daily') {
+    return sendJson(response, 200, getDailyOperationsCenter(db, url.searchParams.get('limit')));
+  }
+  const dailyOperationMatch = url.pathname.match(/^\/api\/operations\/daily\/(\d+)$/);
+  if (method === 'GET' && dailyOperationMatch) {
+    const operation = getDailyOperation(db, Number(dailyOperationMatch[1]));
+    return operation
+      ? sendJson(response, 200, operation)
+      : sendJson(response, 404, { error: '日终任务记录不存在' });
+  }
+  if (method === 'POST' && url.pathname === '/api/operations/daily/rerun') {
+    const input = await readJson(request);
+    const analysisDate = input.analysisDate || latestStableMarketDate();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(analysisDate) || !isRegularUsTradingDay(analysisDate)) {
+      throw new Error('重跑日期必须是有效的美股交易日');
+    }
+    if (analysisDate > latestStableMarketDate()) throw new Error('不能重跑尚未稳定收盘的交易日');
+    return sendJson(response, 200, await runDailyCycle(
+      db, provider, new Date(), secProvider, earningsProvider, newsProvider,
+      {
+        analysisDate, ticker: input.ticker || null, trigger: 'RERUN',
+        futuEnabled: config.futu.enabled,
+        retryAttempts: config.system.dailyCycleRetryAttempts,
+        retryDelayMs: config.system.dailyCycleRetryDelayMs
+      }
+    ));
+  }
+
   if (method === 'GET' && url.pathname === '/api/config') {
     return sendJson(response, 200, {
       host: config.host,
@@ -409,7 +438,9 @@ async function apiRoute(request, response, url) {
       system: {
         backupRetentionCount: config.system.backupRetentionCount,
         databaseWarningBytes: config.system.databaseWarningBytes,
-        maintenanceCheckMinutes: config.system.maintenanceCheckMinutes
+        maintenanceCheckMinutes: config.system.maintenanceCheckMinutes,
+        dailyCycleRetryAttempts: config.system.dailyCycleRetryAttempts,
+        dailyCycleRetryDelayMs: config.system.dailyCycleRetryDelayMs
       },
       notifications: {
         macosEnabled: config.notifications.macosEnabled,
@@ -728,7 +759,12 @@ async function apiRoute(request, response, url) {
   }
   if (method === 'POST' && url.pathname === '/api/daily-cycle') {
     return sendJson(response, 200, await runDailyCycle(
-      db, provider, new Date(), secProvider, earningsProvider, newsProvider
+      db, provider, new Date(), secProvider, earningsProvider, newsProvider,
+      {
+        trigger: 'MANUAL', futuEnabled: config.futu.enabled,
+        retryAttempts: config.system.dailyCycleRetryAttempts,
+        retryDelayMs: config.system.dailyCycleRetryDelayMs
+      }
     ));
   }
 

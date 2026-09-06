@@ -608,6 +608,41 @@
           <p id="system-health-summary" class="muted system-health-summary">打开页面后自动检查。</p>
           <div id="system-issue-list" class="system-issue-list"></div>
         </article>
+        <article class="panel operation-center-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">DAILY OPERATIONS</p><h2>每日运行中心</h2></div>
+            <div class="operation-rerun-controls">
+              <input id="operation-rerun-date" type="date" aria-label="重跑交易日">
+              <select id="operation-rerun-ticker" aria-label="重跑股票">
+                <option value="">全部股票</option>
+              </select>
+              <button id="operation-rerun" class="button secondary">重新运行</button>
+            </div>
+          </div>
+          <p id="operation-summary" class="muted system-health-summary">尚无日终运行记录。</p>
+          <div class="content-grid settings-grid system-detail-grid">
+            <div>
+              <p class="eyebrow">PIPELINE STEPS</p>
+              <div class="table-wrap">
+                <table class="system-table">
+                  <thead><tr><th>步骤</th><th>尝试</th><th>处理结果</th><th>耗时</th><th>状态</th></tr></thead>
+                  <tbody id="operation-steps-body"></tbody>
+                </table>
+              </div>
+              <div id="operation-steps-empty" class="empty hidden">尚无步骤记录。</div>
+            </div>
+            <div>
+              <p class="eyebrow">DATA QUALITY</p>
+              <div class="table-wrap">
+                <table class="system-table">
+                  <thead><tr><th>股票</th><th>数据</th><th>日期</th><th>状态</th><th>说明</th></tr></thead>
+                  <tbody id="operation-quality-body"></tbody>
+                </table>
+              </div>
+              <div id="operation-quality-empty" class="empty hidden">尚无数据质量检查记录。</div>
+            </div>
+          </div>
+        </article>
         <div class="content-grid settings-grid system-detail-grid">
           <article class="panel">
             <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>股票池数据完整性</h2></div></div>

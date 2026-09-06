@@ -798,6 +798,51 @@ CREATE TABLE IF NOT EXISTS job_runs (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS job_step_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_run_id INTEGER NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,
+  step_key TEXT NOT NULL,
+  step_label TEXT NOT NULL,
+  analysis_date TEXT,
+  ticker TEXT,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL CHECK(status IN ('RUNNING','SUCCESS','DEGRADED','FAILED','SKIPPED')),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  item_total INTEGER NOT NULL DEFAULT 0,
+  item_succeeded INTEGER NOT NULL DEFAULT 0,
+  item_failed INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_step_runs_job
+ON job_step_runs(job_run_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_job_step_runs_lookup
+ON job_step_runs(step_key, analysis_date DESC, ticker, id DESC);
+
+CREATE TABLE IF NOT EXISTS data_quality_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_run_id INTEGER REFERENCES job_runs(id) ON DELETE CASCADE,
+  analysis_date TEXT NOT NULL,
+  ticker TEXT,
+  source_key TEXT NOT NULL,
+  check_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('CURRENT','STALE','MISSING','INCONSISTENT','DEGRADED')),
+  expected_date TEXT,
+  actual_date TEXT,
+  message TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}',
+  checked_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_quality_checks_job
+ON data_quality_checks(job_run_id, status, ticker);
+
+CREATE INDEX IF NOT EXISTS idx_data_quality_checks_latest
+ON data_quality_checks(analysis_date DESC, ticker, source_key, check_key, id DESC);
+
 CREATE TABLE IF NOT EXISTS system_health_snapshots (
   check_date TEXT PRIMARY KEY,
   checked_at TEXT NOT NULL,

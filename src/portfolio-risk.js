@@ -16,7 +16,7 @@ function standardDeviation(values) {
   return Math.sqrt(valid.reduce((sum, value) => sum + ((value - average) ** 2), 0) / (valid.length - 1));
 }
 
-function canonicalReturns(db, ticker, limit = 91) {
+function canonicalReturns(db, ticker, limit = 91, asOf = null) {
   const rows = toPlainRows(db.prepare(`
     SELECT trade_date, close FROM (
       SELECT trade_date, close, provider, ingested_at,
@@ -24,9 +24,9 @@ function canonicalReturns(db, ticker, limit = 91) {
                PARTITION BY trade_date
                ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC
              ) AS row_number
-      FROM prices_daily WHERE ticker = ?
+      FROM prices_daily WHERE ticker = ? ${asOf ? 'AND trade_date <= ?' : ''}
     ) WHERE row_number = 1 ORDER BY trade_date DESC LIMIT ?
-  `).all(ticker, limit)).reverse();
+  `).all(...(asOf ? [ticker, asOf, limit] : [ticker, limit]))).reverse();
   return new Map(rows.slice(1).flatMap((row, index) => {
     const previous = rows[index];
     return previous?.close && row.close
@@ -53,12 +53,13 @@ function correlation(leftMap, rightMap) {
   return denominator ? covariance / denominator : null;
 }
 
-function historicalDrawdown(db) {
+function historicalDrawdown(db, asOf = null) {
   const rows = toPlainRows(db.prepare(`
     SELECT snapshot_date, SUM(COALESCE(market_value, 0)) AS market_value
     FROM daily_position_snapshots
-    WHERE quantity > 0 GROUP BY snapshot_date ORDER BY snapshot_date
-  `).all());
+    WHERE quantity > 0 ${asOf ? 'AND snapshot_date <= ?' : ''}
+    GROUP BY snapshot_date ORDER BY snapshot_date
+  `).all(...(asOf ? [asOf] : [])));
   let peak = 0;
   let maximumDrawdown = null;
   let peakDate = null;
@@ -78,23 +79,26 @@ function historicalDrawdown(db) {
   return { maximumDrawdown: round(maximumDrawdown, 6), peakDate, troughDate, sampleDays: rows.length };
 }
 
-function latestAdvice(db, ticker) {
+function latestAdvice(db, ticker, asOf = null) {
   const row = toPlain(db.prepare(`
     SELECT action, stance, publication_status, rationale_json, as_of
     FROM investment_advice_snapshots
-    WHERE ticker = ? ORDER BY as_of DESC, horizon_days ASC LIMIT 1
-  `).get(ticker));
+    WHERE ticker = ? ${asOf ? 'AND as_of <= ?' : ''}
+    ORDER BY as_of DESC, horizon_days ASC LIMIT 1
+  `).get(...(asOf ? [ticker, asOf] : [ticker])));
   return row ? { ...row, rationale: parseJson(row.rationale_json, {}) } : null;
 }
 
-function activeOfficialRisk(db, ticker) {
+function activeOfficialRisk(db, ticker, asOf = null) {
   return toPlain(db.prepare(`
     SELECT event_date, severity, title, source_url
     FROM research_events
     WHERE ticker = ? AND source_type = 'SEC_8K' AND severity IN ('P0','P1')
-      AND status = 'ACTIVE' AND event_date >= date('now', '-30 days')
+      AND status = 'ACTIVE'
+      AND event_date <= COALESCE(?, date('now'))
+      AND event_date >= date(COALESCE(?, date('now')), '-30 days')
     ORDER BY event_date DESC, id DESC LIMIT 1
-  `).get(ticker));
+  `).get(ticker, asOf, asOf));
 }
 
 function positionAction(position, weight, advice, officialRisk) {
@@ -116,11 +120,13 @@ function positionAction(position, weight, advice, officialRisk) {
   };
 }
 
-export function calculatePortfolioRisk(db) {
-  const portfolio = calculatePortfolio(db);
+export function calculatePortfolioRisk(db, asOf = null) {
+  const portfolio = calculatePortfolio(db, asOf);
   const positions = portfolio.positions.filter((position) => position.quantity > 0 && position.marketValue > 0);
   const totalMarketValue = positions.reduce((sum, position) => sum + position.marketValue, 0);
-  const returns = new Map(positions.map((position) => [position.ticker, canonicalReturns(db, position.ticker)]));
+  const returns = new Map(positions.map((position) => [
+    position.ticker, canonicalReturns(db, position.ticker, 91, asOf)
+  ]));
   const weightedDates = new Set([...returns.values()].flatMap((items) => [...items.keys()]));
   const portfolioReturns = [...weightedDates].sort().flatMap((date) => {
     let value = 0;
@@ -149,8 +155,8 @@ export function calculatePortfolioRisk(db) {
     const weight = totalMarketValue ? position.marketValue / totalMarketValue : 0;
     const sector = security.sector || security.industry || '未分类';
     sectorWeights.set(sector, (sectorWeights.get(sector) || 0) + weight);
-    const advice = latestAdvice(db, position.ticker);
-    const officialRisk = activeOfficialRisk(db, position.ticker);
+    const advice = latestAdvice(db, position.ticker, asOf);
+    const officialRisk = activeOfficialRisk(db, position.ticker, asOf);
     return {
       ticker: position.ticker, name: position.name, sector, weight: round(weight, 6),
       marketValue: position.marketValue, totalReturn: position.totalReturn,
@@ -164,7 +170,7 @@ export function calculatePortfolioRisk(db) {
   const largestSectorWeight = Math.max(0, ...sectors.map((sector) => sector.weight));
   const averageCorrelation = mean(correlations.map((item) => item.correlation));
   const annualizedVolatility = standardDeviation(portfolioReturns);
-  const drawdown = historicalDrawdown(db);
+  const drawdown = historicalDrawdown(db, asOf);
   const riskScore = Math.min(100,
     (largestPositionWeight * 55)
     + (largestSectorWeight * 25)
@@ -190,7 +196,7 @@ export function calculatePortfolioRisk(db) {
 }
 
 export function savePortfolioRisk(db, asOf) {
-  const result = calculatePortfolioRisk(db);
+  const result = calculatePortfolioRisk(db, asOf);
   db.prepare(`
     INSERT INTO portfolio_risk_snapshots (as_of, risk_score, risk_level, snapshot_json, model_version, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
