@@ -71,6 +71,10 @@ import {
   finishRuntimeSession, heartbeatRuntimeSession, startRuntimeSession
 } from './runtime-monitor.js';
 import { DailyCycleWorkerRunner } from './daily-cycle-worker-runner.js';
+import {
+  createResearchReportJob, getResearchReport, getResearchReportJob, listResearchReports,
+  renderResearchReportHtml, runResearchReportJob
+} from './research-reports.js';
 
 const applicationStartedAt = nowIso();
 const db = openDatabase();
@@ -327,6 +331,13 @@ const contentTypes = {
 function sendJson(response, status, payload) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload));
+}
+
+function sendHtml(response, status, html, fileName = null) {
+  const headers = { 'Content-Type': 'text/html; charset=utf-8' };
+  if (fileName) headers['Content-Disposition'] = `attachment; filename="${fileName}"`;
+  response.writeHead(status, headers);
+  response.end(html);
 }
 
 async function readJson(request) {
@@ -752,6 +763,45 @@ async function apiRoute(request, response, url) {
     return sendJson(response, 200, removePeer(
       db, decodeURIComponent(peerMatch[1]), decodeURIComponent(peerMatch[2])
     ));
+  }
+
+  if (method === 'GET' && url.pathname === '/api/research/reports') {
+    const ticker = url.searchParams.get('ticker');
+    if (!ticker) throw new Error('请选择研报股票');
+    return sendJson(response, 200, listResearchReports(db, ticker, url.searchParams.get('limit')));
+  }
+  if (method === 'POST' && url.pathname === '/api/research/reports/generate') {
+    const body = await readJson(request);
+    const asOf = body.asOf || latestStableMarketDate();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || asOf !== latestStableMarketDate()) {
+      throw new Error('第一阶段仅支持生成最近稳定收盘日的研报');
+    }
+    const job = createResearchReportJob(db, { ticker: body.ticker, asOf });
+    if (!job.merged) setImmediate(() => runResearchReportJob(db, job.id));
+    return sendJson(response, 202, { job });
+  }
+  const researchJobMatch = url.pathname.match(/^\/api\/research\/jobs\/(\d+)$/);
+  if (method === 'GET' && researchJobMatch) {
+    const job = getResearchReportJob(db, researchJobMatch[1]);
+    return job
+      ? sendJson(response, 200, job)
+      : sendJson(response, 404, { error: '个股综合研报任务不存在' });
+  }
+  const researchExportMatch = url.pathname.match(/^\/api\/research\/reports\/(\d+)\/export$/);
+  if (method === 'GET' && researchExportMatch) {
+    const report = getResearchReport(db, researchExportMatch[1]);
+    if (!report) return sendJson(response, 404, { error: '个股综合研报不存在' });
+    return sendHtml(
+      response, 200, renderResearchReportHtml(report),
+      report.ticker + '-research-report-' + report.asOf + '-v' + report.id + '.html'
+    );
+  }
+  const researchReportMatch = url.pathname.match(/^\/api\/research\/reports\/(\d+)$/);
+  if (method === 'GET' && researchReportMatch) {
+    const report = getResearchReport(db, researchReportMatch[1]);
+    return report
+      ? sendJson(response, 200, report)
+      : sendJson(response, 404, { error: '个股综合研报不存在' });
   }
 
   if (method === 'GET' && url.pathname === '/api/notifications') {

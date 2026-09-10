@@ -789,6 +789,42 @@ CREATE TABLE IF NOT EXISTS daily_reviews (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reviews_unique
 ON daily_reviews(COALESCE(ticker, '__PORTFOLIO__'), review_date, review_type, status);
 
+CREATE TABLE IF NOT EXISTS research_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  analysis_price REAL,
+  price_date TEXT,
+  input_hash TEXT NOT NULL,
+  schema_version TEXT NOT NULL,
+  template_version TEXT NOT NULL,
+  generation_mode TEXT NOT NULL DEFAULT 'MANUAL',
+  quality_status TEXT NOT NULL,
+  content_json TEXT NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  limitations_json TEXT NOT NULL DEFAULT '[]',
+  UNIQUE(ticker, as_of, input_hash, schema_version, template_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_reports_ticker_asof
+ON research_reports(ticker, as_of DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS research_report_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('QUEUED','RUNNING','SUCCESS','NO_CHANGE','FAILED')),
+  report_id INTEGER REFERENCES research_reports(id) ON DELETE SET NULL,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_report_jobs_status
+ON research_report_jobs(status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS job_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_name TEXT NOT NULL,

@@ -459,7 +459,7 @@ function buildPeriods(facts, periodType, limit = 8) {
     .map(({ _raw, ...period }) => period);
 }
 
-export function getSecOverview(db, tickerValue) {
+export function getSecOverview(db, tickerValue, asOf = null) {
   const ticker = normalizeTicker(tickerValue);
   const company = toPlain(db.prepare(`
     SELECT ticker, name, cik, sic, sic_description, exchange, sector, industry FROM securities WHERE ticker = ?
@@ -468,15 +468,15 @@ export function getSecOverview(db, tickerValue) {
   const status = toPlain(db.prepare('SELECT * FROM sec_sync_status WHERE ticker = ?').get(ticker)) || null;
   const facts = toPlainRows(db.prepare(`
     SELECT * FROM financial_facts
-    WHERE ticker = ?
+    WHERE ticker = ? ${asOf ? 'AND filed_at <= ?' : ''}
     ORDER BY period_end DESC, filed_at DESC, tag_priority ASC
-  `).all(ticker));
+  `).all(...(asOf ? [ticker, asOf] : [ticker])));
   const filings = toPlainRows(db.prepare(`
     SELECT accession_number, form, filed_at, report_date, accepted_at,
            primary_doc_description, items, filing_url, is_xbrl, is_inline_xbrl
-    FROM sec_filings WHERE ticker = ?
+    FROM sec_filings WHERE ticker = ? ${asOf ? 'AND filed_at <= ?' : ''}
     ORDER BY filed_at DESC, accepted_at DESC LIMIT 30
-  `).all(ticker)).map((filing) => ({
+  `).all(...(asOf ? [ticker, asOf] : [ticker]))).map((filing) => ({
     ...filing,
     is_xbrl: Boolean(filing.is_xbrl),
     is_inline_xbrl: Boolean(filing.is_inline_xbrl)

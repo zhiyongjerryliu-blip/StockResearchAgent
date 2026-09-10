@@ -8,6 +8,7 @@ const state = {
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
+  researchReports: [], researchReport: null, researchLoadedTicker: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
   transactionImportToken: null, systemStatus: null, dailyOperations: null
 };
@@ -33,6 +34,7 @@ function applyTheme(theme, persist = false) {
 const titles = {
   dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
   financials: '财报分析', valuation: '估值与竞争对手', predictions: '多周期预测与历史验证',
+  research: '个股综合研报',
   capital: '资金与成交量', events: '事件与风险',
   reviews: '收盘复盘', settings: '系统状态'
 };
@@ -100,6 +102,7 @@ function showView(view) {
   document.querySelector('#page-title').textContent = titles[view];
   if (view === 'financials') loadSelectedSecOverview().catch((error) => showToast(error.message, true));
   if (view === 'valuation') loadSelectedValuation().catch((error) => showToast(error.message, true));
+  if (view === 'research') loadResearchReports().catch((error) => showToast(error.message, true));
   if (view === 'predictions') loadPredictionOverview().catch((error) => showToast(error.message, true));
   if (view === 'capital') loadCapitalFlow().catch((error) => showToast(error.message, true));
   if (view === 'events') loadEventCenter().catch((error) => showToast(error.message, true));
@@ -119,6 +122,7 @@ function renderWatchlist() {
       <td>${escapeHtml(item.note || '—')}</td>
       <td><button class="badge ${item.enabled ? 'buy' : ''}" data-toggle-ticker="${item.ticker}" data-enabled="${item.enabled}">${item.enabled ? '监控中' : '已暂停'}</button></td>
       <td><div class="row-actions">
+        <button class="edit-link" data-research-ticker="${item.ticker}">综合研报</button>
         <button class="edit-link" data-edit-watchlist="${item.ticker}">修改</button>
         <button class="danger-link" data-delete-watchlist="${item.ticker}">删除</button>
       </div></td>
@@ -160,6 +164,13 @@ function renderWatchlist() {
   predictionSelect.innerHTML = `<option value="">请选择股票</option>${options}`;
   if (selectedPredictionTicker && state.watchlist.some((item) => item.ticker === selectedPredictionTicker && item.enabled)) {
     predictionSelect.value = selectedPredictionTicker;
+  }
+
+  const researchSelect = document.querySelector('#research-ticker');
+  const selectedResearchTicker = researchSelect.value || state.researchLoadedTicker || state.watchlist[0]?.ticker;
+  researchSelect.innerHTML = `<option value="">请选择股票</option>${secOptions}`;
+  if (selectedResearchTicker && state.watchlist.some((item) => item.ticker === selectedResearchTicker)) {
+    researchSelect.value = selectedResearchTicker;
   }
 }
 
@@ -444,7 +455,7 @@ function renderPortfolio() {
   const held = portfolio.positions.filter((position) => position.quantity > 0);
   document.querySelector('#positions-body').innerHTML = held.map((position) => `
     <tr>
-      <td><span class="ticker">${position.ticker}</span><br><small class="muted">${escapeHtml(position.name || '')}</small></td>
+      <td><button class="ticker edit-link" data-research-ticker="${position.ticker}">${position.ticker}</button><br><small class="muted">${escapeHtml(position.name || '')}</small></td>
       <td>${position.quantity}</td><td>${money(position.averageCost)}</td><td>${money(position.currentPrice)}</td>
       <td class="${pnlClass(position.dailyPnl)}">${money(position.dailyPnl)}</td>
       <td>${monthlyPnlButton(position.ticker)}</td>
@@ -1665,6 +1676,95 @@ async function loadSystemStatus() {
   renderDailyOperations();
 }
 
+function researchValue(value) {
+  if (value == null) return '数据不足';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : decimal(value, 4);
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function renderResearchReport() {
+  const report = state.researchReport;
+  const summary = document.querySelector('#research-summary');
+  const sections = document.querySelector('#research-sections');
+  const evidencePanel = document.querySelector('#research-evidence-panel');
+  const exportLink = document.querySelector('#export-research-report');
+  if (!report) {
+    summary.innerHTML = '<div class="empty">尚未生成报告。点击“生成/更新研报”创建冻结版本。</div>';
+    sections.innerHTML = '';
+    evidencePanel.classList.add('hidden');
+    exportLink.classList.add('disabled');
+    exportLink.setAttribute('aria-disabled', 'true');
+    exportLink.href = '#';
+    return;
+  }
+  const content = report.content || {};
+  const position = content.position || {};
+  const company = content.company || {};
+  summary.innerHTML = `
+    <div class="panel-head"><div><p class="eyebrow">FROZEN REPORT #${report.id}</p><h2>${escapeHtml(report.ticker)} · ${escapeHtml(company.name || '公司名称待补充')}</h2></div><span class="badge ${report.qualityStatus === 'COMPLETE' ? 'PUBLISHED' : 'INSUFFICIENT'}">${escapeHtml(report.qualityStatus)}</span></div>
+    <div class="research-summary-grid">
+      <div><span>研究截止</span><strong>${escapeHtml(report.asOf)}</strong><small>冻结版本</small></div>
+      <div><span>分析价格</span><strong>${money(report.analysisPrice)}</strong><small>${escapeHtml(report.priceDate || '行情日期缺失')}</small></div>
+      <div><span>持仓状态</span><strong>${Number(position.quantity || 0) > 0 ? '当前持有' : '观察股'}</strong><small>持仓信息仅在本地页面展示</small></div>
+      <div><span>生成时间</span><strong>${escapeHtml(new Date(report.generatedAt).toLocaleString('zh-CN'))}</strong><small>${escapeHtml(report.templateVersion)}</small></div>
+    </div>
+    <p class="research-summary-note">${escapeHtml((report.limitations || []).join('；') || '当前未记录额外限制。')}</p>`;
+  sections.innerHTML = (content.sections || []).map((section) => `
+    <article class="panel research-section" id="research-${escapeHtml(section.key)}">
+      <div class="research-section-head"><span class="research-section-number">${section.order}/9</span><h2>${escapeHtml(section.title)}</h2><span class="badge ${section.status === 'AVAILABLE' ? 'PUBLISHED' : 'INSUFFICIENT'}">${escapeHtml(section.status)}</span></div>
+      <div class="research-section-body"><pre class="research-json">${escapeHtml(researchValue(section.data))}</pre></div>
+    </article>`).join('');
+  const evidence = report.evidence || [];
+  document.querySelector('#research-evidence').innerHTML = evidence.map((item) => {
+    const inner = `<small>${escapeHtml(item.id)}</small><small>${escapeHtml(item.publishedAt || '日期缺失')}</small><strong>${escapeHtml(item.title || item.sourceType)}</strong>`;
+    return item.url
+      ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+      : `<span>${inner}</span>`;
+  }).join('');
+  evidencePanel.classList.toggle('hidden', !evidence.length);
+  exportLink.href = `/api/research/reports/${report.id}/export`;
+  exportLink.classList.remove('disabled');
+  exportLink.setAttribute('aria-disabled', 'false');
+}
+
+async function selectResearchReport(id) {
+  state.researchReport = id ? await api(`/api/research/reports/${id}`) : null;
+  renderResearchReport();
+}
+
+async function waitForResearchJob(id) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const job = await api(`/api/research/jobs/${id}`);
+    if (['SUCCESS', 'NO_CHANGE', 'FAILED'].includes(job.status)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error('研报生成仍在后台运行，请稍后刷新查看');
+}
+
+async function loadResearchReports() {
+  const selector = document.querySelector('#research-ticker');
+  const ticker = selector.value || state.researchLoadedTicker || state.watchlist[0]?.ticker;
+  if (!ticker) {
+    state.researchReports = [];
+    state.researchReport = null;
+    renderResearchReport();
+    return;
+  }
+  state.researchLoadedTicker = ticker;
+  state.researchReports = await api(`/api/research/reports?ticker=${encodeURIComponent(ticker)}`);
+  const version = document.querySelector('#research-version');
+  const selectedId = Number(version.value) || state.researchReport?.id;
+  version.innerHTML = state.researchReports.length
+    ? state.researchReports.map((item) => `<option value="${item.id}">${escapeHtml(item.asOf)} · #${item.id} · ${escapeHtml(item.qualityStatus)}</option>`).join('')
+    : '<option value="">尚无报告</option>';
+  const target = state.researchReports.find((item) => item.id === selectedId) || state.researchReports[0] || null;
+  if (target) version.value = String(target.id);
+  state.researchReport = target;
+  renderResearchReport();
+}
+
 async function loadAll() {
   const [watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment] = await Promise.all([
     api('/api/watchlist'), api('/api/portfolio'), api('/api/portfolio/risk'), api('/api/transactions'),
@@ -1732,6 +1832,13 @@ document.addEventListener('keydown', (event) => {
 document.body.addEventListener('click', async (event) => {
   const go = event.target.closest('[data-go]');
   if (go) showView(go.dataset.go);
+  const researchShortcut = event.target.closest('[data-research-ticker]');
+  if (researchShortcut) {
+    state.researchLoadedTicker = researchShortcut.dataset.researchTicker;
+    const select = document.querySelector('#research-ticker');
+    select.value = state.researchLoadedTicker;
+    showView('research');
+  }
   const monthlyTicker = event.target.closest('[data-monthly-ticker]');
   if (monthlyTicker) openMonthlyDetail(monthlyTicker.dataset.monthlyTicker);
   const toggle = event.target.closest('[data-toggle-ticker]');
@@ -1796,6 +1903,38 @@ document.querySelector('#valuation-ticker').addEventListener('change', () => {
 document.querySelector('#valuation-history-years').addEventListener('change', () => {
   state.valuationLoadedTicker = null;
   loadSelectedValuation(true).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#research-ticker').addEventListener('change', () => {
+  state.researchLoadedTicker = document.querySelector('#research-ticker').value || null;
+  state.researchReport = null;
+  loadResearchReports().catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#research-version').addEventListener('change', (event) => {
+  selectResearchReport(Number(event.target.value)).catch((error) => showToast(error.message, true));
+});
+
+document.querySelector('#generate-research-report').addEventListener('click', async (event) => {
+  const ticker = document.querySelector('#research-ticker').value;
+  if (!ticker) return showToast('请先选择股票', true);
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在生成…';
+  try {
+    const queued = await api('/api/research/reports/generate', {
+      method: 'POST', body: JSON.stringify({ ticker })
+    });
+    const job = await waitForResearchJob(queued.job.id);
+    if (job.status === 'FAILED') throw new Error(job.error_message || '研报生成失败');
+    await loadResearchReports();
+    showToast(job.status === 'SUCCESS' ? '个股综合研报已生成' : '数据未变化，已打开现有版本');
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '生成/更新研报';
+  }
 });
 
 document.querySelector('#event-ticker').addEventListener('change', () => {

@@ -29,6 +29,7 @@
         <button class="nav-item" data-view="watchlist">股票池</button>
         <button class="nav-item" data-view="financials">财报分析</button>
         <button class="nav-item" data-view="valuation">估值与同业</button>
+        <button class="nav-item" data-view="research">个股综合研报</button>
         <button class="nav-item" data-view="predictions">预测中心</button>
         <button class="nav-item" data-view="capital">资金与成交量</button>
         <button class="nav-item" data-view="events">事件与风险</button>
@@ -268,6 +269,30 @@
             </article>
           </div>
         </div>
+      </section>
+
+      <section class="view" id="view-research">
+        <article class="panel research-toolbar">
+          <div>
+            <p class="eyebrow">COMPREHENSIVE EQUITY RESEARCH</p>
+            <h2>个股综合研报</h2>
+            <p class="muted">聚合当前已有财务、估值、事件、资金、预测和建议，生成冻结、可追溯的九章基础报告。</p>
+          </div>
+          <div class="research-actions">
+            <label>股票<select id="research-ticker" aria-label="研报股票"><option value="">请选择股票</option></select></label>
+            <label>报告版本<select id="research-version" aria-label="研报版本"><option value="">尚无报告</option></select></label>
+            <button id="generate-research-report" class="button primary">生成/更新研报</button>
+            <a id="export-research-report" class="button secondary disabled" href="#" aria-disabled="true">导出HTML</a>
+          </div>
+        </article>
+        <article id="research-summary" class="panel research-summary">
+          <div class="empty">请选择股票；阅读已有报告不会调用外部数据源或LLM。</div>
+        </article>
+        <div id="research-sections" class="research-sections"></div>
+        <article id="research-evidence-panel" class="panel hidden">
+          <div class="panel-head"><div><p class="eyebrow">SOURCES</p><h2>来源与证据</h2></div></div>
+          <div id="research-evidence" class="research-evidence"></div>
+        </article>
       </section>
 
       <section class="view" id="view-predictions">
