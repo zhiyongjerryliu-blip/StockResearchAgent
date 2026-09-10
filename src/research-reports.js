@@ -12,9 +12,10 @@ import { getExternalDriversOverview } from './external-drivers.js';
 import { getNewsSentimentSummary } from './news.js';
 import { listResearchEvents } from './events.js';
 import { buildInvestmentAdvice } from './advice.js';
+import { buildOperatingAnalysis } from './research-operating.js';
 
 export const RESEARCH_REPORT_SCHEMA_VERSION = 'research-report-v1';
-export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v1';
+export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v2-operating';
 
 const SECTION_DEFINITIONS = Object.freeze([
   ['summary', '结论摘要'],
@@ -88,12 +89,13 @@ function buildQuality(position, sec, valuation, prediction, evidence) {
 
 function reportSections(snapshot, quality) {
   const { company, position, sec, valuation, predictions, capitalFlow, capitalHistory,
-    intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence } = snapshot;
+    intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence, operating } = snapshot;
   const published = (predictions?.predictions || []).filter((item) => item.publication_status === 'PUBLISHED');
   const limitations = [
     ...quality.issues,
     '公开成交及富途主动方向不能确认最终账户或机构身份',
-    '当前基础研报聚合已有数据，不包含尚未实现的分部经营模型或Bull/Base/Bear估值引擎',
+    '分部经营数据只在获得可核实披露并完成维度校验后展示；当前不会用合并数据推断分部',
+    'Bull/Base/Bear估值情景引擎将在第三阶段接入',
     '研究内容不构成自动交易指令'
   ];
   return SECTION_DEFINITIONS.map(([key, title], order) => {
@@ -106,19 +108,24 @@ function reportSections(snapshot, quality) {
         highlights: events?.events?.slice?.(0, 3) || []
       },
       operations: {
-        latestFinancials: sec?.latest || sec?.metrics || null,
-        annualTrends: sec?.annual || sec?.annualTrends || [],
-        quarterlyTrends: sec?.quarterly || sec?.quarterlyTrends || [],
+        operating,
+        latestFinancials: sec?.latest || null,
         externalDrivers: drivers
       },
       expectations: {
-        earningsEstimate: valuation?.target?.estimate || null,
+        operatingTemplate: operating?.template || null,
+        expectations: operating?.expectations || null,
         estimateHistory: valuation?.estimates || [],
         peers: valuation?.peers || [], sentiment,
         supportingEvents: (events?.events || []).filter((item) => !['P0', 'P1'].includes(item.severity)).slice(0, 10),
         opposingEvents: (events?.events || []).filter((item) => ['P0', 'P1'].includes(item.severity)).slice(0, 10)
       },
       earnings: {
+        operatingTrend: {
+          latest: operating?.latest || null,
+          annual: operating?.annual || [],
+          quarterly: operating?.quarterly || []
+        },
         ttmEps: valuation?.target?.ttmEps ?? null,
         ttmMethod: valuation?.target?.ttmMethod || null,
         ttmPeriods: valuation?.target?.ttmPeriods || [],
@@ -164,6 +171,7 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   const position = calculatePosition(db, ticker, asOf);
   const sec = safely(() => getSecOverview(db, ticker, asOf));
   const valuation = safely(() => getValuationOverview(db, ticker, { asOf }));
+  const operating = safely(() => buildOperatingAnalysis(sec, valuation));
   const predictions = safely(() => getPredictionOverview(db, ticker, asOf));
   const capitalFlow = safely(() => analyzeCapitalFlow(db, ticker, asOf));
   const capitalHistory = safely(() => listRecentCapitalFlowDays(db, ticker, asOf, 10), []);
@@ -178,7 +186,7 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   const drivers = safely(() => getExternalDriversOverview(db, ticker, asOf));
   const advice = safely(() => buildInvestmentAdvice(db, ticker, asOf));
   const evidence = evidenceForReport(db, ticker, asOf);
-  const input = { ticker, asOf, company, position, sec, valuation, predictions, capitalFlow,
+  const input = { ticker, asOf, company, position, sec, valuation, operating, predictions, capitalFlow,
     capitalHistory, intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence };
   const quality = buildQuality(position, sec, valuation, predictions, evidence);
   return { ...input, quality, sections: reportSections(input, quality) };
