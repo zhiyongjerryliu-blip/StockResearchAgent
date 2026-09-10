@@ -846,6 +846,39 @@ CREATE TABLE IF NOT EXISTS valuation_scenarios (
 CREATE INDEX IF NOT EXISTS idx_valuation_scenarios_report
 ON valuation_scenarios(report_id, scenario_key);
 
+CREATE TABLE IF NOT EXISTS research_theses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  thesis_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('BULLISH','BEARISH','MIXED')),
+  horizon TEXT NOT NULL,
+  definition_hash TEXT NOT NULL,
+  conditions_json TEXT NOT NULL,
+  current_status TEXT NOT NULL CHECK(current_status IN ('PENDING','STRENGTHENED','WEAKENED','FALSIFIED','EXPIRED')),
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(ticker, thesis_key)
+);
+
+CREATE TABLE IF NOT EXISTS research_thesis_observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thesis_id INTEGER NOT NULL REFERENCES research_theses(id) ON DELETE CASCADE,
+  report_id INTEGER NOT NULL REFERENCES research_reports(id) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('PENDING','STRENGTHENED','WEAKENED','FALSIFIED','EXPIRED')),
+  score REAL NOT NULL DEFAULT 0,
+  supporting_json TEXT NOT NULL DEFAULT '[]',
+  opposing_json TEXT NOT NULL DEFAULT '[]',
+  evidence_hash TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  UNIQUE(thesis_id, report_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_thesis_observations
+ON research_thesis_observations(thesis_id, as_of DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS job_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_name TEXT NOT NULL,

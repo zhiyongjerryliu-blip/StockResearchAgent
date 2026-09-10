@@ -14,9 +14,10 @@ import { listResearchEvents } from './events.js';
 import { buildInvestmentAdvice } from './advice.js';
 import { buildOperatingAnalysis } from './research-operating.js';
 import { buildPeScenarioAnalysis, persistValuationScenarios } from './research-valuation.js';
+import { buildResearchTheses, persistResearchTheses } from './research-theses.js';
 
 export const RESEARCH_REPORT_SCHEMA_VERSION = 'research-report-v1';
-export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v3-valuation';
+export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v4-theses';
 
 const SECTION_DEFINITIONS = Object.freeze([
   ['summary', '结论摘要'],
@@ -91,7 +92,7 @@ function buildQuality(position, sec, valuation, prediction, evidence) {
 function reportSections(snapshot, quality) {
   const { company, position, sec, valuation, predictions, capitalFlow, capitalHistory,
     intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence, operating,
-    valuationScenarios } = snapshot;
+    valuationScenarios, theses } = snapshot;
   const published = (predictions?.predictions || []).filter((item) => item.publication_status === 'PUBLISHED');
   const limitations = [
     ...quality.issues,
@@ -120,7 +121,8 @@ function reportSections(snapshot, quality) {
         estimateHistory: valuation?.estimates || [],
         peers: valuation?.peers || [], sentiment,
         supportingEvents: (events?.events || []).filter((item) => !['P0', 'P1'].includes(item.severity)).slice(0, 10),
-        opposingEvents: (events?.events || []).filter((item) => ['P0', 'P1'].includes(item.severity)).slice(0, 10)
+        opposingEvents: (events?.events || []).filter((item) => ['P0', 'P1'].includes(item.severity)).slice(0, 10),
+        thesisCards: theses?.theses || []
       },
       earnings: {
         operatingTrend: {
@@ -142,7 +144,13 @@ function reportSections(snapshot, quality) {
         scenarios: valuationScenarios
       },
       market: { position, capitalFlow, capitalHistory, intradayFlow, capitalBehavior },
-      risks: { events: events?.events || [], drivers, advice },
+      risks: {
+        events: events?.events || [], drivers,
+        thesisCards: theses?.theses || [],
+        transmissionChains: theses?.transmissionChains || [],
+        advice,
+        advicePolicy: theses?.advicePolicy
+      },
       forecast: {
         predictions: predictions?.predictions || [],
         reliability: predictions?.reliability || [],
@@ -188,9 +196,11 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   }, { events: [] });
   const drivers = safely(() => getExternalDriversOverview(db, ticker, asOf));
   const advice = safely(() => buildInvestmentAdvice(db, ticker, asOf));
+  const theses = safely(() => buildResearchTheses({ asOf, operating, valuation, events, advice }));
   const evidence = evidenceForReport(db, ticker, asOf);
-  const input = { ticker, asOf, company, position, sec, valuation, operating, valuationScenarios, predictions, capitalFlow,
-    capitalHistory, intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence };
+  const input = { ticker, asOf, company, position, sec, valuation, operating, valuationScenarios, theses,
+    predictions, capitalFlow, capitalHistory, intradayFlow, capitalBehavior, sentiment, events, drivers,
+    advice, evidence };
   const quality = buildQuality(position, sec, valuation, predictions, evidence);
   return { ...input, quality, sections: reportSections(input, quality) };
 }
@@ -236,6 +246,7 @@ export function generateResearchReport(db, input) {
     );
     const report = getResearchReport(db, Number(result.lastInsertRowid));
     persistValuationScenarios(db, report, snapshot.valuationScenarios, generatedAt);
+    persistResearchTheses(db, report, snapshot.theses, generatedAt);
     db.exec('COMMIT');
     return { report, created: true };
   } catch (error) {
@@ -322,9 +333,23 @@ function human(value) {
   return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+const PRIVATE_EXPORT_KEYS = new Set([
+  'quantity', 'averageCost', 'costBasis', 'remainingCost', 'totalBuyCash', 'totalSellCash',
+  'realizedPnl', 'unrealizedPnl', 'totalPnl', 'marketValue', 'lots', 'transactions',
+  'firstTradeDate', 'lastExitDate'
+]);
+
+function removePrivateFields(value) {
+  if (Array.isArray(value)) return value.map(removePrivateFields);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !PRIVATE_EXPORT_KEYS.has(key))
+    .map(([key, child]) => [key, removePrivateFields(child)]));
+}
+
 export function renderResearchReportHtml(report) {
   if (!report) throw new Error('研报不存在');
-  const sanitized = structuredClone(report);
+  const sanitized = removePrivateFields(structuredClone(report));
   const publicPosition = sanitized.content?.position ? {
     ticker: sanitized.content.position.ticker,
     currentPrice: sanitized.content.position.currentPrice,
@@ -337,6 +362,10 @@ export function renderResearchReportHtml(report) {
   if (sanitized.content) {
     sanitized.content.position = publicPosition;
     sanitized.content.advice = {
+      redacted: true,
+      reason: '默认导出不包含持仓个性化建议'
+    };
+    if (sanitized.content.theses) sanitized.content.theses.adviceReference = {
       redacted: true,
       reason: '默认导出不包含持仓个性化建议'
     };
