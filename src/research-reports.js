@@ -13,9 +13,10 @@ import { getNewsSentimentSummary } from './news.js';
 import { listResearchEvents } from './events.js';
 import { buildInvestmentAdvice } from './advice.js';
 import { buildOperatingAnalysis } from './research-operating.js';
+import { buildPeScenarioAnalysis, persistValuationScenarios } from './research-valuation.js';
 
 export const RESEARCH_REPORT_SCHEMA_VERSION = 'research-report-v1';
-export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v2-operating';
+export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v3-valuation';
 
 const SECTION_DEFINITIONS = Object.freeze([
   ['summary', '结论摘要'],
@@ -89,13 +90,14 @@ function buildQuality(position, sec, valuation, prediction, evidence) {
 
 function reportSections(snapshot, quality) {
   const { company, position, sec, valuation, predictions, capitalFlow, capitalHistory,
-    intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence, operating } = snapshot;
+    intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence, operating,
+    valuationScenarios } = snapshot;
   const published = (predictions?.predictions || []).filter((item) => item.publication_status === 'PUBLISHED');
   const limitations = [
     ...quality.issues,
     '公开成交及富途主动方向不能确认最终账户或机构身份',
     '分部经营数据只在获得可核实披露并完成维度校验后展示；当前不会用合并数据推断分部',
-    'Bull/Base/Bear估值情景引擎将在第三阶段接入',
+    'Bull/Base/Bear为显式条件估值，概率未经校准，不等同于1/3/6个月正式价格预测',
     '研究内容不构成自动交易指令'
   ];
   return SECTION_DEFINITIONS.map(([key, title], order) => {
@@ -137,7 +139,7 @@ function reportSections(snapshot, quality) {
         current: valuation?.target || valuation,
         peers: valuation?.peers || [],
         history: valuation?.historicalValuation || null,
-        scenarioStatus: 'NOT_IMPLEMENTED'
+        scenarios: valuationScenarios
       },
       market: { position, capitalFlow, capitalHistory, intradayFlow, capitalBehavior },
       risks: { events: events?.events || [], drivers, advice },
@@ -172,6 +174,7 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   const sec = safely(() => getSecOverview(db, ticker, asOf));
   const valuation = safely(() => getValuationOverview(db, ticker, { asOf }));
   const operating = safely(() => buildOperatingAnalysis(sec, valuation));
+  const valuationScenarios = safely(() => buildPeScenarioAnalysis(valuation, operating));
   const predictions = safely(() => getPredictionOverview(db, ticker, asOf));
   const capitalFlow = safely(() => analyzeCapitalFlow(db, ticker, asOf));
   const capitalHistory = safely(() => listRecentCapitalFlowDays(db, ticker, asOf, 10), []);
@@ -186,7 +189,7 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   const drivers = safely(() => getExternalDriversOverview(db, ticker, asOf));
   const advice = safely(() => buildInvestmentAdvice(db, ticker, asOf));
   const evidence = evidenceForReport(db, ticker, asOf);
-  const input = { ticker, asOf, company, position, sec, valuation, operating, predictions, capitalFlow,
+  const input = { ticker, asOf, company, position, sec, valuation, operating, valuationScenarios, predictions, capitalFlow,
     capitalHistory, intradayFlow, capitalBehavior, sentiment, events, drivers, advice, evidence };
   const quality = buildQuality(position, sec, valuation, predictions, evidence);
   return { ...input, quality, sections: reportSections(input, quality) };
@@ -216,20 +219,29 @@ export function generateResearchReport(db, input) {
   if (existing) return { report: hydrate(existing), created: false };
   const generatedAt = nowIso();
   const limitations = snapshot.sections.find((item) => item.key === 'methodology')?.data?.limitations || [];
-  const result = db.prepare(`
-    INSERT INTO research_reports (
-      ticker, as_of, generated_at, analysis_price, price_date, input_hash,
-      schema_version, template_version, generation_mode, quality_status,
-      content_json, evidence_json, limitations_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    snapshot.ticker, snapshot.asOf, generatedAt, snapshot.position.currentPrice,
-    snapshot.position.priceDate, inputHash, RESEARCH_REPORT_SCHEMA_VERSION,
-    RESEARCH_REPORT_TEMPLATE_VERSION, input.generationMode || 'MANUAL',
-    snapshot.quality.status, JSON.stringify(snapshot), JSON.stringify(snapshot.evidence),
-    JSON.stringify(limitations)
-  );
-  return { report: getResearchReport(db, Number(result.lastInsertRowid)), created: true };
+  db.exec('BEGIN');
+  try {
+    const result = db.prepare(`
+      INSERT INTO research_reports (
+        ticker, as_of, generated_at, analysis_price, price_date, input_hash,
+        schema_version, template_version, generation_mode, quality_status,
+        content_json, evidence_json, limitations_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      snapshot.ticker, snapshot.asOf, generatedAt, snapshot.position.currentPrice,
+      snapshot.position.priceDate, inputHash, RESEARCH_REPORT_SCHEMA_VERSION,
+      RESEARCH_REPORT_TEMPLATE_VERSION, input.generationMode || 'MANUAL',
+      snapshot.quality.status, JSON.stringify(snapshot), JSON.stringify(snapshot.evidence),
+      JSON.stringify(limitations)
+    );
+    const report = getResearchReport(db, Number(result.lastInsertRowid));
+    persistValuationScenarios(db, report, snapshot.valuationScenarios, generatedAt);
+    db.exec('COMMIT');
+    return { report, created: true };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function createResearchReportJob(db, input) {

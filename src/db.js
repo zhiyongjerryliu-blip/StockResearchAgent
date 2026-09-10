@@ -825,6 +825,27 @@ CREATE TABLE IF NOT EXISTS research_report_jobs (
 CREATE INDEX IF NOT EXISTS idx_research_report_jobs_status
 ON research_report_jobs(status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS valuation_scenarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id INTEGER NOT NULL REFERENCES research_reports(id) ON DELETE CASCADE,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  as_of TEXT NOT NULL,
+  scenario_key TEXT NOT NULL CHECK(scenario_key IN ('BEAR','BASE','BULL')),
+  status TEXT NOT NULL,
+  eps_value REAL,
+  pe_multiple REAL,
+  conditional_value REAL,
+  upside_downside REAL,
+  formula_version TEXT NOT NULL,
+  assumptions_json TEXT NOT NULL,
+  quality_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(report_id, scenario_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_valuation_scenarios_report
+ON valuation_scenarios(report_id, scenario_key);
+
 CREATE TABLE IF NOT EXISTS job_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_name TEXT NOT NULL,
