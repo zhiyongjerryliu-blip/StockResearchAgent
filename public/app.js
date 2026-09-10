@@ -8,7 +8,7 @@ const state = {
   editingWatchlistTicker: null, secOverview: null, secLoadedTicker: null,
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
-  researchReports: [], researchReport: null, researchLoadedTicker: null,
+  researchReports: [], researchReport: null, researchLoadedTicker: null, researchDiff: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
   transactionImportToken: null, systemStatus: null, dailyOperations: null
 };
@@ -1684,12 +1684,74 @@ function researchValue(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function researchMetricValue(value, unit) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  if (unit === 'USD' || unit === 'shares') {
+    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(Number(value));
+  }
+  return decimal(value, 4);
+}
+
+function researchTable(headers, rows) {
+  return `<div class="table-wrap"><table><thead><tr>${headers.map((item) => `<th>${escapeHtml(item)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+}
+
+function researchSectionMarkup(section) {
+  const data = section.data || {};
+  if (section.key === 'operations') {
+    const operating = data.operating || {};
+    const latest = operating.latest;
+    if (!latest) return `<div class="empty">${escapeHtml(operating.issues?.join('；') || '缺少可用经营财务数据。')}</div>`;
+    const rows = Object.values(latest.metrics || {}).map((metric) => `<tr>
+      <td>${escapeHtml(metric.label)}</td><td>${researchMetricValue(metric.value, metric.unit)}</td>
+      <td>${percent(metric.sequentialChange?.percent)}</td><td>${percent(metric.yearOverYearChange?.percent)}</td>
+      <td>${escapeHtml(metric.source?.periodEnd || '—')}</td>
+    </tr>`);
+    return `<p class="research-summary-note">${escapeHtml(operating.template?.label || '通用模板')} · ${escapeHtml(operating.accountingScope?.statementScope || '')}</p>${researchTable(['指标', '最新值', '环比', '同比', '期间'], rows)}`;
+  }
+  if (section.key === 'expectations') {
+    const cards = data.thesisCards || [];
+    if (!cards.length) return '<div class="empty">尚无可跟踪论点。</div>';
+    return `<div class="research-thesis-grid">${cards.map((item) => `<div class="research-thesis-card">
+      <div><span class="badge ${item.status === 'STRENGTHENED' ? 'PUBLISHED' : item.status === 'FALSIFIED' ? 'P1' : 'P2'}">${escapeHtml(item.status)}</span><strong>${escapeHtml(item.title)}</strong></div>
+      <small>${escapeHtml(item.horizon)} · ${escapeHtml(item.affectedVariable)}</small>
+      <p>${escapeHtml(item.unknownReason || `支持证据 ${item.supportingEvidence?.length || 0} 条，反对证据 ${item.opposingEvidence?.length || 0} 条`)}</p>
+    </div>`).join('')}</div>`;
+  }
+  if (section.key === 'valuation') {
+    const scenarios = data.scenarios || {};
+    const rows = (scenarios.scenarios || []).map((item) => `<tr>
+      <td>${escapeHtml(item.label)}</td><td>${decimal(item.eps, 2)}</td><td>${decimal(item.pe, 2)}×</td>
+      <td>${money(item.conditionalValue)}</td><td class="${pnlClass(item.upsideDownside)}">${percent(item.upsideDownside)}</td>
+      <td>${escapeHtml(item.epsSource)} / ${escapeHtml(item.peSource)}</td>
+    </tr>`);
+    const table = rows.length ? researchTable(['情景', 'NTM EPS', 'PE', '条件估值', '相对分析价', '依据'], rows) : `<div class="empty">${escapeHtml(scenarios.issues?.join('；') || 'PE条件估值不可用。')}</div>`;
+    return `<p class="research-scenario-warning">${escapeHtml(scenarios.publicationIsolation || '')}</p>${table}`;
+  }
+  if (section.key === 'risks') {
+    const chains = data.transmissionChains || [];
+    const rows = chains.map((item) => `<tr><td>${escapeHtml(item.eventDate)}</td><td>${escapeHtml(item.eventTitle)}</td><td>${escapeHtml(item.direction)}</td><td>${escapeHtml(item.exposedBusiness)}</td><td>${escapeHtml(item.affectedVariable)}</td><td>${escapeHtml(item.horizon)}</td><td>${escapeHtml(item.verificationCondition)}</td></tr>`);
+    return rows.length ? researchTable(['日期', '事件', '方向', '暴露', '影响变量', '期限', '验证条件'], rows) : '<div class="empty">当前没有可构造传导链的事件。</div>';
+  }
+  if (section.key === 'forecast') {
+    const rows = (data.predictions || []).map((item) => `<tr>
+      <td>${predictionHorizonLabels[item.horizon_days] || `${item.horizon_days}日`}</td>
+      <td>${escapeHtml(item.target_date || '—')}</td><td>${escapeHtml(item.rationale?.predictedDirection || '—')}</td>
+      <td>${escapeHtml(item.publication_status || '—')}</td><td>${item.publication_status === 'PUBLISHED' ? percent(item.return_p50) : '未发布'}</td>
+      <td>${item.publication_status === 'PUBLISHED' ? money(item.price_p50) : '未通过发布闸门'}</td>
+    </tr>`);
+    return `<p class="research-summary-note">${escapeHtml(data.publicationNote || '')}</p>${rows.length ? researchTable(['期限', '目标日', '方向', '发布状态', '预期收益', 'P50'], rows) : '<div class="empty">尚无预测记录。</div>'}`;
+  }
+  return `<details><summary>查看冻结结构化数据</summary><pre class="research-json">${escapeHtml(researchValue(data))}</pre></details>`;
+}
+
 function renderResearchReport() {
   const report = state.researchReport;
   const summary = document.querySelector('#research-summary');
   const sections = document.querySelector('#research-sections');
   const evidencePanel = document.querySelector('#research-evidence-panel');
   const exportLink = document.querySelector('#export-research-report');
+  const compareButton = document.querySelector('#compare-research-report');
   if (!report) {
     summary.innerHTML = '<div class="empty">尚未生成报告。点击“生成/更新研报”创建冻结版本。</div>';
     sections.innerHTML = '';
@@ -1697,6 +1759,9 @@ function renderResearchReport() {
     exportLink.classList.add('disabled');
     exportLink.setAttribute('aria-disabled', 'true');
     exportLink.href = '#';
+    compareButton.disabled = true;
+    state.researchDiff = null;
+    renderResearchDiff();
     return;
   }
   const content = report.content || {};
@@ -1714,7 +1779,7 @@ function renderResearchReport() {
   sections.innerHTML = (content.sections || []).map((section) => `
     <article class="panel research-section" id="research-${escapeHtml(section.key)}">
       <div class="research-section-head"><span class="research-section-number">${section.order}/9</span><h2>${escapeHtml(section.title)}</h2><span class="badge ${section.status === 'AVAILABLE' ? 'PUBLISHED' : 'INSUFFICIENT'}">${escapeHtml(section.status)}</span></div>
-      <div class="research-section-body"><pre class="research-json">${escapeHtml(researchValue(section.data))}</pre></div>
+      <div class="research-section-body">${researchSectionMarkup(section)}</div>
     </article>`).join('');
   const evidence = report.evidence || [];
   document.querySelector('#research-evidence').innerHTML = evidence.map((item) => {
@@ -1727,10 +1792,44 @@ function renderResearchReport() {
   exportLink.href = `/api/research/reports/${report.id}/export`;
   exportLink.classList.remove('disabled');
   exportLink.setAttribute('aria-disabled', 'false');
+  compareButton.disabled = !document.querySelector('#research-compare-version').value;
+  renderResearchDiff();
+}
+
+function diffValue(value) {
+  if (value == null) return '—';
+  if (typeof value === 'number') return decimal(value, 4);
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function renderResearchDiff() {
+  const panel = document.querySelector('#research-diff-panel');
+  const diff = state.researchDiff;
+  panel.classList.toggle('hidden', !diff);
+  if (!diff) return;
+  document.querySelector('#research-diff-count').textContent = `${diff.materialChangeCount}项实质变化`;
+  document.querySelector('#research-diff-warnings').textContent = (diff.warnings || []).join('；') || `版本 #${diff.fromReport.id} → #${diff.toReport.id}`;
+  const material = (diff.changes || []).filter((item) => item.material);
+  document.querySelector('#research-diff-list').innerHTML = material.length
+    ? material.map((item) => `<div class="research-diff-item">
+        <span class="badge P2">${escapeHtml(item.category)}</span>
+        <code>${escapeHtml(item.path)}</code>
+        <span class="research-diff-old">${escapeHtml(diffValue(item.oldValue))}</span>
+        <span class="research-diff-arrow">→</span>
+        <strong class="research-diff-new">${escapeHtml(diffValue(item.newValue))}</strong>
+      </div>`).join('')
+    : '<div class="empty">两个版本没有检测到实质字段变化。</div>';
 }
 
 async function selectResearchReport(id) {
   state.researchReport = id ? await api(`/api/research/reports/${id}`) : null;
+  const compareVersion = document.querySelector('#research-compare-version');
+  const alternatives = state.researchReports.filter((item) => item.id !== state.researchReport?.id);
+  compareVersion.innerHTML = alternatives.length
+    ? '<option value="">选择对比版本</option>' + alternatives.map((item) => `<option value="${item.id}">${escapeHtml(item.asOf)} · #${item.id}</option>`).join('')
+    : '<option value="">没有其它版本</option>';
+  state.researchDiff = null;
   renderResearchReport();
 }
 
@@ -1743,7 +1842,7 @@ async function waitForResearchJob(id) {
   throw new Error('研报生成仍在后台运行，请稍后刷新查看');
 }
 
-async function loadResearchReports() {
+async function loadResearchReports(preferredId = null) {
   const selector = document.querySelector('#research-ticker');
   const ticker = selector.value || state.researchLoadedTicker || state.watchlist[0]?.ticker;
   if (!ticker) {
@@ -1755,13 +1854,19 @@ async function loadResearchReports() {
   state.researchLoadedTicker = ticker;
   state.researchReports = await api(`/api/research/reports?ticker=${encodeURIComponent(ticker)}`);
   const version = document.querySelector('#research-version');
-  const selectedId = Number(version.value) || state.researchReport?.id;
+  const compareVersion = document.querySelector('#research-compare-version');
+  const selectedId = Number(preferredId) || Number(version.value) || state.researchReport?.id;
   version.innerHTML = state.researchReports.length
     ? state.researchReports.map((item) => `<option value="${item.id}">${escapeHtml(item.asOf)} · #${item.id} · ${escapeHtml(item.qualityStatus)}</option>`).join('')
     : '<option value="">尚无报告</option>';
   const target = state.researchReports.find((item) => item.id === selectedId) || state.researchReports[0] || null;
   if (target) version.value = String(target.id);
   state.researchReport = target;
+  const alternatives = state.researchReports.filter((item) => item.id !== target?.id);
+  compareVersion.innerHTML = alternatives.length
+    ? '<option value="">选择对比版本</option>' + alternatives.map((item) => `<option value="${item.id}">${escapeHtml(item.asOf)} · #${item.id}</option>`).join('')
+    : '<option value="">没有其它版本</option>';
+  state.researchDiff = null;
   renderResearchReport();
 }
 
@@ -1915,6 +2020,24 @@ document.querySelector('#research-version').addEventListener('change', (event) =
   selectResearchReport(Number(event.target.value)).catch((error) => showToast(error.message, true));
 });
 
+document.querySelector('#research-compare-version').addEventListener('change', (event) => {
+  document.querySelector('#compare-research-report').disabled = !event.target.value || !state.researchReport;
+  state.researchDiff = null;
+  renderResearchDiff();
+});
+
+document.querySelector('#compare-research-report').addEventListener('click', async () => {
+  const from = Number(document.querySelector('#research-compare-version').value);
+  const to = state.researchReport?.id;
+  if (!from || !to) return showToast('请选择两个不同的研报版本', true);
+  try {
+    state.researchDiff = await api(`/api/research/reports/compare?from=${from}&to=${to}`);
+    renderResearchDiff();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
 document.querySelector('#generate-research-report').addEventListener('click', async (event) => {
   const ticker = document.querySelector('#research-ticker').value;
   if (!ticker) return showToast('请先选择股票', true);
@@ -1927,7 +2050,7 @@ document.querySelector('#generate-research-report').addEventListener('click', as
     });
     const job = await waitForResearchJob(queued.job.id);
     if (job.status === 'FAILED') throw new Error(job.error_message || '研报生成失败');
-    await loadResearchReports();
+    await loadResearchReports(job.report_id);
     showToast(job.status === 'SUCCESS' ? '个股综合研报已生成' : '数据未变化，已打开现有版本');
   } catch (error) {
     showToast(error.message, true);

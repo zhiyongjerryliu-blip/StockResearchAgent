@@ -316,6 +316,7 @@ export function collectDailyDataQuality(db, options) {
       });
     }
     checks.push(datedTableCheck(db, ticker, analysisDate, 'ADVICE', 'investment_advice_snapshots', 'as_of', 3));
+    checks.push(datedTableCheck(db, ticker, analysisDate, 'RESEARCH_REPORTS', 'research_reports', 'as_of'));
     if (options.futuEnabled) {
       const intraday = toPlain(db.prepare(`
         SELECT trade_date, confidence, signal FROM intraday_flow_snapshots

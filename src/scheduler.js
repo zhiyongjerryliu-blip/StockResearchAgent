@@ -24,6 +24,7 @@ import {
 import {
   claimDailyCycle, finishDailyCycleClaim, heartbeatDailyCycleClaim, missingDailyCycleDates
 } from './daily-cycle-automation.js';
+import { generateWatchlistResearchReports } from './research-reports.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -176,6 +177,9 @@ async function executeDailyCycle(
     await runStep('PORTFOLIO_RISK', '组合风险复核', () => savePortfolioRisk(db, reviewDate));
     const reviews = await runStep('REVIEWS', '收盘复盘', () => (
       generateDailyReviews(db, reviewDate, { ticker })
+    ));
+    await runStep('RESEARCH_REPORTS', '个股综合研报增量更新', () => (
+      generateWatchlistResearchReports(db, reviewDate, ticker)
     ));
     const quality = await runStep('DATA_QUALITY', '数据质量验收', () => (
       collectDailyDataQuality(db, {

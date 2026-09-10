@@ -15,9 +15,12 @@ import { buildInvestmentAdvice } from './advice.js';
 import { buildOperatingAnalysis } from './research-operating.js';
 import { buildPeScenarioAnalysis, persistValuationScenarios } from './research-valuation.js';
 import { buildResearchTheses, persistResearchTheses } from './research-theses.js';
+import {
+  buildResearchReportDiff, getSavedResearchReportDiff, persistResearchReportDiff
+} from './research-report-diffs.js';
 
 export const RESEARCH_REPORT_SCHEMA_VERSION = 'research-report-v1';
-export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v4-theses';
+export const RESEARCH_REPORT_TEMPLATE_VERSION = 'nine-section-v5-daily-diff';
 
 const SECTION_DEFINITIONS = Object.freeze([
   ['summary', '结论摘要'],
@@ -39,6 +42,24 @@ function stable(value) {
 
 function hash(value) {
   return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
+}
+
+const VOLATILE_INPUT_KEYS = new Set([
+  'created_at', 'updated_at', 'ingested_at', 'detected_at', 'detectedAt', 'generated_at', 'generatedAt',
+  'fetched_at', 'fetchedAt', 'last_synced_at', 'lastSyncedAt', 'last_fetched_at',
+  'lastFetchedAt', 'started_at', 'finished_at', 'heartbeat_at'
+]);
+
+function materialInput(value) {
+  if (Array.isArray(value)) return value.map(materialInput);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !VOLATILE_INPUT_KEYS.has(key))
+    .map(([key, item]) => [key, materialInput(item)]));
+}
+
+export function researchMaterialHash(snapshot) {
+  return hash(materialInput(snapshot));
 }
 
 function safely(run, fallback = null) {
@@ -79,14 +100,54 @@ function evidenceForReport(db, ticker, asOf) {
   }));
 }
 
-function buildQuality(position, sec, valuation, prediction, evidence) {
+function buildQuality(position, sec, valuation, operating, valuationScenarios, prediction, evidence) {
   const issues = [];
   if (position.priceDataStatus !== 'COMPLETE') issues.push(`行情：${position.priceDataStatus}`);
   if (sec?.unavailable) issues.push(`SEC：${sec.reason}`);
   if (valuation?.unavailable) issues.push(`估值：${valuation.reason}`);
+  if (operating?.unavailable) issues.push(`经营：${operating.reason}`);
+  else if (operating?.status && operating.status !== 'COMPLETE') issues.push(`经营：${operating.status}`);
+  if (valuationScenarios?.unavailable) issues.push(`估值情景：${valuationScenarios.reason}`);
+  else if (valuationScenarios?.status && valuationScenarios.status !== 'COMPLETE') {
+    issues.push(`估值情景：${valuationScenarios.status}`);
+  }
   if (prediction?.unavailable) issues.push(`预测：${prediction.reason}`);
   if (!evidence.length) issues.push('尚无可追溯SEC文件或研究事件');
   return { status: issues.length ? 'LIMITED' : 'COMPLETE', issues };
+}
+
+function publicationSafePredictions(overview) {
+  if (!overview || overview.unavailable) return overview;
+  const predictions = (overview.predictions || []).map((item) => {
+    if (item.publication_status === 'PUBLISHED') return item;
+    return {
+      id: item.id,
+      ticker: item.ticker,
+      as_of: item.as_of,
+      target_date: item.target_date,
+      horizon_days: item.horizon_days,
+      reliability_score: item.reliability_score,
+      publication_status: item.publication_status,
+      model_version: item.model_version,
+      feature_version: item.feature_version,
+      rationale: item.rationale ? {
+        predictedDirection: item.rationale.predictedDirection,
+        factorCoverage: item.rationale.factorCoverage,
+        dataQualityScore: item.rationale.dataQualityScore,
+        dataAvailability: item.rationale.dataAvailability,
+        exclusionReasons: item.rationale.exclusionReasons
+      } : null,
+      redactedFields: ['current_price', 'return_p10/p50/p90', 'price_p10/p50/p90', 'probability_up'],
+      redactionReason: '未通过综合可靠度发布闸门，研报不旁路展示正式目标价、收益区间或上涨概率。'
+    };
+  });
+  return {
+    ...overview,
+    predictions,
+    changes: [],
+    fixedTargetComparisons: [],
+    publicationFilter: '只保留PUBLISHED预测的数值；其它期限仅展示方向、可靠度、样本/数据状态和未发布原因。'
+  };
 }
 
 function reportSections(snapshot, quality) {
@@ -183,7 +244,7 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   const valuation = safely(() => getValuationOverview(db, ticker, { asOf }));
   const operating = safely(() => buildOperatingAnalysis(sec, valuation));
   const valuationScenarios = safely(() => buildPeScenarioAnalysis(valuation, operating));
-  const predictions = safely(() => getPredictionOverview(db, ticker, asOf));
+  const predictions = safely(() => publicationSafePredictions(getPredictionOverview(db, ticker, asOf)));
   const capitalFlow = safely(() => analyzeCapitalFlow(db, ticker, asOf));
   const capitalHistory = safely(() => listRecentCapitalFlowDays(db, ticker, asOf, 10), []);
   const intradayFlow = safely(() => analyzeIntradayFlow(db, ticker, asOf));
@@ -201,7 +262,7 @@ export function buildResearchReportSnapshot(db, tickerValue, asOf) {
   const input = { ticker, asOf, company, position, sec, valuation, operating, valuationScenarios, theses,
     predictions, capitalFlow, capitalHistory, intradayFlow, capitalBehavior, sentiment, events, drivers,
     advice, evidence };
-  const quality = buildQuality(position, sec, valuation, predictions, evidence);
+  const quality = buildQuality(position, sec, valuation, operating, valuationScenarios, predictions, evidence);
   return { ...input, quality, sections: reportSections(input, quality) };
 }
 
@@ -219,7 +280,7 @@ function hydrate(row) {
 
 export function generateResearchReport(db, input) {
   const snapshot = buildResearchReportSnapshot(db, input.ticker, input.asOf);
-  const inputHash = hash(snapshot);
+  const inputHash = researchMaterialHash(snapshot);
   const existing = toPlain(db.prepare(`
     SELECT * FROM research_reports
     WHERE ticker = ? AND as_of = ? AND input_hash = ?
@@ -227,6 +288,9 @@ export function generateResearchReport(db, input) {
   `).get(snapshot.ticker, snapshot.asOf, inputHash,
     RESEARCH_REPORT_SCHEMA_VERSION, RESEARCH_REPORT_TEMPLATE_VERSION));
   if (existing) return { report: hydrate(existing), created: false };
+  const previous = hydrate(toPlain(db.prepare(`
+    SELECT * FROM research_reports WHERE ticker = ? ORDER BY as_of DESC, id DESC LIMIT 1
+  `).get(snapshot.ticker)));
   const generatedAt = nowIso();
   const limitations = snapshot.sections.find((item) => item.key === 'methodology')?.data?.limitations || [];
   db.exec('BEGIN');
@@ -247,12 +311,41 @@ export function generateResearchReport(db, input) {
     const report = getResearchReport(db, Number(result.lastInsertRowid));
     persistValuationScenarios(db, report, snapshot.valuationScenarios, generatedAt);
     persistResearchTheses(db, report, snapshot.theses, generatedAt);
+    if (previous) persistResearchReportDiff(db, previous, report);
     db.exec('COMMIT');
     return { report, created: true };
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+export function compareResearchReports(db, fromIdValue, toIdValue) {
+  const from = getResearchReport(db, fromIdValue);
+  const to = getResearchReport(db, toIdValue);
+  if (!from || !to) throw new Error('研报对比版本不存在');
+  return getSavedResearchReportDiff(db, from.id, to.id) || buildResearchReportDiff(from, to);
+}
+
+export function generateWatchlistResearchReports(db, asOf, tickerValue = null) {
+  const ticker = tickerValue ? normalizeTicker(tickerValue) : null;
+  const tickers = toPlainRows(ticker
+    ? db.prepare('SELECT ticker FROM watchlist_items WHERE enabled = 1 AND ticker = ?').all(ticker)
+    : db.prepare('SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker').all()
+  ).map((item) => item.ticker);
+  return tickers.map((item) => {
+    try {
+      const generated = generateResearchReport(db, {
+        ticker: item, asOf, generationMode: 'DAILY_CLOSE'
+      });
+      return {
+        ticker: item, ok: true, created: generated.created,
+        status: generated.created ? 'CREATED' : 'NO_CHANGE', reportId: generated.report.id
+      };
+    } catch (error) {
+      return { ticker: item, ok: false, created: false, status: 'FAILED', error: error.message };
+    }
+  });
 }
 
 export function createResearchReportJob(db, input) {
@@ -285,7 +378,8 @@ export function runResearchReportJob(db, idValue) {
   if (!['QUEUED', 'RUNNING'].includes(job.status)) return job;
   const startedAt = nowIso();
   db.prepare(`
-    UPDATE research_report_jobs SET status = 'RUNNING', started_at = ?, error_message = NULL
+    UPDATE research_report_jobs SET status = 'RUNNING', stage = 'BUILDING_SNAPSHOT', progress = 20,
+      attempt_count = attempt_count + 1, started_at = ?, error_message = NULL
     WHERE id = ?
   `).run(startedAt, job.id);
   try {
@@ -293,14 +387,28 @@ export function runResearchReportJob(db, idValue) {
       ticker: job.ticker, asOf: job.as_of, generationMode: 'MANUAL'
     });
     db.prepare(`
-      UPDATE research_report_jobs SET status = ?, report_id = ?, finished_at = ? WHERE id = ?
+      UPDATE research_report_jobs SET status = ?, stage = 'COMPLETED', progress = 100,
+        report_id = ?, finished_at = ? WHERE id = ?
     `).run(generated.created ? 'SUCCESS' : 'NO_CHANGE', generated.report.id, nowIso(), job.id);
   } catch (error) {
     db.prepare(`
-      UPDATE research_report_jobs SET status = 'FAILED', error_message = ?, finished_at = ? WHERE id = ?
+      UPDATE research_report_jobs SET status = 'FAILED', stage = 'FAILED', progress = 100,
+        error_message = ?, finished_at = ? WHERE id = ?
     `).run(error.message, nowIso(), job.id);
   }
   return getResearchReportJob(db, job.id);
+}
+
+export function recoverInterruptedResearchReportJobs(db) {
+  const timestamp = nowIso();
+  const result = db.prepare(`
+    UPDATE research_report_jobs
+    SET status = 'FAILED', stage = 'INTERRUPTED', progress = 100,
+        error_message = '服务重启时任务仍未完成，可重新生成；幂等键会防止重复报告。',
+        finished_at = ?
+    WHERE status IN ('QUEUED','RUNNING')
+  `).run(timestamp);
+  return { recovered: Number(result.changes), recoveredAt: timestamp };
 }
 
 export function listResearchReports(db, tickerValue, limit = 30) {

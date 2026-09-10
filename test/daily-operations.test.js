@@ -117,11 +117,12 @@ test('定向日终重跑会执行完整流水线并保存可审计步骤和质�
 
   assert.equal(result.status, 'DEGRADED');
   assert.equal(result.ticker, 'TEST');
-  assert.equal(result.steps.length, 14);
+  assert.equal(result.steps.length, 15);
   assert.ok(result.steps.some((step) => step.key === 'DATA_QUALITY'));
+  assert.ok(result.steps.some((step) => step.key === 'RESEARCH_REPORTS'));
   const operation = getDailyOperation(db, result.jobRunId);
   assert.equal(operation.details.trigger, 'RERUN');
-  assert.equal(operation.steps.length, 14);
+  assert.equal(operation.steps.length, 15);
   assert.ok(operation.quality.some((check) => (
     check.ticker === 'TEST' && check.source_key === 'PREDICTIONS' && check.status === 'CURRENT'
   )));

@@ -72,12 +72,13 @@ import {
 } from './runtime-monitor.js';
 import { DailyCycleWorkerRunner } from './daily-cycle-worker-runner.js';
 import {
-  createResearchReportJob, getResearchReport, getResearchReportJob, listResearchReports,
-  renderResearchReportHtml, runResearchReportJob
+  compareResearchReports, createResearchReportJob, getResearchReport, getResearchReportJob, listResearchReports,
+  recoverInterruptedResearchReportJobs, renderResearchReportHtml, runResearchReportJob
 } from './research-reports.js';
 
 const applicationStartedAt = nowIso();
 const db = openDatabase();
+recoverInterruptedResearchReportJobs(db);
 rebuildMissingIntradayMinutes(db);
 pruneIntradayTicks(db, config.futu.tickRetentionDays);
 backfillSecFilingEvents(db);
@@ -770,11 +771,16 @@ async function apiRoute(request, response, url) {
     if (!ticker) throw new Error('请选择研报股票');
     return sendJson(response, 200, listResearchReports(db, ticker, url.searchParams.get('limit')));
   }
+  if (method === 'GET' && url.pathname === '/api/research/reports/compare') {
+    return sendJson(response, 200, compareResearchReports(
+      db, url.searchParams.get('from'), url.searchParams.get('to')
+    ));
+  }
   if (method === 'POST' && url.pathname === '/api/research/reports/generate') {
     const body = await readJson(request);
     const asOf = body.asOf || latestStableMarketDate();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || asOf !== latestStableMarketDate()) {
-      throw new Error('第一阶段仅支持生成最近稳定收盘日的研报');
+      throw new Error('当前仅支持生成最近稳定收盘日的研报');
     }
     const job = createResearchReportJob(db, { ticker: body.ticker, asOf });
     if (!job.merged) setImmediate(() => runResearchReportJob(db, job.id));

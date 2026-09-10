@@ -26,6 +26,8 @@ function dedupe(items) {
 function eventDirection(event) {
   const explicit = event.evidence?.find?.((item) => item.direction)?.direction;
   if (['POSITIVE', 'NEGATIVE', 'MIXED'].includes(explicit)) return explicit;
+  const riskType = `${event.source_type || ''} ${event.event_type || ''}`.toUpperCase();
+  if (/NEWS_RISK|CUSTOMER_LOSS|GUIDANCE_CUT|CAPACITY_CUT|BUYBACK_STOP/.test(riskType)) return 'NEGATIVE';
   if (['P0', 'P1'].includes(event.severity)) return 'NEGATIVE';
   return 'MIXED';
 }

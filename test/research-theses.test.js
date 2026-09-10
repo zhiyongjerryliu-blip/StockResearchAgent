@@ -40,7 +40,7 @@ test('正反事件证据同屏且重复事件只计一次，并生成可验证�
   };
   const negative = {
     id: 2, event_key: 'E2', event_date: '2026-09-09', event_type: 'NEWS_CUSTOMER_LOSS',
-    title: 'Customer risk', severity: 'P1', source_type: 'NEWS_RISK', source_url: 'https://example.com/2',
+    title: 'Customer risk', severity: 'P2', source_type: 'NEWS_RISK', source_url: 'https://example.com/2',
     status: 'UNVERIFIED', evidence: []
   };
   const result = buildResearchTheses(input({ events: { events: [positive, positive, negative] } }));

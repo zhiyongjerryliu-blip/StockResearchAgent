@@ -55,6 +55,20 @@ test('经营分析分开季度环比与同比并计算利润率、自由现金�
   assert.equal(result.segmentCoverage.status, 'UNAVAILABLE');
 });
 
+test('季度标签重复时同比仍按约一年前期间匹配而不误用相邻季度', () => {
+  const result = buildOperatingAnalysis({
+    company: {}, annual: [], quarterly: [
+      period('2026-06-30', 'Q2', { revenue: 140 }),
+      period('2026-03-31', 'Q2', { revenue: 120 }),
+      period('2025-06-30', 'Q2', { revenue: 100 })
+    ]
+  }, { target: {}, peerMedian: {} });
+  assert.equal(result.latest.comparison.sequentialPeriodEnd, '2026-03-31');
+  assert.equal(result.latest.comparison.yearAgoPeriodEnd, '2025-06-30');
+  assert.equal(result.latest.metrics.revenue.sequentialChange.percent, 0.166667);
+  assert.equal(result.latest.metrics.revenue.yearOverYearChange.percent, 0.4);
+});
+
 test('缺少财报前一致预期时明确未知，不使用最新预期伪造超预期', () => {
   const result = buildOperatingAnalysis({ company: {}, annual: [], quarterly: [] }, { target: {} });
   assert.equal(result.expectations.actualVsConsensus.status, 'UNAVAILABLE');

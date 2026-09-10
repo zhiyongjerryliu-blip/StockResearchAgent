@@ -817,6 +817,9 @@ CREATE TABLE IF NOT EXISTS research_report_jobs (
   status TEXT NOT NULL CHECK(status IN ('QUEUED','RUNNING','SUCCESS','NO_CHANGE','FAILED')),
   report_id INTEGER REFERENCES research_reports(id) ON DELETE SET NULL,
   error_message TEXT,
+  stage TEXT NOT NULL DEFAULT 'QUEUED',
+  progress INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT
@@ -878,6 +881,22 @@ CREATE TABLE IF NOT EXISTS research_thesis_observations (
 
 CREATE INDEX IF NOT EXISTS idx_research_thesis_observations
 ON research_thesis_observations(thesis_id, as_of DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS research_report_diffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker TEXT NOT NULL REFERENCES securities(ticker) ON DELETE CASCADE,
+  from_report_id INTEGER NOT NULL REFERENCES research_reports(id) ON DELETE CASCADE,
+  to_report_id INTEGER NOT NULL REFERENCES research_reports(id) ON DELETE CASCADE,
+  change_count INTEGER NOT NULL DEFAULT 0,
+  material_change_count INTEGER NOT NULL DEFAULT 0,
+  comparison_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(from_report_id, to_report_id),
+  CHECK(from_report_id <> to_report_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_report_diffs_ticker
+ON research_report_diffs(ticker, to_report_id DESC);
 
 CREATE TABLE IF NOT EXISTS job_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1070,6 +1089,17 @@ export function openDatabase(databasePath = config.databasePath) {
     if (!capitalFlowColumns.has(column)) {
       db.exec(`ALTER TABLE capital_flow_snapshots ADD COLUMN ${column} ${definition}`);
     }
+  }
+  const researchJobColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(research_report_jobs)').all()).map((column) => column.name)
+  );
+  const researchJobMigrations = [
+    ['stage', "TEXT NOT NULL DEFAULT 'QUEUED'"],
+    ['progress', 'INTEGER NOT NULL DEFAULT 0'],
+    ['attempt_count', 'INTEGER NOT NULL DEFAULT 0']
+  ];
+  for (const [column, definition] of researchJobMigrations) {
+    if (!researchJobColumns.has(column)) db.exec(`ALTER TABLE research_report_jobs ADD COLUMN ${column} ${definition}`);
   }
   return db;
 }

@@ -38,11 +38,19 @@ function comparablePeriod(periods, index, mode) {
   const current = periods[index];
   if (!current) return null;
   if (mode === 'previous') return periods[index + 1] || null;
-  return periods.slice(index + 1).find((candidate) => (
-    current.fiscalPeriod && candidate.fiscalPeriod
-      ? candidate.fiscalPeriod === current.fiscalPeriod
-      : true
-  )) || null;
+  const currentTime = Date.parse(`${current.periodEnd}T00:00:00Z`);
+  if (!Number.isFinite(currentTime)) return null;
+  const candidates = periods.slice(index + 1).map((candidate) => ({
+    candidate,
+    daysApart: Math.round((currentTime - Date.parse(`${candidate.periodEnd}T00:00:00Z`)) / 86400000)
+  })).filter(({ daysApart }) => Number.isFinite(daysApart) && daysApart >= 250 && daysApart <= 470);
+  candidates.sort((left, right) => {
+    const leftSamePeriod = current.fiscalPeriod && left.candidate.fiscalPeriod === current.fiscalPeriod ? 0 : 1;
+    const rightSamePeriod = current.fiscalPeriod && right.candidate.fiscalPeriod === current.fiscalPeriod ? 0 : 1;
+    return leftSamePeriod - rightSamePeriod
+      || Math.abs(left.daysApart - 365) - Math.abs(right.daysApart - 365);
+  });
+  return candidates[0]?.candidate || null;
 }
 
 function ratio(numerator, denominator) {

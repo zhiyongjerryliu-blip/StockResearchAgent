@@ -573,6 +573,16 @@ code { color: var(--accent); background: var(--code-bg); padding: 2px 5px; borde
 .research-evidence { display: grid; gap: 8px; }
 .research-evidence a,.research-evidence span { display: grid; grid-template-columns: 52px 110px 1fr; gap: 8px; color: var(--text); text-decoration: none; padding: 9px; border: 1px solid var(--line); border-radius: 7px; }
 .research-evidence small { color: var(--muted); }
+.research-diff-list { display: grid; gap: 8px; margin-top: 12px; }
+.research-diff-item { display: grid; grid-template-columns: 110px minmax(160px, 1fr) minmax(100px, auto) 24px minmax(100px, auto); gap: 9px; align-items: center; padding: 9px; border: 1px solid var(--line); border-radius: 7px; }
+.research-diff-item code { overflow-wrap: anywhere; color: var(--muted-strong); }
+.research-diff-old,.research-diff-new { overflow-wrap: anywhere; }
+.research-diff-arrow { color: var(--muted); text-align: center; }
+.research-thesis-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.research-thesis-card { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.research-thesis-card strong { display: block; margin: 8px 0; }
+.research-thesis-card small,.research-thesis-card p { color: var(--muted); }
+.research-scenario-warning { padding: 10px 12px; border-left: 3px solid var(--warning); background: var(--surface); color: var(--muted-strong); }
 
 @media (max-width: 1050px) {
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
@@ -617,5 +627,7 @@ code { color: var(--accent); background: var(--code-bg); padding: 2px 5px; borde
   .fixed-target-grid { grid-template-columns: 1fr; }
   .research-toolbar { grid-template-columns: 1fr; }
   .research-actions { justify-content: flex-start; }
-  .research-summary-grid,.research-facts { grid-template-columns: 1fr; }
+  .research-summary-grid,.research-facts,.research-thesis-grid { grid-template-columns: 1fr; }
+  .research-diff-item { grid-template-columns: 1fr; }
+  .research-diff-arrow { text-align: left; }
 }

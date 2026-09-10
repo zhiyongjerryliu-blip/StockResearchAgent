@@ -276,17 +276,24 @@
           <div>
             <p class="eyebrow">COMPREHENSIVE EQUITY RESEARCH</p>
             <h2>个股综合研报</h2>
-            <p class="muted">聚合当前已有财务、估值、事件、资金、预测和建议，生成冻结、可追溯的九章基础报告。</p>
+            <p class="muted">聚合财务、经营、估值情景、论点、事件、资金和预测，生成冻结、可追溯并可逐版对比的九章报告。</p>
           </div>
           <div class="research-actions">
             <label>股票<select id="research-ticker" aria-label="研报股票"><option value="">请选择股票</option></select></label>
             <label>报告版本<select id="research-version" aria-label="研报版本"><option value="">尚无报告</option></select></label>
+            <label>对比版本<select id="research-compare-version" aria-label="研报对比版本"><option value="">选择旧版本</option></select></label>
+            <button id="compare-research-report" class="button secondary" disabled>对比变化</button>
             <button id="generate-research-report" class="button primary">生成/更新研报</button>
             <a id="export-research-report" class="button secondary disabled" href="#" aria-disabled="true">导出HTML</a>
           </div>
         </article>
         <article id="research-summary" class="panel research-summary">
           <div class="empty">请选择股票；阅读已有报告不会调用外部数据源或LLM。</div>
+        </article>
+        <article id="research-diff-panel" class="panel hidden">
+          <div class="panel-head"><div><p class="eyebrow">VERSION DIFF</p><h2>相对上一版的变化</h2></div><span id="research-diff-count" class="badge P2"></span></div>
+          <div id="research-diff-warnings" class="research-summary-note"></div>
+          <div id="research-diff-list" class="research-diff-list"></div>
         </article>
         <div id="research-sections" class="research-sections"></div>
         <article id="research-evidence-panel" class="panel hidden">
