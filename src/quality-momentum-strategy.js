@@ -260,7 +260,10 @@ export function getQualityMomentumStrategy(db) {
       totalReturn: position.totalReturn
     };
   });
-  const investedCapital = selected.reduce((sum, item) => sum + Number(item.targetValue || 0), 0);
+  // A rebalance uses the portfolio's then-current NAV, so the latest target
+  // values are not a new cost basis. Keep cumulative performance anchored to
+  // the strategy's original capital across every monthly rotation.
+  const investedCapital = Number(row.capital);
   const marketValue = positions.reduce((sum, item) => sum + Number(item.marketValue || 0), 0);
   return {
     strategyKey: row.strategy_key,

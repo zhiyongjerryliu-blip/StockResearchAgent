@@ -73,3 +73,23 @@ test('每次选股保留逐股评分、入选原因和可执行调仓数据', ()
   assert.equal(db.prepare('SELECT COUNT(*) count FROM quality_momentum_rebalances').get().count,5);
   db.close();
 });
+
+test('月度调仓后累计收益仍以初始资金为基准', () => {
+  const db=openDatabase(':memory:');
+  upsertWatchlistItem(db,{ticker:'A'});
+  saveManualPrice(db,{ticker:'A',tradeDate:'2026-09-01',close:100});
+  addTransaction(db,{ticker:'A',side:'BUY',tradeDate:'2026-09-01',quantity:12,price:100,fee:0});
+  saveQualityMomentumStrategy(db,{
+    name:'测试策略',capital:1000,selectionCount:1,maxPerGroup:1,targetWeight:1,
+    rebalanceRule:'月末评分',scoring:{description:'各50%'},universe:['A'],groups:{一:['A']},
+    signalDate:'2026-08-31',tradeDate:'2026-09-01',
+    rankings:[{ticker:'A',group:'一',combined:1,selected:true}],
+    selected:[{ticker:'A',group:'一',targetWeight:1,targetValue:1200,entryPrice:100,quantity:12}]
+  });
+  const strategy=getQualityMomentumStrategy(db);
+  assert.equal(strategy.totals.investedCapital,1000);
+  assert.equal(strategy.totals.marketValue,1200);
+  assert.equal(strategy.totals.totalPnl,200);
+  assert.ok(Math.abs(strategy.totals.totalReturn - .2) < 1e-12);
+  db.close();
+});
