@@ -558,7 +558,7 @@
         <div class="metric-grid">
           <article class="metric-card"><span>策略资金</span><strong id="qm-capital">—</strong><small>初始模拟资金</small></article>
           <article class="metric-card"><span>当前市值</span><strong id="qm-market-value">—</strong><small id="qm-price-date">尚无策略持仓</small></article>
-          <article class="metric-card"><span>策略盈亏</span><strong id="qm-pnl">—</strong><small id="qm-pnl-basis">相对初始建仓日</small></article>
+          <button type="button" class="metric-card metric-card-button" id="qm-pnl-card"><span>策略盈亏</span><strong id="qm-pnl">—</strong><small id="qm-pnl-basis">点击查看月度明细 →</small></button>
           <article class="metric-card"><span>策略收益率</span><strong id="qm-return">—</strong><small>当前持仓合计</small></article>
         </div>
         <article class="panel">
@@ -773,6 +773,23 @@
         </table>
       </div>
       <div id="monthly-detail-empty" class="empty hidden">这个月没有持仓盈亏数据。</div>
+    </section>
+  </div>
+  <div class="modal hidden" id="qm-performance-modal" role="dialog" aria-modal="true" aria-labelledby="qm-performance-title">
+    <button class="modal-backdrop" type="button" data-close-qm-performance aria-label="关闭"></button>
+    <section class="modal-panel qm-performance-panel">
+      <div class="modal-head">
+        <div><p class="eyebrow">STRATEGY PROFIT &amp; LOSS</p><h2 id="qm-performance-title">策略月度盈亏明细</h2></div>
+        <button class="modal-close" type="button" data-close-qm-performance aria-label="关闭">×</button>
+      </div>
+      <p class="monthly-note muted" id="qm-performance-note">正在计算月度盈亏…</p>
+      <div class="table-wrap monthly-table-wrap">
+        <table class="qm-performance-table">
+          <thead id="qm-performance-head"></thead>
+          <tbody id="qm-performance-body"></tbody>
+        </table>
+      </div>
+      <div id="qm-performance-empty" class="empty hidden">尚无策略持仓盈亏数据。</div>
     </section>
   </div>
   <script type="module" src="/app.js"></script>

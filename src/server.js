@@ -76,7 +76,9 @@ import {
   recoverInterruptedResearchReportJobs, runResearchReportJob
 } from './research-reports.js';
 import { renderResearchReportPdf } from './research-report-pdf.js';
-import { getQualityMomentumStrategy } from './quality-momentum-strategy.js';
+import {
+  getQualityMomentumMonthlyPerformance, getQualityMomentumStrategy
+} from './quality-momentum-strategy.js';
 import { heldTickers, requireHeldTicker } from './analysis-scope.js';
 
 const applicationStartedAt = nowIso();
@@ -593,6 +595,9 @@ async function apiRoute(request, response, url) {
   }
   if (method === 'GET' && url.pathname === '/api/strategies/quality-momentum') {
     return sendJson(response, 200, getQualityMomentumStrategy(db));
+  }
+  if (method === 'GET' && url.pathname === '/api/strategies/quality-momentum/performance') {
+    return sendJson(response, 200, getQualityMomentumMonthlyPerformance(db));
   }
   if (method === 'GET' && url.pathname === '/api/performance/monthly') {
     const month = url.searchParams.get('month') || latestEtDate().slice(0, 7);

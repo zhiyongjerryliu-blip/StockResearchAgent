@@ -1,5 +1,5 @@
 import { nowIso, toPlain, toPlainRows } from './db.js';
-import { calculatePosition } from './portfolio.js';
+import { calculateMonthlyPerformance, calculatePosition } from './portfolio.js';
 
 const STRATEGY_KEY = 'industry18-quality-momentum';
 const QUANTITY_EPSILON = 1e-6;
@@ -287,5 +287,69 @@ export function getQualityMomentumStrategy(db) {
       totalReturn: investedCapital ? marketValue / investedCapital - 1 : null
     },
     updatedAt: row.updated_at
+  };
+}
+
+function monthsBetween(startMonth, endMonth) {
+  const [startYear, startNumber] = startMonth.split('-').map(Number);
+  const [endYear, endNumber] = endMonth.split('-').map(Number);
+  const months = [];
+  let year = startYear;
+  let month = startNumber;
+  while (year < endYear || (year === endYear && month <= endNumber)) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month === 13) { year += 1; month = 1; }
+  }
+  return months;
+}
+
+export function getQualityMomentumMonthlyPerformance(db) {
+  const range = toPlain(db.prepare(`
+    SELECT MIN(substr(trade_time, 1, 7)) start_month,
+           (SELECT MAX(p.trade_date) FROM prices_daily p
+            WHERE p.ticker IN (
+              SELECT DISTINCT ticker FROM transactions WHERE note LIKE '质量—动量%'
+            )) latest_price_date
+    FROM transactions
+    WHERE note LIKE '质量—动量%'
+  `).get());
+  if (!range?.start_month || !range?.latest_price_date) return { months: [], tickers: [] };
+
+  const months = monthsBetween(range.start_month, range.latest_price_date.slice(0, 7)).map((month) => {
+    const performance = calculateMonthlyPerformance(db, month, { transactionNotePrefix: '质量—动量' });
+    const positions = new Map();
+    for (const day of performance.days) {
+      for (const position of day.positions) {
+        const aggregate = positions.get(position.ticker) || {
+          ticker: position.ticker, knownPnl: 0, incompleteDays: 0,
+          firstDate: day.date, lastDate: day.date
+        };
+        aggregate.knownPnl += Number(position.pnl || 0);
+        if (position.status !== 'COMPLETE') aggregate.incompleteDays += 1;
+        aggregate.lastDate = day.date;
+        positions.set(position.ticker, aggregate);
+      }
+    }
+    return {
+      month,
+      firstDate: performance.firstDisplayedDate,
+      lastDate: performance.lastDisplayedDate,
+      totalPnl: performance.totalPnl,
+      knownPnl: performance.knownPnl,
+      incompleteDays: performance.incompleteDays,
+      positions: [...positions.values()].sort((left, right) => left.ticker.localeCompare(right.ticker)).map((item) => ({
+        ...item,
+        knownPnl: round(item.knownPnl, 2),
+        totalPnl: item.incompleteDays ? null : round(item.knownPnl, 2)
+      }))
+    };
+  });
+  return {
+    startMonth: range.start_month,
+    endMonth: range.latest_price_date.slice(0, 7),
+    priceDate: range.latest_price_date,
+    tickers: [...new Set(months.flatMap((month) => month.positions.map((item) => item.ticker)))].sort(),
+    months
   };
 }

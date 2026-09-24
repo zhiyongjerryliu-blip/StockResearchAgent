@@ -265,15 +265,19 @@ function transactionCashFlows(transactions) {
   return { boughtQuantity, soldQuantity, buyCash, sellCash };
 }
 
-export function calculateMonthlyPerformance(db, month) {
+export function calculateMonthlyPerformance(db, month, options = {}) {
   const { start, end } = monthBounds(month);
-  const tickers = toPlainRows(db.prepare(`
-    SELECT DISTINCT ticker FROM transactions ORDER BY ticker
-  `).all()).map((row) => row.ticker);
+  const notePrefix = String(options.transactionNotePrefix || '');
+  const tickers = toPlainRows(notePrefix
+    ? db.prepare(`SELECT DISTINCT ticker FROM transactions WHERE note LIKE ? ORDER BY ticker`).all(`${notePrefix}%`)
+    : db.prepare(`SELECT DISTINCT ticker FROM transactions ORDER BY ticker`).all()
+  ).map((row) => row.ticker);
   const days = new Map();
 
   for (const ticker of tickers) {
-    const transactions = transactionsForTicker(db, ticker).map((transaction) => ({
+    const transactions = transactionsForTicker(db, ticker)
+      .filter((transaction) => !notePrefix || String(transaction.note || '').startsWith(notePrefix))
+      .map((transaction) => ({
       ...transaction,
       tradeDate: transactionTradeDate(transaction)
     }));

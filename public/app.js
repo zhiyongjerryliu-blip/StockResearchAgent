@@ -11,7 +11,7 @@ const state = {
   researchReports: [], researchReport: null, researchLoadedTicker: null, researchDiff: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
   transactionImportToken: null, systemStatus: null, dailyOperations: null, qualityMomentum: null,
-  qualityMomentumSignalDate: null
+  qualityMomentumSignalDate: null, qualityMomentumPerformance: null
 };
 
 const THEME_STORAGE_KEY = 'stockresearchagent.theme';
@@ -487,7 +487,7 @@ function renderQualityMomentum() {
   value('#qm-market-value', money(strategy.totals.marketValue));
   value('#qm-pnl', money(strategy.totals.totalPnl), pnlClass(strategy.totals.totalPnl));
   value('#qm-return', percent(strategy.totals.totalReturn), pnlClass(strategy.totals.totalReturn));
-  value('#qm-pnl-basis', `相对 ${strategy.signal?.tradeDate || '初始'} 收盘建仓`);
+  value('#qm-pnl-basis', `相对初始资金 · 点击查看月度明细 →`);
   value('#qm-price-date', `行情截至 ${strategy.positions[0]?.priceDate || '—'}`);
   const status = document.querySelector('#qm-status');
   status.textContent = strategy.enabled ? '运行中' : '已暂停';
@@ -657,6 +657,46 @@ function openMonthlyDetail(ticker = null) {
 function closeMonthlyDetail() {
   document.querySelector('#monthly-modal').classList.add('hidden');
   state.monthlyTickerFilter = null;
+}
+
+function formatMonth(month) {
+  const [year, number] = String(month).split('-');
+  return `${year}年${Number(number)}月`;
+}
+
+function renderQualityMomentumPerformance() {
+  const performance = state.qualityMomentumPerformance;
+  if (!performance) return;
+  const tickers = performance.tickers || [];
+  const months = performance.months || [];
+  document.querySelector('#qm-performance-head').innerHTML = `<tr><th>月份</th><th class="month-total">组合总盈亏</th>${tickers.map((ticker) => `<th>${escapeHtml(ticker)}</th>`).join('')}</tr>`;
+  document.querySelector('#qm-performance-body').innerHTML = months.map((month) => {
+    const positionMap = new Map(month.positions.map((position) => [position.ticker, position]));
+    return `<tr><td><strong>${formatMonth(month.month)}</strong><br><small class="muted">${escapeHtml(month.firstDate || '—')} 至 ${escapeHtml(month.lastDate || '—')}</small></td>
+      <td class="month-total ${pnlClass(month.totalPnl)}">${money(month.totalPnl)}</td>
+      ${tickers.map((ticker) => {
+        const position = positionMap.get(ticker);
+        return `<td class="${pnlClass(position?.totalPnl)}">${position ? money(position.totalPnl) : '—'}</td>`;
+      }).join('')}</tr>`;
+  }).join('');
+  const incomplete = months.reduce((sum, month) => sum + Number(month.incompleteDays || 0), 0);
+  document.querySelector('#qm-performance-note').textContent = incomplete
+    ? `行情截至 ${performance.priceDate}；有 ${incomplete} 个持仓交易日数据不完整，对应月份暂不发布合计。`
+    : `行情截至 ${performance.priceDate}；月盈亏包含持仓市值变化及当月买卖现金流。`;
+  document.querySelector('#qm-performance-empty').classList.toggle('hidden', months.length > 0);
+}
+
+async function openQualityMomentumPerformance() {
+  const modal = document.querySelector('#qm-performance-modal');
+  modal.classList.remove('hidden');
+  document.querySelector('#qm-performance-note').textContent = '正在计算月度盈亏…';
+  state.qualityMomentumPerformance = await api('/api/strategies/quality-momentum/performance');
+  renderQualityMomentumPerformance();
+  modal.querySelector('.modal-close').focus();
+}
+
+function closeQualityMomentumPerformance() {
+  document.querySelector('#qm-performance-modal').classList.add('hidden');
 }
 
 function renderTransactions() {
@@ -2097,8 +2137,17 @@ document.querySelector('#nav').addEventListener('click', (event) => {
   if (button) showView(button.dataset.view);
 });
 document.querySelector('#metric-monthly-card').addEventListener('click', () => openMonthlyDetail());
+document.querySelector('#qm-pnl-card').addEventListener('click', () => {
+  openQualityMomentumPerformance().catch((error) => {
+    closeQualityMomentumPerformance();
+    showToast(error.message, true);
+  });
+});
 document.querySelector('#monthly-modal').addEventListener('click', (event) => {
   if (event.target.closest('[data-close-monthly]')) closeMonthlyDetail();
+});
+document.querySelector('#qm-performance-modal').addEventListener('click', (event) => {
+  if (event.target.closest('[data-close-qm-performance]')) closeQualityMomentumPerformance();
 });
 document.querySelector('#monthly-picker').addEventListener('change', (event) => {
   if (!event.target.value) return;
@@ -2107,6 +2156,9 @@ document.querySelector('#monthly-picker').addEventListener('change', (event) => 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !document.querySelector('#monthly-modal').classList.contains('hidden')) {
     closeMonthlyDetail();
+  }
+  if (event.key === 'Escape' && !document.querySelector('#qm-performance-modal').classList.contains('hidden')) {
+    closeQualityMomentumPerformance();
   }
 });
 document.body.addEventListener('click', async (event) => {

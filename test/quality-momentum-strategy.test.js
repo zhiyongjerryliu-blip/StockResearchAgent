@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../src/db.js';
 import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
-import { getQualityMomentumStrategy, saveQualityMomentumStrategy } from '../src/quality-momentum-strategy.js';
+import {
+  getQualityMomentumMonthlyPerformance, getQualityMomentumStrategy, saveQualityMomentumStrategy
+} from '../src/quality-momentum-strategy.js';
 
 test('质量动量策略保存规则、信号并汇总模拟持仓', () => {
   const db=openDatabase(':memory:');
@@ -91,5 +93,22 @@ test('月度调仓后累计收益仍以初始资金为基准', () => {
   assert.equal(strategy.totals.marketValue,1200);
   assert.equal(strategy.totals.totalPnl,200);
   assert.ok(Math.abs(strategy.totals.totalReturn - .2) < 1e-12);
+  db.close();
+});
+
+test('策略盈亏明细按月汇总组合及每只持仓股票', () => {
+  const db=openDatabase(':memory:');
+  upsertWatchlistItem(db,{ticker:'A'});
+  saveManualPrice(db,{ticker:'A',tradeDate:'2026-08-31',close:100});
+  saveManualPrice(db,{ticker:'A',tradeDate:'2026-09-01',close:110});
+  addTransaction(db,{ticker:'A',side:'BUY',tradeDate:'2026-08-31',quantity:10,price:100,fee:0,note:'质量—动量策略初始建仓'});
+  addTransaction(db,{ticker:'A',side:'SELL',tradeDate:'2026-09-01',quantity:10,price:110,fee:0,note:'质量—动量月度调仓'});
+  const performance=getQualityMomentumMonthlyPerformance(db);
+  assert.deepEqual(performance.months.map((month) => [month.month,month.totalPnl]),[
+    ['2026-08',0],['2026-09',100]
+  ]);
+  assert.deepEqual(performance.months.map((month) => month.positions.map((item) => [item.ticker,item.totalPnl])),[
+    [['A',0]],[['A',100]]
+  ]);
   db.close();
 });
