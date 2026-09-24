@@ -487,6 +487,7 @@ function renderQualityMomentum() {
   value('#qm-market-value', money(strategy.totals.marketValue));
   value('#qm-pnl', money(strategy.totals.totalPnl), pnlClass(strategy.totals.totalPnl));
   value('#qm-return', percent(strategy.totals.totalReturn), pnlClass(strategy.totals.totalReturn));
+  value('#qm-pnl-basis', `相对 ${strategy.signal?.tradeDate || '初始'} 收盘建仓`);
   value('#qm-price-date', `行情截至 ${strategy.positions[0]?.priceDate || '—'}`);
   const status = document.querySelector('#qm-status');
   status.textContent = strategy.enabled ? '运行中' : '已暂停';
