@@ -1,0 +1,18 @@
+{
+  "version": "quality-momentum-pilot-v1",
+  "universe": ["CIEN", "COHR", "LITE", "MU", "SNDK", "WDC"],
+  "end": "2026-09-18",
+  "primary": "quality_momentum",
+  "quality": "三项横截面百分位排名等权平均：TTM净利润/TTM营收、TTM经营现金流/TTM营收、负债/资产的相反数；这是简化质量代理，不是原版QMJ复刻",
+  "momentum": "复权收盘价t-21除以t-252再减1；要求最近253个SPY交易日行情完整",
+  "eligibility": "所有选股与等权再平衡对照采用相同可选池：完整动量和三项质量数据，财务季度距当日不超过180天；至少3只合格股票才建仓，缺失不填零",
+  "ranking": "质量与动量百分位各占50%；不根据结果调权；按得分降序、股票代码升序确定同分次序",
+  "portfolio": "选最高3只等权；多头、无杠杆、无做空；目标单股33.33%，月内仓位随价格漂移；选择3只仅针对六股试验池",
+  "timing": "开始日收盘及此后每月最后一个交易日收盘排名，下一交易日开盘换仓；不提前使用下一日价格排名；最后一个不完整月份不制造月末信号",
+  "finance": "复用StockResearchAgent历史财务；使用披露日与接受日中较晚者之后的首个交易日收盘；修订值只从修订披露后生效；TTM必须是同口径连续四季度",
+  "controls": ["期初可投资股票等权买入持有", "相同合格池月度等权", "仅质量排名", "仅动量排名", "质量＋动量", "质量＋动量且SPY低于SMA200时月度目标仓位降至50%", "SPY买入持有", "LITE买入持有"],
+  "costs": "初始10万美元；单边手续费5bps、滑点5bps；压力测试10bps和20bps；期末统一估算清仓；现金无利息，不计税、冲击；复权等价单位，不另加股息",
+  "acceptance": "主要基准为期初等权买入持有组合，同时展示SPY、LITE及等权再平衡；分别检查利润>=基准1.5倍和最大回撤绝对值<=基准一半，不把跨股票选股自动称为单股波段成功",
+  "limitations": "股票池来自今天的自选及同行列表，存在事后选择和幸存者偏差，没有退市历史成员；六只行业集中，样本小；并购和分拆可能破坏财务可比性；整段历史已经观察，后期区间不是独立样本外验证",
+  "sources": ["https://www.aqr.com/Insights/Research/Working-Paper/Quality-Minus-Junk", "https://www.aqr.com/Insights/Research/Journal-Article/Value-and-Momentum-Everywhere"]
+}

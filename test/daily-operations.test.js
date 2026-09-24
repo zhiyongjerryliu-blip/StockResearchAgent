@@ -46,6 +46,7 @@ test('分步骤任务会记录局部失败、自动重试和最终成功状态',
 test('数据质量检查会识别同日Provider价格口径冲突并进入运行中心', () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'TEST' });
+  addTransaction(db, { ticker: 'TEST', side: 'BUY', tradeTime: '2026-09-01T15:00:00Z', quantity: 1, price: 100, fee: 0 });
   const timestamp = nowIso();
   const insert = db.prepare(`
     INSERT INTO prices_daily (
@@ -78,11 +79,11 @@ test('数据质量检查会识别同日Provider价格口径冲突并进入运行
   db.close();
 });
 
-test('数据质量检查拒绝不在启用股票池内的定向范围', () => {
+test('数据质量检查拒绝非持仓股票的定向范围', () => {
   const db = openDatabase(':memory:');
   assert.throws(() => collectDailyDataQuality(db, {
     analysisDate: '2026-09-04', ticker: 'MISS', jobRunId: null
-  }), /股票池中没有启用的股票/);
+  }), /未持有股票/);
   db.close();
 });
 

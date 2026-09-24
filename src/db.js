@@ -133,6 +133,84 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_transactions_ticker_time
 ON transactions(ticker, trade_time, id);
 
+CREATE TABLE IF NOT EXISTS quality_momentum_strategies (
+  strategy_key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  capital REAL NOT NULL CHECK(capital > 0),
+  selection_count INTEGER NOT NULL CHECK(selection_count > 0),
+  max_per_group INTEGER NOT NULL CHECK(max_per_group > 0),
+  target_weight REAL NOT NULL CHECK(target_weight > 0 AND target_weight <= 1),
+  rebalance_rule TEXT NOT NULL,
+  scoring_json TEXT NOT NULL,
+  universe_json TEXT NOT NULL,
+  groups_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quality_momentum_signals (
+  strategy_key TEXT NOT NULL REFERENCES quality_momentum_strategies(strategy_key) ON DELETE CASCADE,
+  signal_date TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  rankings_json TEXT NOT NULL,
+  selected_json TEXT NOT NULL,
+  source_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(strategy_key, signal_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_momentum_signals_date
+ON quality_momentum_signals(strategy_key, signal_date DESC);
+
+CREATE TABLE IF NOT EXISTS quality_momentum_score_records (
+  strategy_key TEXT NOT NULL,
+  signal_date TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  ticker TEXT NOT NULL REFERENCES securities(ticker),
+  group_name TEXT NOT NULL,
+  rank_number INTEGER NOT NULL,
+  quality_score REAL,
+  momentum_score REAL,
+  combined_score REAL NOT NULL,
+  selected INTEGER NOT NULL DEFAULT 0,
+  selection_result TEXT NOT NULL,
+  selection_reason TEXT NOT NULL,
+  scoring_details_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(strategy_key, signal_date, ticker),
+  FOREIGN KEY(strategy_key, signal_date)
+    REFERENCES quality_momentum_signals(strategy_key, signal_date) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_momentum_scores_date
+ON quality_momentum_score_records(strategy_key, signal_date DESC, rank_number);
+
+CREATE TABLE IF NOT EXISTS quality_momentum_rebalances (
+  strategy_key TEXT NOT NULL,
+  signal_date TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  ticker TEXT NOT NULL REFERENCES securities(ticker),
+  action TEXT NOT NULL CHECK(action IN ('BUY','SELL','INCREASE','REDUCE','HOLD')),
+  reason TEXT NOT NULL,
+  previous_quantity REAL NOT NULL DEFAULT 0,
+  target_quantity REAL NOT NULL DEFAULT 0,
+  delta_quantity REAL NOT NULL DEFAULT 0,
+  execution_price REAL,
+  previous_value REAL NOT NULL DEFAULT 0,
+  target_value REAL NOT NULL DEFAULT 0,
+  cash_amount REAL NOT NULL DEFAULT 0,
+  previous_weight REAL NOT NULL DEFAULT 0,
+  target_weight REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(strategy_key, signal_date, ticker),
+  FOREIGN KEY(strategy_key, signal_date)
+    REFERENCES quality_momentum_signals(strategy_key, signal_date) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_momentum_rebalances_date
+ON quality_momentum_rebalances(strategy_key, signal_date DESC, action, ticker);
+
 CREATE TABLE IF NOT EXISTS transaction_import_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   file_name TEXT NOT NULL,

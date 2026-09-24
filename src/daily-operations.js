@@ -1,5 +1,6 @@
 import { nowIso, toPlain, toPlainRows } from './db.js';
 import { PREDICTION_MODEL_VERSION } from './predictions.js';
+import { heldTickers, requireHeldTicker } from './analysis-scope.js';
 
 export const DAILY_OPERATIONS_VERSION = 'daily-operations-v1-2026-09-06';
 
@@ -140,18 +141,11 @@ export async function runRecordedStep(db, jobRunId, spec) {
   };
 }
 
-function enabledTickers(db, ticker = null) {
+function analysisTickers(db, ticker = null, asOf = null) {
   if (ticker) {
-    const normalized = normalizedTicker(ticker);
-    const exists = db.prepare(
-      'SELECT ticker FROM watchlist_items WHERE ticker = ? AND enabled = 1'
-    ).get(normalized);
-    if (!exists) throw new Error(`股票池中没有启用的股票：${normalized}`);
-    return [normalized];
+    return [requireHeldTicker(db, normalizedTicker(ticker), asOf)];
   }
-  return toPlainRows(db.prepare(
-    'SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker'
-  ).all()).map((item) => item.ticker);
+  return heldTickers(db, asOf);
 }
 
 function saveCheck(db, jobRunId, check) {
@@ -255,7 +249,7 @@ function datedTableCheck(db, ticker, analysisDate, sourceKey, table, dateColumn,
 export function collectDailyDataQuality(db, options) {
   const analysisDate = options.analysisDate;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(analysisDate || '')) throw new Error('数据质量检查需要有效交易日期');
-  const tickers = enabledTickers(db, options.ticker);
+  const tickers = analysisTickers(db, options.ticker, analysisDate);
   const checks = [];
   for (const ticker of tickers) {
     checks.push(dailyPriceCheck(db, ticker, analysisDate));

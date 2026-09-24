@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { openDatabase } from '../src/db.js';
 import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import {
   compareResearchReports, createResearchReportJob, generateResearchReport, getResearchReport, getResearchReportJob,
-  listResearchReports, recoverInterruptedResearchReportJobs, renderResearchReportHtml, runResearchReportJob
+  listResearchReports, recoverInterruptedResearchReportJobs, renderResearchReportHtml, runResearchReportJob,
+  sanitizeResearchReportForExport
 } from '../src/research-reports.js';
+import { renderResearchReportPdf } from '../src/research-report-pdf.js';
 import { PREDICTION_MODEL_VERSION } from '../src/predictions.js';
 
 function seededDb() {
@@ -98,5 +101,21 @@ test('未通过发布闸门的预测不会从研报JSON或HTML旁路泄露目标
   const html = renderResearchReportHtml(generated.report);
   assert.doesNotMatch(html, /9876\.54|0\.876543/);
   assert.match(html, /未通过综合可靠度发布闸门/);
+  db.close();
+});
+
+test('PDF导出生成有效文件并沿用默认脱敏快照', async (t) => {
+  const fontPath = '/System/Library/Fonts/STHeiti Medium.ttc';
+  if (!fs.existsSync(fontPath)) return t.skip('当前测试环境没有内置中文字体');
+  const db = seededDb();
+  const generated = generateResearchReport(db, { ticker: 'TEST', asOf: '2026-09-09' });
+  const sanitized = sanitizeResearchReportForExport(generated.report);
+  assert.deepEqual(Object.keys(sanitized.content.position).sort(), [
+    'currentPrice', 'dailyReturn', 'previousClose', 'previousPriceDate', 'priceDataStatus', 'priceDate', 'ticker'
+  ]);
+  assert.doesNotMatch(JSON.stringify(sanitized), /averageCost|remainingCost|totalBuyCash|"lots"/);
+  const pdf = await renderResearchReportPdf(generated.report, { fontPath });
+  assert.equal(pdf.subarray(0, 4).toString(), '%PDF');
+  assert.ok(pdf.length > 10_000);
   db.close();
 });

@@ -169,6 +169,9 @@ export function backfillSecFilingEvents(db) {
 
 export function listResearchEvents(db, options = {}) {
   const ticker = options.ticker ? normalizeTicker(options.ticker) : null;
+  const tickers = Array.isArray(options.tickers)
+    ? options.tickers.map(normalizeTicker)
+    : null;
   const severity = options.severity && options.severity !== 'ALL'
     ? String(options.severity).toUpperCase()
     : null;
@@ -179,6 +182,9 @@ export function listResearchEvents(db, options = {}) {
   if (ticker) {
     baseFilters.push('e.ticker = ?');
     baseParams.push(ticker);
+  } else if (tickers) {
+    baseFilters.push(tickers.length ? `e.ticker IN (${tickers.map(() => '?').join(',')})` : '1 = 0');
+    baseParams.push(...tickers);
   } else {
     baseFilters.push('EXISTS (SELECT 1 FROM watchlist_items w WHERE w.ticker = e.ticker)');
   }

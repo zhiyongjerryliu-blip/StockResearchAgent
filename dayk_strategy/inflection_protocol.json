@@ -1,0 +1,13 @@
+{
+  "version": "operating-inflection-exploration-v1",
+  "primary_rule": "inflection",
+  "status": "看到上一轮结果后提出的探索性假设，非未见样本验证",
+  "objective": "同资金、同费用、无杠杆，扣费总收益超过买入持有",
+  "no_cash_gate": "营收季度同比>0且毛利率同比变化>=0时，收盘>SMA60和SMA120才买入；营收与毛利率同比均<0或收盘<SMA120退出；不要求现金流为正",
+  "inflection": "营收同比相对上季度上升且毛利率同比变化相对上季度上升时，收盘>SMA60和SMA120买入；两者同时转为下降或收盘<SMA120退出；不要求营收同比或现金流绝对值为正",
+  "missing_policy": "所需财务特征缺失/冲突或最新季度超过180日：不新买入，持仓跌破SMA60时退出",
+  "full_start": "2023-01-01",
+  "late_start": "2025-01-01",
+  "numeric_tolerance": 1e-10,
+  "validation": "候选固定为2个新假设，不做参数网格；分别展示早期、后期、逐季表现、额外信息延迟和成本压力结果；保留失败候选"
+}

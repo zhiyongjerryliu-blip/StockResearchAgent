@@ -1,0 +1,242 @@
+"""Dated SEC foreign-issuer statements; all values retain reporting currency.
+
+HTML table extraction is restricted to primary consolidated statements. We never
+read current web ratios or backdate comparative values to their fiscal periods.
+"""
+import json,re,calendar
+from pathlib import Path
+from hashlib import sha256
+from collections import defaultdict
+from bs4 import BeautifulSoup
+import pandas as pd
+from strategy import HERE
+
+FORMS=['10-K','10-Q','10-K/A','10-Q/A','20-F','20-F/A','6-K','6-K/A']
+META={'TSM':{'currency':'TWD','forms':FORMS},'UMC':{'currency':'TWD','forms':FORMS},
+      'ASML':{'currency':'EUR','forms':FORMS},'GFS':{'currency':'USD','forms':FORMS}}
+TAGS={'Revenue':'revenue','RevenueFromContractWithCustomerExcludingAssessedTax':'revenue','Revenues':'revenue',
+      'ProfitLoss':'netIncome','NetIncomeLoss':'netIncome','CashFlowsFromUsedInOperatingActivities':'operatingCashFlow',
+      'NetCashProvidedByUsedInOperatingActivities':'operatingCashFlow','Assets':'assets','Liabilities':'liabilities'}
+
+def tidy(text):return re.sub(r'\s+',' ',text.replace('\xa0',' ')).strip()
+
+def make_fact(rec,metric,value,start,end,tag,document='',priority=0):
+    f=dict(ticker=rec['ticker'],metric_key=metric,value=float(value),unit=META.get(rec['ticker'],{'currency':'USD'})['currency'],
+           period_start=start,period_end=end,form=rec.get('form','6-K'),filed_at=rec['filed_at'],
+           accession_number=rec['accession_number'],source_url=rec['source_url'],tag=tag,tag_priority=priority,
+           source_document=document,taxonomy='sec-statement',period_type='instant' if start is None else 'duration')
+    f['source_key']=sha256(json.dumps(f,sort_keys=True).encode()).hexdigest();return f
+
+def docs(raw):
+    for d in re.findall(r'<DOCUMENT>(.*?)</DOCUMENT>',raw,re.S):
+        name=re.search(r'<FILENAME>([^\n]+)',d)
+        if name and name[1].strip().lower().endswith(('.htm','.html')):yield name[1].strip(),d
+
+def large_numbers(text):
+    # Taiwan statements are in thousands; all five headline amounts exceed 999.
+    # This ignores note numbers and percentage columns, while retaining signs.
+    return [float(v.replace(',','').replace('(','-').replace(')','').replace(' ',''))
+            for v in re.findall(r'\(?\s*-?\d{1,3}(?:,\d{3})+(?:\.\d+)?\s*\)?',text)]
+
+def taiwan(rec,raw):
+    found=[]
+    for name,d in docs(raw):
+        if '<TYPE>EX-99' not in d[:60]:continue
+        soup=BeautifulSoup(d,'html.parser');text=tidy(soup.get_text(' ',strip=True))
+        if not re.search(r'CONSOLIDATED BALANCE SHEETS',text,re.I):continue
+        if not re.search(r'Thousands of\s+(?:New Taiwan|New\s+Taiwan)',text,re.I):continue
+        candidates=[];row_tables={}
+        for table in soup.find_all('table')[:55]:
+            for tr in table.find_all('tr'):
+                s=tidy(tr.get_text(' ',strip=True))
+                # Exclude nested outer rows that concatenate many statements.
+                if len(s)<1500:
+                    candidates.append(s);row_tables.setdefault(s,table)
+        def row(pattern):
+            hits=[s for s in candidates if re.match(pattern,s,re.I) and large_numbers(s)]
+            if not hits:raise ValueError('Missing row '+pattern)
+            return hits[0],large_numbers(hits[0])
+        assets_label=r'^TOTAL\s+\$' if rec['ticker']=='TSM' else r'^Total assets\s'
+        ar,av=row(assets_label);lr,lv=row(r'^Total liabilities\s+(?!and)')
+        # Read dates from the balance table itself, not the auditor's report.
+        head=tidy(row_tables[ar].get_text(' ',strip=True))[:1400]
+        dates=re.findall(r'(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}',head,re.I)
+        if not dates:
+            split=re.search(r'(December\s+31),?\s+Assets\s+Notes\s+(20\d{2})',head,re.I)
+            if split:dates=[split[1]+' '+split[2]]
+        ends=sorted({pd.Timestamp(v).date().isoformat() for v in dates if pd.Timestamp(v)<=pd.Timestamp(rec['filed_at'])},reverse=True)
+        if not ends:raise ValueError('No dated balance sheet')
+        end=ends[0];year=int(end[:4]);month=int(end[5:7]);q=(month+2)//3
+        if month not in (3,6,9,12):raise ValueError('Non-quarter financial date '+end)
+        # Keep current balance only; comparative flows are dated on THIS filing.
+        found.append(make_fact(rec,'assets',av[0]*1000,None,end,ar,name))
+        found.append(make_fact(rec,'liabilities',lv[0]*1000,None,end,lr,name))
+        try:
+            er,ev=row(r'^Total equity\s+(?=[\d$(])')
+            if abs(av[0]-lv[0]-ev[0])>2:raise ValueError('Balance identity mismatch')
+        except ValueError as error:
+            if 'Missing row' not in str(error):raise
+        for metric,pattern in [('revenue',r'^NET REVENUE\b' if rec['ticker']=='TSM' else r'^Operating revenues\b'),
+                               ('netIncome',r'^NET INCOME\s+(?=[\d$(-])'),
+                               ('operatingCashFlow',r'^Net cash (?:generated by|provided by|provided from) operating activities\b')]:
+            label,values=row(pattern)
+            if metric=='operatingCashFlow' or q in (1,4):
+                if len(values)!=2:raise ValueError(f'{metric}: expected two annual/YTD values, got {values}')
+                periods=[(f'{year}-01-01',end),(f'{year-1}-01-01',f'{year-1}{end[4:]}')]
+            else:
+                if len(values)!=4:raise ValueError(f'{metric}: expected quarter and YTD pairs, got {values}')
+                start=f'{year}-{(q-1)*3+1:02d}-01';prior=f'{year-1}{end[4:]}'
+                periods=[(start,end),(f'{year-1}{start[4:]}',prior),(f'{year}-01-01',end),(f'{year-1}-01-01',prior)]
+            for value,(start,finend) in zip(values,periods):found.append(make_fact(rec,metric,value*1000,start,finend,label,name))
+        break
+    return found
+
+NUM=r'(?:\(\s*-?\d[\d,]*\.\d+\s*\)|-?\d[\d,]*\.\d+|—|–)'
+
+def asml(rec,raw):
+    found=[]
+    for name,d in docs(raw):
+        if '<TYPE>EX-99' not in d[:60]:continue
+        soup=BeautifulSoup(d,'html.parser');text=tidy(soup.get_text(' ',strip=True))
+        if 'Quarterly Summary US GAAP' not in text or 'Total net sales' not in text:continue
+        # The quarterly summary prints five successive quarter-end dates.
+        monthday=r'(?:Jan|Feb|Mar|Apr|May|Jun|July?|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2},?'
+        heads=list(re.finditer(r'('+monthday+r'(?:\s+'+monthday+r'){4})\s*.{0,180}?((?:20\d{2}\s+){4}20\d{2})',text))
+        if not heads:continue
+        pairs=re.findall(monthday,heads[0][1]);years=re.findall('20\d{2}',heads[0][2])
+        ends=[pd.Timestamp(f'{a} {y}').date().isoformat() for a,y in zip(pairs,years)]
+        if ends!=sorted(ends) or len(set(ends))!=5:raise ValueError('ASML quarter dates ambiguous')
+        if abs((pd.Timestamp(ends[-1])-pd.Timestamp(rec['report_date'])).days)>1:raise ValueError('ASML report date mismatch')
+        def values(label):
+            hits=[]
+            for match in re.finditer(label+r'\s+('+NUM+r'(?:\s+'+NUM+r'){4})(?!\s+'+NUM+r')',text,re.I):
+                vals=[0. if v in ('—','–') else float(v.replace(',','').replace('(','-').replace(')','').replace(' ','')) for v in re.findall(NUM,match[1])]
+                hits.append(vals)
+            if not hits:raise ValueError('ASML missing five-quarter row '+label)
+            # Statements rounded to EUR 0.1 million may differ by one unit
+            # between income and cash-flow reconciliations; use operations.
+            if any(any(abs(a-b)>.11 for a,b in zip(h,hits[0])) for h in hits):raise ValueError('ASML inconsistent duplicate row '+label)
+            return hits[0]
+        rows={'revenue':values(r'Total net sales'),'netIncome':values(r'(?<!Basic )(?<!Diluted )Net income'),
+              'operatingCashFlow':values(r'Net cash provided by \(used in\)\s+operating activities'),
+              'assets':values(r'Total assets'),'liabilities':values(r'Total liabilities')}
+        equity=values(r'Total shareholders[’\'] equity')
+        for i,end in enumerate(ends):
+            if abs(rows['assets'][i]-rows['liabilities'][i]-equity[i])>.25:raise ValueError('ASML balance identity failed')
+            for metric,vals in rows.items():
+                if metric not in ('assets','liabilities') and i==0:continue
+                start=None if metric in ('assets','liabilities') else str((pd.Timestamp(ends[i-1])+pd.Timedelta(days=1)).date())
+                found.append(make_fact(rec,metric,vals[i]*1e6,start,end,'ASML five-quarter '+metric,name))
+        break
+    return found
+
+def inline(rec,raw):
+    # Inline XBRL documents can share a header/context set across exhibits.
+    contexts={}
+    for m in re.finditer(r'<xbrli:context\b[^>]*id="([^"]+)"[^>]*>(.*?)</xbrli:context>',raw,re.S|re.I):
+        body=m[2]
+        if re.search('explicitMember|typedMember|<xbrli:segment|<xbrli:scenario',body,re.I):continue
+        dates={key:re.search(fr'<xbrli:{key}>(.*?)</xbrli:{key}>',body,re.I) for key in ['startDate','endDate','instant']}
+        end=dates['endDate'] or dates['instant']
+        if end:contexts[m[1]]=(dates['startDate'][1] if dates['startDate'] else None,end[1])
+    found=[]
+    for name,d in docs(raw):
+        if '<ix:nonFraction' not in d and '<ix:nonfraction' not in d:continue
+        for tag in BeautifulSoup(d,'html.parser').find_all('ix:nonfraction'):
+            key=tag.get('name','').split(':')[-1]
+            if key not in TAGS or tag.get('contextref') not in contexts or tag.get('unitref','').upper()!='USD':continue
+            if tag.get('xsi:nil')=='true':continue
+            value=tidy(tag.get_text()).replace(',','')
+            value=0. if value in ('—','–','-') else float(value)
+            value*=10**int(tag.get('scale',0))*(-1 if tag.get('sign')=='-' else 1)
+            start,end=contexts[tag['contextref']]
+            found.append(make_fact(rec,TAGS[key],value,start,end,tag['name'],name))
+    # Identical facts can appear in multiple tables; conflicts are surfaced later.
+    return list({f['source_key']:f for f in found}.values()) or gfs_tables(rec,raw)
+
+def gfs_tables(rec,raw):
+    """Two 2024 quarterly filings contain plain HTML rather than inline XBRL."""
+    for name,d in docs(raw):
+        if '<TYPE>EX-99.1' not in d[:60]:continue
+        soup=BeautifulSoup(d,'html.parser');text=tidy(soup.get_text(' ',strip=True))
+        if 'in millions except for share amounts' not in text:continue
+        dated=re.search(r'As of (March 31|June 30), (20\d{2})',text)
+        if not dated:raise ValueError('GFS undated HTML statements')
+        end=str(pd.Timestamp(dated[1]+' '+dated[2]).date());year=int(end[:4]);q=int(end[5:7])//3
+        if end!=rec['report_date']:raise ValueError('GFS period mismatch')
+        rows=[tidy(tr.get_text(' ',strip=True)) for tr in soup.find_all('tr')]
+        def values(pattern):
+            row=next(s for s in rows if len(s)<250 and re.match(pattern,s,re.I))
+            suffix=re.sub(pattern,'',row,flags=re.I)
+            return [float(v.replace(',','').replace('(','-').replace(')','').replace(' ',''))
+                    for v in re.findall(r'\(?\s*-?\d[\d,]*\s*\)?',suffix)]
+        a,l,e=[values('^Total '+label+r'\s+(?!and)') for label in ('assets','liabilities','equity')]
+        if any(abs(x-y-z)>1 for x,y,z in zip(a,l,e)):raise ValueError('GFS balance identity failed')
+        out=[make_fact(rec,m,v[0]*1e6,None,end,'GFS HTML '+m,name) for m,v in [('assets',a),('liabilities',l)]]
+        for metric,label in [('revenue',r'^Net revenue\s+'),('netIncome',r'^Net income(?: for the period)?\s+'),
+                             ('operatingCashFlow',r'^Net cash provided by operating activities\s+')]:
+            vals=values(label)
+            periods=[(f'{year}-01-01',end),(f'{year-1}-01-01',f'{year-1}{end[4:]}')]
+            if q==2 and metric!='operatingCashFlow':
+                periods=[(f'{year}-04-01',end),(f'{year-1}-04-01',f'{year-1}{end[4:]}')]+periods
+            if len(vals)!=len(periods):raise ValueError('GFS HTML column mismatch '+metric)
+            out.extend(make_fact(rec,metric,v*1e6,s,e,'GFS HTML '+metric,name) for v,(s,e) in zip(vals,periods))
+        return out
+    return []
+
+def normalized_foreign(rawdir):
+    facts=[];filings=[]
+    for ticker,meta in META.items():
+        x=json.loads((rawdir/f'{ticker}_sec.json').read_text());cik=int(x['company']['cik'])
+        for taxonomy,concepts in x['companyFacts']['facts'].items():
+            if taxonomy not in ('us-gaap','ifrs-full'):continue
+            for tag,metric in TAGS.items():
+                for f in concepts.get(tag,{}).get('units',{}).get(meta['currency'],[]):
+                    if f.get('form') not in FORMS or f.get('filed','')>'2026-09-18':continue
+                    rec=dict(ticker=ticker,form=f['form'],filed_at=f['filed'],accession_number=f['accn'],
+                             source_url=f"https://www.sec.gov/Archives/edgar/data/{cik}/{f['accn'].replace('-','')}/{f['accn']}-index.html")
+                    facts.append(make_fact(rec,metric,f['val'],f.get('start'),f['end'],taxonomy+':'+tag,priority=10))
+        r=x['submissions']['filings']['recent']
+        for i,form in enumerate(r['form']):
+            if form in FORMS:filings.append(dict(ticker=ticker,accession_number=r['accessionNumber'][i],
+                  form=form,filed_at=r['filingDate'][i],accepted_at=r['acceptanceDateTime'][i]))
+    return facts,filings
+
+def amd_liabilities(snapshot,rawdir):
+    x=json.loads((rawdir/'AMD_sec.json').read_text())['companyFacts']['facts']['us-gaap'];out=[]
+    for a in snapshot['facts']:
+        if a['ticker']!='AMD' or a['metric_key']!='assets':continue
+        def matched(tag):
+            return {f['val'] for f in x.get(tag,{}).get('units',{}).get('USD',[]) if not f.get('start') and
+                    f.get('accn')==a['accession_number'] and f.get('end')==a['period_end'] and f.get('filed')==a['filed_at']}
+        eq,total=matched('StockholdersEquity'),matched('LiabilitiesAndStockholdersEquity')
+        if len(eq)!=1 or total!={a['value']}:continue
+        out.append(make_fact(a,'liabilities',a['value']-next(iter(eq)),None,a['period_end'],
+                   'Assets-StockholdersEquity (same filing)',priority=99))
+    return out
+
+def run(samples=False):
+    base=HERE/'reports/industry18';rawdir=base/'raw';folder=rawdir/'foreign_filings'
+    snap=json.loads((base/'snapshot.json').read_text());facts,filings=normalized_foreign(rawdir)
+    manifest=json.loads((folder/('samples.json' if samples else 'manifest.json')).read_text())
+    audit=[];errors=[]
+    for rec in manifest:
+        try:
+            raw=(folder/rec['file']).read_text();fn={'TSM':taiwan,'UMC':taiwan,'ASML':asml,'GFS':inline}[rec['ticker']]
+            result=fn(rec,raw);facts.extend(result)
+            audit.append({**rec,'facts':len(result),'sha256':sha256(raw.encode()).hexdigest()})
+        except Exception as e:
+            errors.append({**rec,'error':str(e)});print(rec['ticker'],rec['filed_at'],str(e))
+    (base/('sample_audit.json' if samples else 'foreign_audit.json')).write_text(json.dumps({'files':audit,'errors':errors},indent=2))
+    if samples:
+        for t in META:print(t,[(f['metric_key'],f['period_start'],f['period_end'],f['value'],f['filed_at']) for f in facts if f['ticker']==t and f['tag_priority']==0][-24:])
+        return
+    facts.extend(amd_liabilities(snap,rawdir));snap['facts'].extend(facts);snap['filings'].extend(filings)
+    snap['financial_metadata']=META
+    snap['supplemental_source_hashes']={r['file']:r['sha256'] for r in audit}
+    (base/'enriched_snapshot.json').write_text(json.dumps(snap,ensure_ascii=False,indent=2,allow_nan=False))
+    print('Parsed',len(audit),'documents;',len(errors),'errors;',len(facts),'supplemental facts')
+
+if __name__=='__main__':
+    import sys
+    run('--samples' in sys.argv)

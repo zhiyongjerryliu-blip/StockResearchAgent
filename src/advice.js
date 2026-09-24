@@ -7,6 +7,7 @@ import { getValuationOverview } from './valuation.js';
 import { analyzeCapitalFlow } from './capital-flow.js';
 import { analyzeIntradayFlow } from './intraday-flow.js';
 import { getCapitalBehaviorOverview } from './capital-behavior.js';
+import { heldTickers } from './analysis-scope.js';
 
 export const ADVICE_MODEL_VERSION = 'evidence-impact-advice-v4-2026-09-05';
 export const ADVICE_HORIZONS = Object.freeze([21, 63, 126]);
@@ -486,10 +487,7 @@ export function saveInvestmentAdvice(db, tickerValue, asOf) {
 }
 
 export function saveWatchlistAdvice(db, asOf) {
-  const tickers = toPlainRows(db.prepare(`
-    SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
-  `).all());
-  return tickers.map(({ ticker }) => {
+  return heldTickers(db, asOf).map((ticker) => {
     try {
       return { ticker, ok: true, overview: saveInvestmentAdvice(db, ticker, asOf) };
     } catch (error) {

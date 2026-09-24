@@ -1,0 +1,27 @@
+{
+  "version": "financial-strategy-v1.1",
+  "ticker": "LITE",
+  "objective": "扣费后总收益超过同期买入持有，不增加杠杆",
+  "primary_rule": "fund_regime",
+  "financial_state": {
+    "EXPANSION": "营收季度同比>0、毛利率同比变化>=0、连续四季度自由现金流>0",
+    "DETERIORATION": "营收季度同比<0且毛利率同比变化<0；三项核心财务值均可用",
+    "NEUTRAL": "三项核心财务值可用，但不满足上述两种状态",
+    "UNKNOWN": "核心财务数据缺失或存在未解决的同优先级冲突",
+    "STALE": "最新财务季度期末距信号日超过180日"
+  },
+  "rules": {
+    "original": "原版技术基线",
+    "original_slow_exit": "原版入场，收盘低于SMA120退出；用于隔离单纯延长持有的影响",
+    "trend60_120": "收盘同时高于SMA60和SMA120买入，收盘<SMA120退出；主规则的纯技术对照",
+    "fund_extend": "原版入场；EXPANSION时以SMA120退出，其他状态按原EMA20/3ATR退出",
+    "fund_regime": "主规则：EXPANSION且收盘同时高于SMA60和SMA120买入；DETERIORATION或收盘<SMA120退出；UNKNOWN/STALE持仓以SMA60退出；NEUTRAL允许持有",
+    "hold": "买入持有基准"
+  },
+  "full_start": "2023-01-01",
+  "late_start": "2025-01-01",
+  "validation": "固定规则、不按本轮结果调参；分早期/后期独立起始资金回放，并对连续账户做季度收益对照。历史行情此前已被查看，不能宣称真正未见样本。",
+  "implementation_correction": "v1.1统一要求主规则及其纯技术对照的入场价格高于退出防线，消除同一收盘同时满足入场和退出的矛盾。未搜索或调整均线周期、财务阈值；首次诊断结果与旧协议另行保存。",
+  "stress": "保持规则不变，单边手续费10bps、滑点20bps；另测试财务信息额外延迟1个交易日。",
+  "excluded": ["历史盈利一致预期", "当前研报总分", "当前预测结果", "事后新闻评分", "无历史覆盖的逐笔资金", "动态PE"]
+}

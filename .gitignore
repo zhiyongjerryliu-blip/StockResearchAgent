@@ -8,3 +8,5 @@ coverage/
 node_modules/
 .venv-futu/
 outputs/
+output/
+tmp/

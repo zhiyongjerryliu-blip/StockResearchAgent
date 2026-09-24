@@ -25,6 +25,7 @@ import {
   claimDailyCycle, finishDailyCycleClaim, heartbeatDailyCycleClaim, missingDailyCycleDates
 } from './daily-cycle-automation.js';
 import { generateWatchlistResearchReports } from './research-reports.js';
+import { requireHeldTicker } from './analysis-scope.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -51,9 +52,7 @@ async function executeDailyCycle(
   const reviewDate = options.analysisDate || latestStableUsMarketDate(date);
   const ticker = options.ticker ? String(options.ticker).trim().toUpperCase() : null;
   if (ticker && !/^[A-Z0-9.^-]{1,15}$/.test(ticker)) throw new Error('股票代码格式无效');
-  if (ticker && !db.prepare(
-    'SELECT ticker FROM watchlist_items WHERE ticker = ? AND enabled = 1'
-  ).get(ticker)) throw new Error(`股票池中没有启用的股票：${ticker}`);
+  if (ticker) requireHeldTicker(db, ticker, reviewDate);
   const trigger = options.trigger || 'MANUAL';
   const syncAttempts = Math.max(1, Number(options.retryAttempts) || 2);
   const result = db.prepare(`
@@ -192,7 +191,7 @@ async function executeDailyCycle(
     const status = failed.length ? 'FAILED' : degraded.length ? 'DEGRADED' : 'SUCCESS';
     const details = {
       version: DAILY_OPERATIONS_VERSION, reviewDate, ticker, trigger,
-      positions: portfolio?.positions?.length || 0,
+      positions: portfolio?.positions?.filter((position) => position.quantity > 1e-8).length || 0,
       qualityStatus: quality?.status || null,
       steps: stepResults.map((step) => ({
         key: step.key, status: step.status, attempts: step.attempts,
@@ -204,7 +203,7 @@ async function executeDailyCycle(
     db.prepare(`
       UPDATE job_runs SET finished_at = ?, status = ?, details_json = ? WHERE id = ?
     `).run(nowIso(), status, JSON.stringify(details), jobId);
-    const scopeLabel = ticker || '全部股票';
+    const scopeLabel = ticker || '全部持仓';
     if (options.notify !== false && status === 'SUCCESS') {
       await createNotification(db, {
         severity: 'INFO', category: 'DAILY_REVIEW', title: '美股收盘复盘已完成',

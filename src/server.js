@@ -73,8 +73,11 @@ import {
 import { DailyCycleWorkerRunner } from './daily-cycle-worker-runner.js';
 import {
   compareResearchReports, createResearchReportJob, getResearchReport, getResearchReportJob, listResearchReports,
-  recoverInterruptedResearchReportJobs, renderResearchReportHtml, runResearchReportJob
+  recoverInterruptedResearchReportJobs, runResearchReportJob
 } from './research-reports.js';
+import { renderResearchReportPdf } from './research-report-pdf.js';
+import { getQualityMomentumStrategy } from './quality-momentum-strategy.js';
+import { heldTickers, requireHeldTicker } from './analysis-scope.js';
 
 const applicationStartedAt = nowIso();
 const db = openDatabase();
@@ -120,7 +123,7 @@ const futuRecovery = {
 };
 
 function enabledWatchlistTickers() {
-  return listWatchlist(db).filter((item) => item.enabled).map((item) => item.ticker);
+  return heldTickers(db, latestStableMarketDate());
 }
 
 function missingIntradayHistory(tickers) {
@@ -325,6 +328,7 @@ const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
+  '.pdf': 'application/pdf',
   '.csv': 'text/csv; charset=utf-8',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 };
@@ -339,6 +343,15 @@ function sendHtml(response, status, html, fileName = null) {
   if (fileName) headers['Content-Disposition'] = `attachment; filename="${fileName}"`;
   response.writeHead(status, headers);
   response.end(html);
+}
+
+function sendPdf(response, status, pdf, fileName) {
+  response.writeHead(status, {
+    'Content-Type': 'application/pdf',
+    'Content-Length': pdf.length,
+    'Content-Disposition': `attachment; filename="${fileName}"`
+  });
+  response.end(pdf);
 }
 
 async function readJson(request) {
@@ -578,6 +591,9 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/portfolio/risk') {
     return sendJson(response, 200, calculatePortfolioRisk(db));
   }
+  if (method === 'GET' && url.pathname === '/api/strategies/quality-momentum') {
+    return sendJson(response, 200, getQualityMomentumStrategy(db));
+  }
   if (method === 'GET' && url.pathname === '/api/performance/monthly') {
     const month = url.searchParams.get('month') || latestEtDate().slice(0, 7);
     return sendJson(response, 200, calculateMonthlyPerformance(db, month));
@@ -620,6 +636,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/drivers') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, url.searchParams.get('asOf') || latestStableMarketDate());
     return sendJson(response, 200, getExternalDriversOverview(
       db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
     ));
@@ -627,6 +644,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/advice') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, url.searchParams.get('asOf') || latestStableMarketDate());
     return sendJson(response, 200, buildInvestmentAdvice(
       db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
     ));
@@ -634,6 +652,7 @@ async function apiRoute(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/advice/run') {
     const body = await readJson(request);
     if (!body.ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, body.ticker, body.asOf || latestStableMarketDate());
     return sendJson(response, 200, saveInvestmentAdvice(
       db, body.ticker, body.asOf || latestStableMarketDate()
     ));
@@ -641,6 +660,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/predictions') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, url.searchParams.get('asOf') || latestStableMarketDate());
     return sendJson(response, 200, getPredictionOverview(
       db, ticker, url.searchParams.get('asOf') || null
     ));
@@ -648,6 +668,7 @@ async function apiRoute(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/predictions/backtest') {
     const body = await readJson(request);
     if (!body.ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, body.ticker, body.asOf || latestStableMarketDate());
     return sendJson(response, 200, runPredictionBacktest(
       db, body.ticker, body.asOf || latestStableMarketDate(),
       { maxSessions: body.maxSessions }
@@ -656,6 +677,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/capital-flow') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, url.searchParams.get('asOf') || latestStableMarketDate());
     return sendJson(response, 200, analyzeCapitalFlow(
       db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
     ));
@@ -663,6 +685,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/capital-flow/history') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, url.searchParams.get('asOf') || latestStableMarketDate());
     return sendJson(response, 200, listRecentCapitalFlowDays(
       db,
       ticker,
@@ -673,6 +696,7 @@ async function apiRoute(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/capital-flow/run') {
     const body = await readJson(request);
     if (!body.ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, body.ticker, body.asOf || latestStableMarketDate());
     const analysis = saveCapitalFlow(
       db, body.ticker, body.asOf || latestStableMarketDate()
     );
@@ -682,6 +706,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/capital-behavior') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, url.searchParams.get('asOf') || latestStableMarketDate());
     return sendJson(response, 200, getCapitalBehaviorOverview(
       db, ticker, url.searchParams.get('asOf') || latestStableMarketDate()
     ));
@@ -689,6 +714,7 @@ async function apiRoute(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/capital-behavior/backtest') {
     const body = await readJson(request);
     if (!body.ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, body.ticker, body.asOf || latestStableMarketDate());
     const result = runCapitalBehaviorBacktest(
       db, body.ticker, body.asOf || latestStableMarketDate(),
       { maxSessions: body.maxSessions, full: Boolean(body.full) }
@@ -707,6 +733,7 @@ async function apiRoute(request, response, url) {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
     const tradeDate = url.searchParams.get('tradeDate') || null;
+    requireHeldTicker(db, ticker, tradeDate || latestStableMarketDate());
     return sendJson(response, 200, {
       analysis: analyzeIntradayFlow(db, ticker, tradeDate),
       minutes: listIntradayFlowMinutes(db, ticker, tradeDate, url.searchParams.get('limit')),
@@ -717,6 +744,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/sec/overview') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, latestStableMarketDate());
     return sendJson(response, 200, getSecOverview(db, ticker));
   }
   if (method === 'POST' && url.pathname === '/api/sec/sync') {
@@ -728,6 +756,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/valuation/overview') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, ticker, latestStableMarketDate());
     const lookbackYears = Number(url.searchParams.get('years') || 5);
     if (![1, 3, 5].includes(lookbackYears)) throw new Error('历史估值区间仅支持1、3或5年');
     return sendJson(response, 200, getValuationOverview(db, ticker, { lookbackYears }));
@@ -769,6 +798,7 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/research/reports') {
     const ticker = url.searchParams.get('ticker');
     if (!ticker) throw new Error('请选择研报股票');
+    requireHeldTicker(db, ticker, latestStableMarketDate());
     return sendJson(response, 200, listResearchReports(db, ticker, url.searchParams.get('limit')));
   }
   if (method === 'GET' && url.pathname === '/api/research/reports/compare') {
@@ -782,6 +812,7 @@ async function apiRoute(request, response, url) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || asOf !== latestStableMarketDate()) {
       throw new Error('当前仅支持生成最近稳定收盘日的研报');
     }
+    requireHeldTicker(db, body.ticker, asOf);
     const job = createResearchReportJob(db, { ticker: body.ticker, asOf });
     if (!job.merged) setImmediate(() => runResearchReportJob(db, job.id));
     return sendJson(response, 202, { job });
@@ -797,9 +828,9 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && researchExportMatch) {
     const report = getResearchReport(db, researchExportMatch[1]);
     if (!report) return sendJson(response, 404, { error: '个股综合研报不存在' });
-    return sendHtml(
-      response, 200, renderResearchReportHtml(report),
-      report.ticker + '-research-report-' + report.asOf + '-v' + report.id + '.html'
+    return sendPdf(
+      response, 200, await renderResearchReportPdf(report),
+      report.ticker + '-research-report-' + report.asOf + '-v' + report.id + '.pdf'
     );
   }
   const researchReportMatch = url.pathname.match(/^\/api\/research\/reports\/(\d+)$/);
@@ -817,26 +848,36 @@ async function apiRoute(request, response, url) {
   }
 
   if (method === 'GET' && url.pathname === '/api/events') {
+    const ticker = url.searchParams.get('ticker');
+    if (ticker) requireHeldTicker(db, ticker, latestStableMarketDate());
     return sendJson(response, 200, listResearchEvents(db, {
-      ticker: url.searchParams.get('ticker'),
+      ticker,
+      tickers: ticker ? null : heldTickers(db, latestStableMarketDate()),
       severity: url.searchParams.get('severity'),
       limit: url.searchParams.get('limit')
     }));
   }
   if (method === 'GET' && url.pathname === '/api/news') {
+    const ticker = url.searchParams.get('ticker');
+    if (ticker) requireHeldTicker(db, ticker, latestStableMarketDate());
     return sendJson(response, 200, listNewsArticles(db, {
-      ticker: url.searchParams.get('ticker'),
+      ticker,
+      tickers: ticker ? null : heldTickers(db, latestStableMarketDate()),
       limit: url.searchParams.get('limit')
     }));
   }
   if (method === 'GET' && url.pathname === '/api/news/sentiment') {
+    const ticker = url.searchParams.get('ticker');
+    if (ticker) requireHeldTicker(db, ticker, latestStableMarketDate());
     return sendJson(response, 200, getNewsSentimentSummary(db, {
-      ticker: url.searchParams.get('ticker')
+      ticker,
+      tickers: ticker ? null : heldTickers(db, latestStableMarketDate())
     }));
   }
   if (method === 'POST' && url.pathname === '/api/news/sync') {
     const body = await readJson(request);
     if (!body.ticker) throw new Error('缺少ticker');
+    requireHeldTicker(db, body.ticker, latestStableMarketDate());
     return sendJson(response, 200, await syncNewsForTicker(
       db, newsProvider, body.ticker, latestEtDate(), { force: Boolean(body.force) }
     ));

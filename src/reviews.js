@@ -211,7 +211,8 @@ export async function generateDailyReviews(db, reviewDate, options = {}) {
   const stockReviews = [];
   const targetTicker = options.ticker ? String(options.ticker).trim().toUpperCase() : null;
 
-  for (const position of portfolio.positions.filter((item) => !targetTicker || item.ticker === targetTicker)) {
+  const heldPositions = portfolio.positions.filter((item) => item.quantity > 1e-8);
+  for (const position of heldPositions.filter((item) => !targetTicker || item.ticker === targetTicker)) {
     const structured = {
       reviewDate,
       type: 'STOCK',
@@ -253,7 +254,7 @@ export async function generateDailyReviews(db, reviewDate, options = {}) {
     type: 'PORTFOLIO',
     totals: portfolio.totals,
     macro: getMarketContext(db, reviewDate),
-    positions: portfolio.positions.map((position) => ({
+    positions: heldPositions.map((position) => ({
       ticker: position.ticker,
       quantity: position.quantity,
       marketValue: position.marketValue,
@@ -301,9 +302,9 @@ export async function generateDailyReviews(db, reviewDate, options = {}) {
   const intradayOutflowCount = portfolioStructured.intradayFlow.filter((item) => (
     item.signal === 'STRONG_OUTFLOW' && item.confidence >= 60
   )).length;
-  const portfolioNarrative = portfolio.positions.length
-    ? `股票池共 ${portfolio.positions.length} 只股票，当前总市值 $${portfolio.totals.marketValue.toFixed(2)}，今日盈亏 $${portfolio.totals.dailyPnl.toFixed(2)}，累计总盈亏 $${portfolio.totals.totalPnl.toFixed(2)}。近7日有 ${portfolioSecEvents.length} 个SEC 8-K事件${portfolioRiskCount ? `，其中${portfolioRiskCount}个为P0/P1风险` : ''}，以及${portfolioNewsRisks.length}个待核实新闻风险信号；${intradayOutflowCount}只股票出现高置信分钟主动卖出显著占优。`
-    : '股票池为空，请先录入测试股票和交易。';
+  const portfolioNarrative = heldPositions.length
+    ? `当前持仓 ${heldPositions.length} 只股票，总市值 $${portfolio.totals.marketValue.toFixed(2)}，今日盈亏 $${portfolio.totals.dailyPnl.toFixed(2)}，累计总盈亏 $${portfolio.totals.totalPnl.toFixed(2)}。近7日有 ${portfolioSecEvents.length} 个SEC 8-K事件${portfolioRiskCount ? `，其中${portfolioRiskCount}个为P0/P1风险` : ''}，以及${portfolioNewsRisks.length}个待核实新闻风险信号；${intradayOutflowCount}只股票出现高置信分钟主动卖出显著占优。`
+    : '当前没有持仓，不生成个股分析和复盘。';
   await saveReview(db, reviewDate, null, 'PORTFOLIO', portfolioStructured, portfolioNarrative, 'review-v2');
 
   return { reviewDate, stockReviews, portfolio: { structured: portfolioStructured, narrative: portfolioNarrative } };
@@ -343,6 +344,7 @@ export async function refreshDailyReviewsIfNeeded(db, reviewDate) {
   ]));
   const portfolio = calculatePortfolio(db, reviewDate);
   const staleTickers = portfolio.positions
+    .filter((position) => position.quantity > 1e-8)
     .filter((position) => !storedPositionMatches(existing.get(position.ticker), position))
     .map((position) => position.ticker);
 

@@ -4,6 +4,7 @@ import { normalizeTicker, parseJson, round } from './domain.js';
 import { createNotification } from './notifications.js';
 import { sourceTier } from './news-sources.js';
 import { listStockConcepts } from './concepts.js';
+import { heldTickers } from './analysis-scope.js';
 
 const ALPHA_VANTAGE_URL = 'https://www.alphavantage.co/query';
 const NEWS_DOCUMENTATION = 'https://www.alphavantage.co/documentation/#news-sentiment';
@@ -536,15 +537,13 @@ export async function syncWatchlistNews(db, provider, asOf, options = {}) {
   } catch (error) {
     return { skipped: true, reason: 'not-configured', error: error.message, results: [] };
   }
-  const stocks = toPlainRows(db.prepare(
-    'SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker'
-  ).all());
+  const stocks = heldTickers(db, asOf);
   const results = [];
-  for (const stock of stocks) {
+  for (const ticker of stocks) {
     try {
-      results.push(await syncNewsForTicker(db, provider, stock.ticker, asOf, options));
+      results.push(await syncNewsForTicker(db, provider, ticker, asOf, options));
     } catch (error) {
-      results.push({ ticker: stock.ticker, ok: false, error: error.message });
+      results.push({ ticker, ok: false, error: error.message });
     }
   }
   return { skipped: false, asOf, results };
@@ -552,11 +551,14 @@ export async function syncWatchlistNews(db, provider, asOf, options = {}) {
 
 export function listNewsArticles(db, options = {}) {
   const ticker = options.ticker ? normalizeTicker(options.ticker) : null;
+  const tickers = Array.isArray(options.tickers) ? options.tickers.map(normalizeTicker) : null;
   const limit = Math.min(500, Math.max(1, Number.parseInt(options.limit, 10) || 100));
   const filters = ticker
     ? ['l.ticker = ?']
-    : ['EXISTS (SELECT 1 FROM watchlist_items w WHERE w.ticker = l.ticker)'];
-  const params = ticker ? [ticker, limit] : [limit];
+    : tickers
+      ? [tickers.length ? `l.ticker IN (${tickers.map(() => '?').join(',')})` : '1 = 0']
+      : ['EXISTS (SELECT 1 FROM watchlist_items w WHERE w.ticker = l.ticker)'];
+  const params = ticker ? [ticker, limit] : [...(tickers || []), limit];
   const rows = toPlainRows(db.prepare(`
     SELECT a.*, l.ticker, l.relevance_score, l.sentiment_score, l.sentiment_label,
            l.relation_type, l.relation_label,
@@ -595,7 +597,13 @@ export function listNewsArticles(db, options = {}) {
 
 export function getNewsSentimentSummary(db, options = {}) {
   const ticker = options.ticker ? normalizeTicker(options.ticker) : null;
-  const filters = ticker ? 'WHERE l.ticker = ?' : '';
+  const tickers = Array.isArray(options.tickers) ? options.tickers.map(normalizeTicker) : null;
+  const filters = ticker
+    ? 'WHERE l.ticker = ?'
+    : tickers
+      ? (tickers.length ? `WHERE l.ticker IN (${tickers.map(() => '?').join(',')})` : 'WHERE 1 = 0')
+      : '';
+  const params = ticker ? [ticker] : (tickers || []);
   const rows = toPlainRows(db.prepare(`
     SELECT a.published_at, a.content_kind, a.source_name, a.source_domain,
            a.engagement_score, l.ticker, l.sentiment_score,
@@ -606,7 +614,7 @@ export function getNewsSentimentSummary(db, options = {}) {
     FROM news_articles a
     JOIN news_article_links l ON l.article_id = a.id
     ${filters}
-  `).all(...(ticker ? [ticker] : [])));
+  `).all(...params));
   const now = options.asOf && /^\d{4}-\d{2}-\d{2}$/.test(options.asOf)
     ? Date.parse(`${options.asOf}T23:59:59.999Z`) : Date.now();
   const within = (row, hours) => {

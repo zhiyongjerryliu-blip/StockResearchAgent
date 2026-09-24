@@ -6,6 +6,7 @@ import { getSecOverview } from './sec.js';
 import { getValuationOverview } from './valuation.js';
 import { getPredictionOverview } from './predictions.js';
 import { analyzeCapitalFlow, listRecentCapitalFlowDays } from './capital-flow.js';
+import { heldTickers, requireHeldTicker } from './analysis-scope.js';
 import { analyzeIntradayFlow } from './intraday-flow.js';
 import { getCapitalBehaviorOverview } from './capital-behavior.js';
 import { getExternalDriversOverview } from './external-drivers.js';
@@ -328,11 +329,9 @@ export function compareResearchReports(db, fromIdValue, toIdValue) {
 }
 
 export function generateWatchlistResearchReports(db, asOf, tickerValue = null) {
-  const ticker = tickerValue ? normalizeTicker(tickerValue) : null;
-  const tickers = toPlainRows(ticker
-    ? db.prepare('SELECT ticker FROM watchlist_items WHERE enabled = 1 AND ticker = ?').all(ticker)
-    : db.prepare('SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker').all()
-  ).map((item) => item.ticker);
+  const tickers = tickerValue
+    ? [requireHeldTicker(db, tickerValue, asOf)]
+    : heldTickers(db, asOf);
   return tickers.map((item) => {
     try {
       const generated = generateResearchReport(db, {
@@ -455,7 +454,7 @@ function removePrivateFields(value) {
     .map(([key, child]) => [key, removePrivateFields(child)]));
 }
 
-export function renderResearchReportHtml(report) {
+export function sanitizeResearchReportForExport(report) {
   if (!report) throw new Error('研报不存在');
   const sanitized = removePrivateFields(structuredClone(report));
   const publicPosition = sanitized.content?.position ? {
@@ -484,6 +483,11 @@ export function renderResearchReportHtml(report) {
     if (section.data?.summary?.position) section.data.summary.position = publicPosition;
     if (section.data?.summary?.advice) section.data.summary.advice = { redacted: true };
   }
+  return sanitized;
+}
+
+export function renderResearchReportHtml(report) {
+  const sanitized = sanitizeResearchReportForExport(report);
   const sections = (sanitized.content.sections || []).map((section) => `
     <section id="${escapeHtml(section.key)}"><h2>${section.order}. ${escapeHtml(section.title)}</h2>${human(section.data)}</section>
   `).join('');

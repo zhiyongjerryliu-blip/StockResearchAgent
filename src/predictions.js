@@ -6,6 +6,7 @@ import { buildMarketContext } from './market-context.js';
 import { calculateTtmEps } from './valuation.js';
 import { calculateReliability } from './reliability.js';
 import { nextRegularUsTradingDate } from './trading-calendar.js';
+import { heldTickers } from './analysis-scope.js';
 
 export const FEATURE_VERSION = 'point-in-time-features-v2-2026-09-05';
 export const PREDICTION_MODEL_VERSION = 'explainable-pit-ensemble-v1.1-2026-09-05';
@@ -1635,10 +1636,7 @@ export function getPredictionOverview(db, tickerValue, asOf = null) {
 }
 
 export function runWatchlistPredictionBacktests(db, asOf, options = {}) {
-  const tickers = toPlainRows(db.prepare(`
-    SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
-  `).all());
-  return tickers.map(({ ticker }) => {
+  return heldTickers(db, asOf).map((ticker) => {
     try {
       return { ticker, ok: true, result: runPredictionBacktest(db, ticker, asOf, options) };
     } catch (error) {

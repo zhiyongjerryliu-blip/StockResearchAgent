@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../src/db.js';
-import { saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
+import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
 import { buildResearchReportDiff } from '../src/research-report-diffs.js';
 import {
   generateWatchlistResearchReports, researchMaterialHash
@@ -47,11 +47,14 @@ test('输入哈希忽略采集时间但保留数值变化', () => {
   assert.notEqual(first, changed);
 });
 
-test('日终研报只处理启用股票且同一截止日无实质变化不重复建版', () => {
+test('日终研报只处理持仓股票且同一截止日无实质变化不重复建版', () => {
   const db = openDatabase(':memory:');
   upsertWatchlistItem(db, { ticker: 'TEST', name: 'Test' });
+  upsertWatchlistItem(db, { ticker: 'WATCH', name: 'Watch only' });
   upsertWatchlistItem(db, { ticker: 'PAUSE', name: 'Paused', enabled: false });
+  addTransaction(db, { ticker: 'TEST', side: 'BUY', tradeTime: '2026-09-01T15:00:00Z', quantity: 1, price: 10, fee: 0 });
   saveManualPrice(db, { ticker: 'TEST', tradeDate: '2026-09-09', close: 10, volume: 1000 });
+  saveManualPrice(db, { ticker: 'WATCH', tradeDate: '2026-09-09', close: 15, volume: 1000 });
   saveManualPrice(db, { ticker: 'PAUSE', tradeDate: '2026-09-09', close: 20, volume: 1000 });
   const first = generateWatchlistResearchReports(db, '2026-09-09');
   const second = generateWatchlistResearchReports(db, '2026-09-09');

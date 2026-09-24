@@ -3,6 +3,7 @@ import { normalizeTicker, parseJson, round } from './domain.js';
 import { analyzeCapitalFlow } from './capital-flow.js';
 import { analyzeIntradayFlow } from './intraday-flow.js';
 import { createNotification } from './notifications.js';
+import { heldTickers } from './analysis-scope.js';
 
 export const CAPITAL_BEHAVIOR_MODEL_VERSION = 'continuous-capital-behavior-v1-2026-09-05';
 export const CAPITAL_BEHAVIOR_HORIZONS = Object.freeze([1, 3, 5, 10, 20]);
@@ -500,10 +501,7 @@ export function runCapitalBehaviorBacktest(db, tickerValue, asOf, options = {}) 
 }
 
 export function runWatchlistCapitalBehaviorBacktests(db, asOf, options = {}) {
-  const tickers = toPlainRows(db.prepare(`
-    SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
-  `).all());
-  return tickers.map(({ ticker }) => {
+  return heldTickers(db, asOf).map((ticker) => {
     try {
       return { ticker, ok: true, result: runCapitalBehaviorBacktest(db, ticker, asOf, options) };
     } catch (error) {

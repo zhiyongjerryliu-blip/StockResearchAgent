@@ -10,7 +10,8 @@ const state = {
   valuationPeerSelection: null,
   researchReports: [], researchReport: null, researchLoadedTicker: null, researchDiff: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
-  transactionImportToken: null, systemStatus: null, dailyOperations: null
+  transactionImportToken: null, systemStatus: null, dailyOperations: null, qualityMomentum: null,
+  qualityMomentumSignalDate: null
 };
 
 const THEME_STORAGE_KEY = 'stockresearchagent.theme';
@@ -32,7 +33,7 @@ function applyTheme(theme, persist = false) {
 }
 
 const titles = {
-  dashboard: '投资组合总览', watchlist: '股票池管理', transactions: '交易与持仓',
+  dashboard: '投资组合总览', watchlist: '股票池管理', 'quality-momentum': '选股策略：质量—动量', transactions: '交易与持仓',
   financials: '财报分析', valuation: '估值与竞争对手', predictions: '多周期预测与历史验证',
   research: '个股综合研报',
   capital: '资金与成交量', events: '事件与风险',
@@ -111,6 +112,9 @@ function showView(view) {
 
 function renderWatchlist() {
   const body = document.querySelector('#watchlist-body');
+  const heldSet = new Set((state.portfolio?.positions || [])
+    .filter((position) => Number(position.quantity) > 1e-8)
+    .map((position) => position.ticker));
   body.innerHTML = state.watchlist.map((item) => `
     <tr>
       <td class="ticker">${escapeHtml(item.ticker)}</td>
@@ -122,7 +126,7 @@ function renderWatchlist() {
       <td>${escapeHtml(item.note || '—')}</td>
       <td><button class="badge ${item.enabled ? 'buy' : ''}" data-toggle-ticker="${item.ticker}" data-enabled="${item.enabled}">${item.enabled ? '监控中' : '已暂停'}</button></td>
       <td><div class="row-actions">
-        <button class="edit-link" data-research-ticker="${item.ticker}">综合研报</button>
+        ${heldSet.has(item.ticker) ? `<button class="edit-link" data-research-ticker="${item.ticker}">综合研报</button>` : ''}
         <button class="edit-link" data-edit-watchlist="${item.ticker}">修改</button>
         <button class="danger-link" data-delete-watchlist="${item.ticker}">删除</button>
       </div></td>
@@ -130,46 +134,47 @@ function renderWatchlist() {
   document.querySelector('#watchlist-empty').classList.toggle('hidden', state.watchlist.length > 0);
 
   const options = state.watchlist.filter((item) => item.enabled).map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
+  const heldItems = state.watchlist.filter((item) => heldSet.has(item.ticker));
+  const heldOptions = heldItems.map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
   for (const id of ['#trade-ticker', '#price-ticker']) document.querySelector(id).innerHTML = options || '<option value="">请先添加股票</option>';
 
   const secSelect = document.querySelector('#sec-ticker');
   const selectedTicker = secSelect.value || state.secLoadedTicker;
-  const secOptions = state.watchlist.map((item) => `<option value="${item.ticker}">${item.ticker}${item.name ? ` · ${escapeHtml(item.name)}` : ''}</option>`).join('');
-  secSelect.innerHTML = secOptions || '<option value="">请先添加股票</option>';
-  if (selectedTicker && state.watchlist.some((item) => item.ticker === selectedTicker)) secSelect.value = selectedTicker;
+  secSelect.innerHTML = heldOptions || '<option value="">当前没有持仓</option>';
+  if (selectedTicker && heldSet.has(selectedTicker)) secSelect.value = selectedTicker;
 
   const valuationSelect = document.querySelector('#valuation-ticker');
   const selectedValuationTicker = valuationSelect.value || state.valuationLoadedTicker;
-  valuationSelect.innerHTML = secOptions || '<option value="">请先添加股票</option>';
-  if (selectedValuationTicker && state.watchlist.some((item) => item.ticker === selectedValuationTicker)) {
+  valuationSelect.innerHTML = heldOptions || '<option value="">当前没有持仓</option>';
+  if (selectedValuationTicker && heldSet.has(selectedValuationTicker)) {
     valuationSelect.value = selectedValuationTicker;
   }
 
   const eventSelect = document.querySelector('#event-ticker');
   const selectedEventTicker = eventSelect.value;
-  eventSelect.innerHTML = `<option value="">全部股票</option>${secOptions}`;
-  if (selectedEventTicker && state.watchlist.some((item) => item.ticker === selectedEventTicker)) {
+  eventSelect.innerHTML = `<option value="">全部持仓</option>${heldOptions}`;
+  if (selectedEventTicker && heldSet.has(selectedEventTicker)) {
     eventSelect.value = selectedEventTicker;
   }
 
   const capitalSelect = document.querySelector('#capital-ticker');
-  const selectedCapitalTicker = capitalSelect.value || state.capitalLoadedTicker || state.watchlist.find((item) => item.enabled)?.ticker;
-  capitalSelect.innerHTML = `<option value="">请选择股票</option>${options}`;
-  if (selectedCapitalTicker && state.watchlist.some((item) => item.ticker === selectedCapitalTicker && item.enabled)) {
+  const selectedCapitalTicker = capitalSelect.value || state.capitalLoadedTicker || heldItems[0]?.ticker;
+  capitalSelect.innerHTML = `<option value="">请选择持仓</option>${heldOptions}`;
+  if (selectedCapitalTicker && heldSet.has(selectedCapitalTicker)) {
     capitalSelect.value = selectedCapitalTicker;
   }
 
   const predictionSelect = document.querySelector('#prediction-ticker');
-  const selectedPredictionTicker = predictionSelect.value || state.predictionLoadedTicker || state.watchlist.find((item) => item.enabled)?.ticker;
-  predictionSelect.innerHTML = `<option value="">请选择股票</option>${options}`;
-  if (selectedPredictionTicker && state.watchlist.some((item) => item.ticker === selectedPredictionTicker && item.enabled)) {
+  const selectedPredictionTicker = predictionSelect.value || state.predictionLoadedTicker || heldItems[0]?.ticker;
+  predictionSelect.innerHTML = `<option value="">请选择持仓</option>${heldOptions}`;
+  if (selectedPredictionTicker && heldSet.has(selectedPredictionTicker)) {
     predictionSelect.value = selectedPredictionTicker;
   }
 
   const researchSelect = document.querySelector('#research-ticker');
-  const selectedResearchTicker = researchSelect.value || state.researchLoadedTicker || state.watchlist[0]?.ticker;
-  researchSelect.innerHTML = `<option value="">请选择股票</option>${secOptions}`;
-  if (selectedResearchTicker && state.watchlist.some((item) => item.ticker === selectedResearchTicker)) {
+  const selectedResearchTicker = researchSelect.value || state.researchLoadedTicker || heldItems[0]?.ticker;
+  researchSelect.innerHTML = `<option value="">请选择持仓</option>${heldOptions}`;
+  if (selectedResearchTicker && heldSet.has(selectedResearchTicker)) {
     researchSelect.value = selectedResearchTicker;
   }
 }
@@ -464,6 +469,73 @@ function renderPortfolio() {
     </tr>`).join('');
   document.querySelector('#positions-empty').classList.toggle('hidden', held.length > 0);
   document.querySelector('#last-updated').textContent = `更新于 ${new Date(portfolio.asOf || Date.now()).toLocaleString('zh-CN')}`;
+}
+
+function renderQualityMomentum() {
+  const strategy = state.qualityMomentum;
+  const value = (selector, content, className = '') => {
+    const element = document.querySelector(selector);
+    element.textContent = content;
+    element.className = className;
+  };
+  if (!strategy) {
+    value('#qm-capital', '—'); value('#qm-market-value', '—'); value('#qm-pnl', '—'); value('#qm-return', '—');
+    document.querySelector('#qm-empty').classList.remove('hidden');
+    return;
+  }
+  value('#qm-capital', money(strategy.capital));
+  value('#qm-market-value', money(strategy.totals.marketValue));
+  value('#qm-pnl', money(strategy.totals.totalPnl), pnlClass(strategy.totals.totalPnl));
+  value('#qm-return', percent(strategy.totals.totalReturn), pnlClass(strategy.totals.totalReturn));
+  value('#qm-price-date', `行情截至 ${strategy.positions[0]?.priceDate || '—'}`);
+  const status = document.querySelector('#qm-status');
+  status.textContent = strategy.enabled ? '运行中' : '已暂停';
+  status.className = `badge ${strategy.enabled ? 'buy' : ''}`;
+  document.querySelector('#qm-rule').textContent = `${strategy.rebalanceRule}；${strategy.scoring.description}`;
+  document.querySelector('#qm-groups').innerHTML = Object.entries(strategy.groups).map(([group, tickers]) => `
+    <div><strong>${escapeHtml(group)}</strong><span>${tickers.map(escapeHtml).join(' · ')}</span></div>`).join('');
+  const signals = strategy.signals || (strategy.signal ? [strategy.signal] : []);
+  if (!state.qualityMomentumSignalDate || !signals.some((item) => item.signalDate === state.qualityMomentumSignalDate)) {
+    state.qualityMomentumSignalDate = strategy.signal?.signalDate || null;
+  }
+  const displayedSignal = signals.find((item) => item.signalDate === state.qualityMomentumSignalDate) || strategy.signal;
+  const signalSelect = document.querySelector('#qm-signal-select');
+  signalSelect.innerHTML = signals.map((item) => `<option value="${item.signalDate}">${item.signalDate} 评分 → ${item.tradeDate} 调仓</option>`).join('');
+  if (displayedSignal) signalSelect.value = displayedSignal.signalDate;
+  const rankMap = new Map((strategy.signal?.rankings || []).map((item, index) => [item.ticker, { ...item, rank: item.rank || index + 1 }]));
+  document.querySelector('#qm-signal-date').textContent = strategy.signal
+    ? `${strategy.signal.signalDate} 收盘评分 · ${strategy.signal.tradeDate} 收盘建仓` : '';
+  document.querySelector('#qm-positions-body').innerHTML = strategy.positions.map((position) => {
+    const rank = rankMap.get(position.ticker) || {};
+    return `<tr><td>${rank.rank || '—'}</td><td class="ticker">${escapeHtml(position.ticker)}</td><td>${escapeHtml(position.group)}</td>
+      <td>${decimal(rank.combined, 4)}</td><td>${percent(position.targetWeight)}</td><td>${money(position.entryPrice)}</td>
+      <td>${decimal(position.quantity, 6)}</td><td>${money(position.targetValue)}</td>
+      <td class="${pnlClass(position.totalPnl)}">${money(position.totalPnl)}</td><td class="${pnlClass(position.totalReturn)}">${percent(position.totalReturn)}</td></tr>`;
+  }).join('');
+  document.querySelector('#qm-empty').classList.toggle('hidden', strategy.positions.length > 0);
+  const actionLabels = { BUY: '买入', SELL: '卖出', INCREASE: '加仓', REDUCE: '减仓', HOLD: '保留' };
+  const actionClasses = { BUY: 'buy', INCREASE: 'buy', SELL: 'sell', REDUCE: 'sell', HOLD: '' };
+  const rebalance = displayedSignal?.rebalance || [];
+  const summary = displayedSignal?.rebalanceSummary;
+  document.querySelector('#qm-rebalance-summary').textContent = displayedSignal
+    ? `${displayedSignal.signalDate} 信号 · ${displayedSignal.tradeDate} 执行 · 买入 ${money(summary?.buyCash || 0)} · 卖出回笼 ${money(summary?.sellCash || 0)}` : '';
+  document.querySelector('#qm-rebalance-body').innerHTML = rebalance.map((item) => `
+    <tr><td><span class="badge ${actionClasses[item.action] || ''}">${actionLabels[item.action] || item.action}</span></td>
+    <td class="ticker">${escapeHtml(item.ticker)}</td><td>${decimal(item.previousQuantity, 6)}</td>
+    <td>${decimal(item.targetQuantity, 6)}</td><td class="${pnlClass(-item.deltaQuantity)}">${item.deltaQuantity > 0 ? '+' : ''}${decimal(item.deltaQuantity, 6)}</td>
+    <td>${money(item.executionPrice)}</td><td>${money(item.cashAmount)}</td><td>${percent(item.targetWeight)}</td>
+    <td>${escapeHtml(item.reason)}</td></tr>`).join('');
+  document.querySelector('#qm-rebalance-empty').classList.toggle('hidden', rebalance.length > 0);
+  document.querySelector('#qm-ranking-body').innerHTML = (displayedSignal?.rankings || []).map((item, index) => `
+    <tr><td>${item.rank || index + 1}</td><td class="ticker">${escapeHtml(item.ticker)}</td><td>${escapeHtml(item.group)}</td>
+    <td>${decimal(item.qualityRank, 4)}</td><td>${decimal(item.momentumRank, 4)}</td><td>${decimal(item.combined, 4)}</td>
+    <td><span class="badge ${item.selected ? 'buy' : ''}">${item.selected ? '入选' : '未入选'}</span></td>
+    <td>${escapeHtml(item.selectionReason || (item.selected ? '入选' : '综合排名未入选'))}</td></tr>`).join('');
+  document.querySelector('#qm-history-body').innerHTML = signals.map((item) => `
+    <tr><td><button class="edit-link" data-qm-signal-date="${item.signalDate}">${item.signalDate}</button></td>
+    <td>${item.tradeDate}</td><td>${item.rankings.length}</td><td>${item.selected.map((row) => escapeHtml(row.ticker)).join(' · ')}</td>
+    <td>${item.rebalanceSummary?.buyCount || 0}</td><td>${item.rebalanceSummary?.sellCount || 0}</td>
+    <td>${item.rebalanceSummary?.holdCount || 0}</td><td class="${pnlClass(item.rebalanceSummary?.netCash)}">${money(item.rebalanceSummary?.netCash || 0)}</td></tr>`).join('');
 }
 
 function renderPortfolioRisk() {
@@ -1692,12 +1764,49 @@ function researchMetricValue(value, unit) {
   return decimal(value, 4);
 }
 
+function researchAccuracyPercent(value) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const normalized = Math.abs(Number(value)) > 1 ? Number(value) : Number(value) * 100;
+  return `${decimal(normalized, 2)}%`;
+}
+
 function researchTable(headers, rows) {
   return `<div class="table-wrap"><table><thead><tr>${headers.map((item) => `<th>${escapeHtml(item)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
 }
 
+function researchAuditDetails(data) {
+  return `<details class="research-audit"><summary>查看冻结结构化数据</summary><pre class="research-json">${escapeHtml(researchValue(data))}</pre></details>`;
+}
+
+function researchAdviceRows(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.advice)) return value.advice;
+  if (Array.isArray(value?.recommendations)) return value.recommendations;
+  return [];
+}
+
+function researchFacts(items) {
+  return `<div class="research-facts">${items.map((item) => `<div class="research-fact"><span>${escapeHtml(item.label)}</span><strong class="${escapeHtml(item.className || '')}">${escapeHtml(item.value ?? '数据不足')}</strong>${item.note ? `<small>${escapeHtml(item.note)}</small>` : ''}</div>`).join('')}</div>`;
+}
+
 function researchSectionMarkup(section) {
   const data = section.data || {};
+  if (section.key === 'summary') {
+    const position = data.position || {};
+    const advice = researchAdviceRows(data.advice);
+    const adviceTable = advice.length ? researchTable(['期限', '研究倾向', '建议动作', '置信度', '发布状态'], advice.map((item) => `<tr>
+      <td>${escapeHtml(item.horizonLabel || predictionHorizonLabels[item.horizonDays] || '—')}</td>
+      <td>${escapeHtml(item.stance || '—')}</td><td>${escapeHtml(item.actionLabel || item.action || '—')}</td>
+      <td>${decimal(item.confidenceScore, 1)}分</td><td>${escapeHtml(item.publicationStatus || '—')}</td>
+    </tr>`)) : '<div class="empty">当前没有可展示的条件式建议。</div>';
+    const highlights = (data.highlights || []).map((item) => `<li><strong>${escapeHtml(item.title || '未命名事件')}</strong><span>${escapeHtml(item.event_date || '日期缺失')} · ${escapeHtml(item.severity || '未评级')}</span></li>`).join('');
+    return `${researchFacts([
+      { label: '分析价格', value: money(position.currentPrice), note: position.priceDate || '行情日期缺失' },
+      { label: '当日涨跌', value: percent(position.dailyReturn), className: pnlClass(position.dailyReturn), note: position.priceDataStatus || '口径未知' },
+      { label: '报告完整度', value: data.researchStatus || 'UNKNOWN', note: data.researchStatus === 'COMPLETE' ? '核心数据完整' : '存在缺失或受限数据' },
+      { label: '正式发布预测', value: `${data.publishedPredictionCount || 0} 个期限`, note: '未通过闸门不展示目标值' }
+    ])}<h3 class="research-subtitle">分期限结论</h3>${adviceTable}<h3 class="research-subtitle">近期重点事件</h3>${highlights ? `<ul class="research-highlight-list">${highlights}</ul>` : '<div class="empty">当前没有重点事件。</div>'}${researchAuditDetails(data)}`;
+  }
   if (section.key === 'operations') {
     const operating = data.operating || {};
     const latest = operating.latest;
@@ -1707,18 +1816,43 @@ function researchSectionMarkup(section) {
       <td>${percent(metric.sequentialChange?.percent)}</td><td>${percent(metric.yearOverYearChange?.percent)}</td>
       <td>${escapeHtml(metric.source?.periodEnd || '—')}</td>
     </tr>`);
-    return `<p class="research-summary-note">${escapeHtml(operating.template?.label || '通用模板')} · ${escapeHtml(operating.accountingScope?.statementScope || '')}</p>${researchTable(['指标', '最新值', '环比', '同比', '期间'], rows)}`;
+    return `<p class="research-summary-note">${escapeHtml(operating.template?.label || '通用模板')} · ${escapeHtml(operating.accountingScope?.statementScope || '')}</p>${researchTable(['指标', '最新值', '环比', '同比', '期间'], rows)}${researchFacts([
+      { label: '毛利率', value: percent(latest.calculated?.grossMargin) },
+      { label: '营业利润率', value: percent(latest.calculated?.operatingMargin) },
+      { label: '净利率', value: percent(latest.calculated?.netMargin) },
+      { label: '自由现金流', value: researchMetricValue(latest.calculated?.freeCashFlow, 'USD') },
+      { label: '经营现金转换', value: decimal(latest.calculated?.operatingCashConversion, 2) }
+    ])}${operating.issues?.length ? `<p class="research-warning">${escapeHtml(operating.issues.join('；'))}</p>` : ''}${researchAuditDetails(data)}`;
   }
   if (section.key === 'expectations') {
+    const expected = data.expectations || {};
+    const revision = expected.revision || {};
     const cards = data.thesisCards || [];
-    if (!cards.length) return '<div class="empty">尚无可跟踪论点。</div>';
-    return `<div class="research-thesis-grid">${cards.map((item) => `<div class="research-thesis-card">
+    const unknown = ['actualVsConsensus', 'companyGuidance', 'revenueConsensus'].map((key) => expected[key]).filter((item) => item?.status === 'UNAVAILABLE');
+    return `${researchFacts([
+      { label: 'NTM预期EPS', value: decimal(expected.ntmEps, 2), note: expected.estimate?.source || '来源缺失' },
+      { label: '同业动态PE中位数', value: expected.peerForwardPeMedian == null ? '数据不足' : `${decimal(expected.peerForwardPeMedian, 2)}×` },
+      { label: '7日EPS修订', value: percent(revision.sevenDay?.changePct), className: pnlClass(revision.sevenDay?.changePct) },
+      { label: '30日EPS修订', value: percent(revision.thirtyDay?.changePct), className: pnlClass(revision.thirtyDay?.changePct) }
+    ])}<h3 class="research-subtitle">核心论点</h3>${cards.length ? `<div class="research-thesis-grid">${cards.map((item) => `<div class="research-thesis-card">
       <div><span class="badge ${item.status === 'STRENGTHENED' ? 'PUBLISHED' : item.status === 'FALSIFIED' ? 'P1' : 'P2'}">${escapeHtml(item.status)}</span><strong>${escapeHtml(item.title)}</strong></div>
       <small>${escapeHtml(item.horizon)} · ${escapeHtml(item.affectedVariable)}</small>
       <p>${escapeHtml(item.unknownReason || `支持证据 ${item.supportingEvidence?.length || 0} 条，反对证据 ${item.opposingEvidence?.length || 0} 条`)}</p>
-    </div>`).join('')}</div>`;
+    </div>`).join('')}</div>` : '<div class="empty">尚无可跟踪论点。</div>'}${unknown.length ? `<div class="research-unknown-list">${unknown.map((item) => `<p><strong>数据受限</strong>${escapeHtml(item.reason)}</p>`).join('')}</div>` : ''}${researchAuditDetails(data)}`;
+  }
+  if (section.key === 'earnings') {
+    const latest = data.operatingTrend?.latest;
+    const periods = (data.operatingTrend?.quarterly || []).slice(0, 6);
+    const rows = periods.map((item) => `<tr><td>${escapeHtml(item.periodEnd)}</td><td>${researchMetricValue(item.metrics?.revenue?.value, 'USD')}</td><td>${researchMetricValue(item.metrics?.operatingIncome?.value, 'USD')}</td><td>${researchMetricValue(item.metrics?.netIncome?.value, 'USD')}</td><td>${decimal(item.metrics?.epsDiluted?.value, 2)}</td></tr>`);
+    return `${researchFacts([
+      { label: 'TTM EPS', value: decimal(data.ttmEps, 2), note: data.ttmMethod || '计算口径缺失' },
+      { label: 'NTM EPS', value: decimal(data.ntmEps, 2), note: data.estimate?.source || '一致预期缺失' },
+      { label: '最新财务期间', value: latest?.periodEnd || '数据不足', note: latest?.form || '' },
+      { label: '最新摊薄EPS', value: decimal(latest?.metrics?.epsDiluted?.value, 2), note: latest?.comparison?.yearAgoPeriodEnd ? `同比基期 ${latest.comparison.yearAgoPeriodEnd}` : '同比基期缺失' }
+    ])}<h3 class="research-subtitle">最近季度盈利趋势</h3>${rows.length ? researchTable(['季度', '收入', '营业利润', '净利润', '摊薄EPS'], rows) : '<div class="empty">没有可用季度盈利序列。</div>'}<p class="${data.estimate?.source ? 'research-summary-note' : 'research-warning'}">${escapeHtml(data.estimate?.source ? `预期来源：${data.estimate.source}；基准日：${data.estimate.asOf || '未记录'}` : '缺少财报发布前一致预期快照，不能判断超预期或低于预期。')}</p>${researchAuditDetails(data)}`;
   }
   if (section.key === 'valuation') {
+    const current = data.current || {};
     const scenarios = data.scenarios || {};
     const rows = (scenarios.scenarios || []).map((item) => `<tr>
       <td>${escapeHtml(item.label)}</td><td>${decimal(item.eps, 2)}</td><td>${decimal(item.pe, 2)}×</td>
@@ -1726,12 +1860,39 @@ function researchSectionMarkup(section) {
       <td>${escapeHtml(item.epsSource)} / ${escapeHtml(item.peSource)}</td>
     </tr>`);
     const table = rows.length ? researchTable(['情景', 'NTM EPS', 'PE', '条件估值', '相对分析价', '依据'], rows) : `<div class="empty">${escapeHtml(scenarios.issues?.join('；') || 'PE条件估值不可用。')}</div>`;
-    return `<p class="research-scenario-warning">${escapeHtml(scenarios.publicationIsolation || '')}</p>${table}`;
+    return `${researchFacts([
+      { label: '静态PE', value: current.staticPe == null ? '数据不足' : `${decimal(current.staticPe, 2)}×`, note: '分析价 ÷ TTM EPS' },
+      { label: '动态PE', value: current.forwardPe == null ? '数据不足' : `${decimal(current.forwardPe, 2)}×`, note: '分析价 ÷ NTM EPS' },
+      { label: 'TTM EPS', value: decimal(current.ttmEps, 2) },
+      { label: 'NTM EPS', value: decimal(current.forwardEps, 2) },
+      { label: '同业动态PE中位数', value: data.peers?.forwardPeMedian == null ? '数据不足' : `${decimal(data.peers.forwardPeMedian, 2)}×` }
+    ])}<p class="research-scenario-warning">${escapeHtml(scenarios.publicationIsolation || '估值情景是条件演示，不等同于正式价格预测。')}</p>${table}${researchAuditDetails(data)}`;
+  }
+  if (section.key === 'market') {
+    const position = data.position || {};
+    const flow = data.capitalFlow || {};
+    const intraday = data.intradayFlow || {};
+    const behavior = data.capitalBehavior?.latest || data.capitalBehavior || {};
+    const rows = (data.capitalHistory || []).slice(0, 10).map((item) => `<tr>
+      <td>${escapeHtml(item.priceDate || item.asOf || '—')}</td><td>${money(item.close)}</td>
+      <td class="${pnlClass(item.dailyReturn)}">${percent(item.dailyReturn)}</td><td>${Number(item.volume || 0).toLocaleString('zh-CN')}</td>
+      <td>${item.relativeVolume == null ? '—' : `${decimal(item.relativeVolume, 2)}倍`}</td><td>${escapeHtml(item.signalLabel || '—')}</td>
+    </tr>`);
+    return `${researchFacts([
+      { label: '收盘价', value: money(position.currentPrice), note: position.priceDate || '日期缺失' },
+      { label: '当日涨跌', value: percent(position.dailyReturn), className: pnlClass(position.dailyReturn) },
+      { label: '日线资金信号', value: flow.signalLabel || '数据不足' },
+      { label: '连续资金阶段', value: behavior.stageLabel || '数据不足' },
+      { label: '主动成交信号', value: intraday.signalLabel || '数据不足' },
+      { label: '20日量比', value: flow.metrics?.relativeVolume == null ? '数据不足' : `${decimal(flow.metrics.relativeVolume, 2)}倍` }
+    ])}<p class="research-summary-note">${escapeHtml(flow.explanation || '公开成交数据只能用于概率推断，不能确认机构或最终账户身份。')}</p><h3 class="research-subtitle">最近10个交易日</h3>${rows.length ? researchTable(['日期', '收盘', '涨跌', '成交量', '量比', '资金行为'], rows) : '<div class="empty">暂无连续资金行为数据。</div>'}${researchAuditDetails(data)}`;
   }
   if (section.key === 'risks') {
     const chains = data.transmissionChains || [];
     const rows = chains.map((item) => `<tr><td>${escapeHtml(item.eventDate)}</td><td>${escapeHtml(item.eventTitle)}</td><td>${escapeHtml(item.direction)}</td><td>${escapeHtml(item.exposedBusiness)}</td><td>${escapeHtml(item.affectedVariable)}</td><td>${escapeHtml(item.horizon)}</td><td>${escapeHtml(item.verificationCondition)}</td></tr>`);
-    return rows.length ? researchTable(['日期', '事件', '方向', '暴露', '影响变量', '期限', '验证条件'], rows) : '<div class="empty">当前没有可构造传导链的事件。</div>';
+    const advice = researchAdviceRows(data.advice);
+    const adviceMarkup = advice.length ? `<div class="research-advice-list">${advice.map((item) => `<article><strong>${escapeHtml(item.horizonLabel || predictionHorizonLabels[item.horizonDays] || '条件式建议')}</strong><span>${escapeHtml(item.actionLabel || item.action || item.stance || '等待验证')}</span><p>${escapeHtml(item.advice || item.reason || '需结合验证条件复核。')}</p></article>`).join('')}</div>` : '<div class="empty">当前没有可展示的条件式建议。</div>';
+    return `<h3 class="research-subtitle">条件式研究建议</h3>${adviceMarkup}<p class="research-warning">${escapeHtml(data.advicePolicy || '所有建议均为复核提示，不执行自动交易。')}</p><h3 class="research-subtitle">事件传导链</h3>${rows.length ? researchTable(['日期', '事件', '方向', '暴露', '影响变量', '期限', '验证条件'], rows) : '<div class="empty">当前没有可构造传导链的事件。</div>'}${researchAuditDetails(data)}`;
   }
   if (section.key === 'forecast') {
     const rows = (data.predictions || []).map((item) => `<tr>
@@ -1740,9 +1901,22 @@ function researchSectionMarkup(section) {
       <td>${escapeHtml(item.publication_status || '—')}</td><td>${item.publication_status === 'PUBLISHED' ? percent(item.return_p50) : '未发布'}</td>
       <td>${item.publication_status === 'PUBLISHED' ? money(item.price_p50) : '未通过发布闸门'}</td>
     </tr>`);
-    return `<p class="research-summary-note">${escapeHtml(data.publicationNote || '')}</p>${rows.length ? researchTable(['期限', '目标日', '方向', '发布状态', '预期收益', 'P50'], rows) : '<div class="empty">尚无预测记录。</div>'}`;
+    const reliabilityRows = (data.reliability || []).map((item) => `<tr><td>${predictionHorizonLabels[item.horizon_days] || `${item.horizon_days}日`}</td><td>${item.effective_samples ?? '—'}</td><td>${researchAccuracyPercent(item.direction_accuracy)}</td><td>${decimal(item.composite_score, 1)}分</td><td>${escapeHtml(item.status || '—')}</td></tr>`);
+    return `<p class="research-warning">${escapeHtml(data.publicationNote || '未通过发布闸门的预测不展示正式目标价和收益区间。')}</p>${rows.length ? researchTable(['期限', '目标日', '方向', '发布状态', '预期收益', 'P50'], rows) : '<div class="empty">尚无预测记录。</div>'}<h3 class="research-subtitle">历史验证与综合可靠度</h3>${reliabilityRows.length ? researchTable(['期限', '有效样本', '方向准确率', '综合可靠度', '状态'], reliabilityRows) : '<div class="empty">历史样本仍在积累，尚不能形成可靠度结论。</div>'}${researchAuditDetails(data)}`;
   }
-  return `<details><summary>查看冻结结构化数据</summary><pre class="research-json">${escapeHtml(researchValue(data))}</pre></details>`;
+  if (section.key === 'methodology') {
+    const evidence = data.evidence || [];
+    const limitations = data.limitations || [];
+    const sourceRows = evidence.slice(0, 20).map((item) => `<tr><td>${escapeHtml(item.id || '—')}</td><td>${escapeHtml(item.publishedAt || '—')}</td><td>${escapeHtml(item.sourceType || '—')}</td><td>${escapeHtml(item.title || '—')}</td></tr>`);
+    return `${researchFacts([
+      { label: '研究截止', value: data.asOf || '数据不足' },
+      { label: '行情日期', value: data.priceDate || '数据不足' },
+      { label: '结构版本', value: data.schemaVersion || '数据不足' },
+      { label: '模板版本', value: data.templateVersion || '数据不足' },
+      { label: '证据数量', value: `${evidence.length} 条` }
+    ])}<h3 class="research-subtitle">数据与方法限制</h3>${limitations.length ? `<ul class="research-highlight-list">${limitations.map((item) => `<li><span>${escapeHtml(item)}</span></li>`).join('')}</ul>` : '<div class="empty">当前未记录额外限制。</div>'}<h3 class="research-subtitle">冻结证据索引</h3>${sourceRows.length ? researchTable(['编号', '日期', '类型', '来源标题'], sourceRows) : '<div class="empty">暂无冻结证据。</div>'}${evidence.length > 20 ? `<p class="research-summary-note">页面先展示20条，完整证据索引见页面底部。</p>` : ''}${researchAuditDetails(data)}`;
+  }
+  return researchAuditDetails(data);
 }
 
 function renderResearchReport() {
@@ -1871,14 +2045,14 @@ async function loadResearchReports(preferredId = null) {
 }
 
 async function loadAll() {
-  const [watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment] = await Promise.all([
+  const [watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment, qualityMomentum] = await Promise.all([
     api('/api/watchlist'), api('/api/portfolio'), api('/api/portfolio/risk'), api('/api/transactions'),
     api('/api/notifications'), api('/api/reviews'), api('/api/config'),
     api(`/api/performance/monthly?month=${currentEtMonth()}`), api('/api/events?severity=ALL&limit=200'),
-    api('/api/news?limit=100'), api('/api/news/sentiment')
+    api('/api/news?limit=100'), api('/api/news/sentiment'), api('/api/strategies/quality-momentum')
   ]);
-  Object.assign(state, { watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment });
-  renderWatchlist(); renderPortfolio(); renderPortfolioRisk(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig(); renderDailyOperations();
+  Object.assign(state, { watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment, qualityMomentum });
+  renderWatchlist(); renderPortfolio(); renderPortfolioRisk(); renderQualityMomentum(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig(); renderDailyOperations();
 }
 
 function formData(form) {
@@ -1946,6 +2120,11 @@ document.body.addEventListener('click', async (event) => {
   }
   const monthlyTicker = event.target.closest('[data-monthly-ticker]');
   if (monthlyTicker) openMonthlyDetail(monthlyTicker.dataset.monthlyTicker);
+  const qualityMomentumSignal = event.target.closest('[data-qm-signal-date]');
+  if (qualityMomentumSignal) {
+    state.qualityMomentumSignalDate = qualityMomentumSignal.dataset.qmSignalDate;
+    renderQualityMomentum();
+  }
   const toggle = event.target.closest('[data-toggle-ticker]');
   if (toggle) {
     try {
@@ -1994,6 +2173,11 @@ document.querySelector('#watchlist-form').addEventListener('submit', async (even
 });
 
 document.querySelector('#watchlist-cancel-edit').addEventListener('click', resetWatchlistForm);
+
+document.querySelector('#qm-signal-select').addEventListener('change', (event) => {
+  state.qualityMomentumSignalDate = event.target.value || null;
+  renderQualityMomentum();
+});
 
 document.querySelector('#sec-ticker').addEventListener('change', () => {
   state.secLoadedTicker = null;

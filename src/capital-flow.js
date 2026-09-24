@@ -1,6 +1,7 @@
 import { nowIso, toPlainRows } from './db.js';
 import { normalizeTicker, parseJson, round } from './domain.js';
 import { createNotification } from './notifications.js';
+import { heldTickers } from './analysis-scope.js';
 
 export const CAPITAL_FLOW_MODEL_VERSION = 'daily-price-volume-flow-v1-2026-09-02';
 export const VOLUME_ALERT_RATIO = 1.5;
@@ -341,9 +342,7 @@ export function saveCapitalFlow(db, tickerValue, asOf) {
 }
 
 export function saveWatchlistCapitalFlow(db, asOf) {
-  return toPlainRows(db.prepare(`
-    SELECT ticker FROM watchlist_items WHERE enabled = 1 ORDER BY ticker
-  `).all()).map(({ ticker }) => {
+  return heldTickers(db, asOf).map((ticker) => {
     try {
       return { ticker, ok: true, analysis: saveCapitalFlow(db, ticker, asOf) };
     } catch (error) {

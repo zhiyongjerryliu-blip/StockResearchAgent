@@ -27,6 +27,7 @@
       <nav id="nav">
         <button class="nav-item active" data-view="dashboard">总览</button>
         <button class="nav-item" data-view="watchlist">股票池</button>
+        <button class="nav-item" data-view="quality-momentum">选股策略</button>
         <button class="nav-item" data-view="financials">财报分析</button>
         <button class="nav-item" data-view="valuation">估值与同业</button>
         <button class="nav-item" data-view="research">个股综合研报</button>
@@ -284,7 +285,7 @@
             <label>对比版本<select id="research-compare-version" aria-label="研报对比版本"><option value="">选择旧版本</option></select></label>
             <button id="compare-research-report" class="button secondary" disabled>对比变化</button>
             <button id="generate-research-report" class="button primary">生成/更新研报</button>
-            <a id="export-research-report" class="button secondary disabled" href="#" aria-disabled="true">导出HTML</a>
+            <a id="export-research-report" class="button secondary disabled" href="#" aria-disabled="true">导出PDF</a>
           </div>
         </article>
         <article id="research-summary" class="panel research-summary">
@@ -551,6 +552,38 @@
             </form>
           </article>
         </div>
+      </section>
+
+      <section class="view" id="view-quality-momentum">
+        <div class="metric-grid">
+          <article class="metric-card"><span>策略资金</span><strong id="qm-capital">—</strong><small>初始模拟资金</small></article>
+          <article class="metric-card"><span>当前市值</span><strong id="qm-market-value">—</strong><small id="qm-price-date">尚无策略持仓</small></article>
+          <article class="metric-card"><span>策略盈亏</span><strong id="qm-pnl">—</strong><small>相对9月1日收盘建仓</small></article>
+          <article class="metric-card"><span>策略收益率</span><strong id="qm-return">—</strong><small>当前持仓合计</small></article>
+        </div>
+        <article class="panel">
+          <div class="panel-head"><div><p class="eyebrow">STOCK SELECTION · QUALITY + MOMENTUM</p><h2>选股策略：质量—动量</h2></div><span id="qm-status" class="badge">尚未配置</span></div>
+          <p id="qm-rule" class="muted">尚未配置策略。</p>
+          <div id="qm-groups" class="strategy-groups"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><p class="eyebrow">CURRENT ALLOCATION</p><h2>当前入选与模拟持仓</h2></div><small id="qm-signal-date" class="muted"></small></div>
+          <div class="table-wrap"><table><thead><tr><th>排名</th><th>股票</th><th>分组</th><th>综合分</th><th>目标权重</th><th>建仓收盘价</th><th>股数</th><th>投入金额</th><th>当前盈亏</th><th>收益率</th></tr></thead><tbody id="qm-positions-body"></tbody></table></div>
+          <div id="qm-empty" class="empty">尚无策略信号。</div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><p class="eyebrow">REBALANCE ORDERS</p><h2>具体调仓数据</h2></div><small id="qm-rebalance-summary" class="muted"></small></div>
+          <div class="table-wrap"><table><thead><tr><th>操作</th><th>股票</th><th>上期目标股数</th><th>本期目标股数</th><th>买卖股数</th><th>计划执行价</th><th>预计资金额</th><th>目标权重</th><th>原因</th></tr></thead><tbody id="qm-rebalance-body"></tbody></table></div>
+          <div id="qm-rebalance-empty" class="empty hidden">本期无调仓数据。</div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><p class="eyebrow">SCORING LEDGER</p><h2>历次选股评分记录</h2></div><label>选股日<select id="qm-signal-select" aria-label="选股记录"></select></label></div>
+          <div class="table-wrap"><table><thead><tr><th>排名</th><th>股票</th><th>分组</th><th>质量分</th><th>动量分</th><th>综合分</th><th>选股结果</th><th>判定依据</th></tr></thead><tbody id="qm-ranking-body"></tbody></table></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><p class="eyebrow">SELECTION HISTORY</p><h2>选股与调仓历史</h2></div><small class="muted">每次信号永久保留</small></div>
+          <div class="table-wrap"><table><thead><tr><th>选股日</th><th>调仓日</th><th>评分数</th><th>入选股票</th><th>买入/加仓</th><th>卖出/减仓</th><th>保留</th><th>净现金变化</th></tr></thead><tbody id="qm-history-body"></tbody></table></div>
+        </article>
       </section>
 
       <section class="view" id="view-transactions">

@@ -169,6 +169,10 @@ h2 { font-size: 17px; margin-bottom: 0; }
 
 .view { display: none; }.view.active { display: block; }
 .metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.strategy-groups { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-top:18px; }
+.strategy-groups div { background:var(--surface); border:1px solid var(--line-soft); border-radius:8px; padding:12px; }
+.strategy-groups strong,.strategy-groups span { display:block; }
+.strategy-groups span { color:var(--muted); margin-top:4px; font-size:13px; }
 .system-metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .sec-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
 .metric-card, .panel { border: 1px solid var(--line); background: linear-gradient(145deg, var(--panel), var(--panel-end)); border-radius: var(--radius); }
@@ -567,8 +571,24 @@ code { color: var(--accent); background: var(--code-bg); padding: 2px 5px; borde
 .research-section-body { margin-top: 12px; }
 .research-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
 .research-fact { border: 1px solid var(--line); border-radius: 7px; padding: 10px; background: var(--surface); overflow-wrap: anywhere; }
-.research-fact span,.research-fact strong { display: block; }
+.research-fact span,.research-fact strong,.research-fact small { display: block; }
 .research-fact span { color: var(--muted); font-size: 10px; margin-bottom: 4px; }
+.research-fact small { color: var(--muted); font-size: 10px; margin-top: 5px; }
+.research-subtitle { margin: 18px 0 10px; font-size: 14px; }
+.research-highlight-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.research-highlight-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.research-highlight-list li span { color: var(--muted); font-size: 11px; }
+.research-warning { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--warning); background: var(--surface); color: var(--muted-strong); }
+.research-unknown-list { display: grid; gap: 8px; margin-top: 12px; }
+.research-unknown-list p { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warning); background: var(--surface); color: var(--muted-strong); }
+.research-unknown-list strong { margin-right: 8px; color: var(--warning); }
+.research-audit { margin-top: 16px; padding-top: 10px; border-top: 1px dashed var(--line); color: var(--muted); }
+.research-audit summary { cursor: pointer; font-size: 11px; }
+.research-advice-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.research-advice-list article { padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.research-advice-list strong,.research-advice-list span { display: block; }
+.research-advice-list span { margin: 6px 0; color: var(--accent); font-weight: 750; }
+.research-advice-list p { margin: 0; color: var(--muted); font-size: 11px; }
 .research-json { white-space: pre-wrap; max-height: 260px; overflow: auto; margin: 0; color: var(--muted-strong); font-size: 11px; }
 .research-evidence { display: grid; gap: 8px; }
 .research-evidence a,.research-evidence span { display: grid; grid-template-columns: 52px 110px 1fr; gap: 8px; color: var(--text); text-decoration: none; padding: 9px; border: 1px solid var(--line); border-radius: 7px; }
@@ -627,7 +647,7 @@ code { color: var(--accent); background: var(--code-bg); padding: 2px 5px; borde
   .fixed-target-grid { grid-template-columns: 1fr; }
   .research-toolbar { grid-template-columns: 1fr; }
   .research-actions { justify-content: flex-start; }
-  .research-summary-grid,.research-facts,.research-thesis-grid { grid-template-columns: 1fr; }
+  .research-summary-grid,.research-facts,.research-thesis-grid,.research-advice-list { grid-template-columns: 1fr; }
   .research-diff-item { grid-template-columns: 1fr; }
   .research-diff-arrow { text-align: left; }
 }
