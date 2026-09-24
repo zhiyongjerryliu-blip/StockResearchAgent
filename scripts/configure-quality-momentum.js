@@ -18,42 +18,11 @@ const names = {
   LRCX:'Lam Research',KLAC:'KLA'
 };
 const groupOf = Object.fromEntries(Object.entries(groups).flatMap(([group,tickers]) => tickers.map((ticker) => [ticker,group])));
-const makeRankings = (values, selectedTickers) => values.map(([ticker,qualityRank,momentumRank,combined]) => ({
-  ticker, group:groupOf[ticker], qualityRank, momentumRank, combined, selected:selectedTickers.has(ticker)
-}));
-const juneRankingValues = [
-  ['SNDK',.777778,1,.888889],['MU',.907407,.833333,.870370],['WDC',.629630,.888889,.759259],
-  ['LITE',.185185,.944444,.564815],['AMD',.5,.611111,.555556],['LRCX',.537037,.555556,.546296],
-  ['UMC',.592593,.5,.546296],['TSM',.851852,.166667,.509259],['NVDA',.925926,.055556,.490741],
-  ['STX',.259259,.722222,.490741],['CIEN',.185185,.777778,.481481],['COHR',.203704,.666667,.435185],
-  ['MRVL',.425926,.444444,.435185],['AMAT',.444444,.388889,.416667],['KLAC',.5,.333333,.416667],
-  ['AVGO',.648148,.111111,.379630],['GFS',.481481,.277778,.379630],['ASML',.444444,.222222,.333333]
-];
-const juneSelectedTickers = new Set(['SNDK','MU','LITE','AMD','LRCX']);
-const juneRankings = makeRankings(juneRankingValues,juneSelectedTickers);
-const julyRankingValues = [
-  ['MU',.907407,.944444,.925926],['SNDK',.777778,1,.888889],['WDC',.629630,.888889,.759259],
-  ['UMC',.666667,.611111,.638889],['LRCX',.5,.666667,.583333],['LITE',.185185,.833333,.509259],
-  ['STX',.240741,.777778,.509259],['TSM',.851852,.166667,.509259],['NVDA',.925926,.055556,.490741],
-  ['AMAT',.425926,.555556,.490741],['CIEN',.185185,.722222,.453704],['AMD',.5,.388889,.444444],
-  ['MRVL',.425926,.444444,.435185],['KLAC',.5,.333333,.416667],['AVGO',.648148,.111111,.379630],
-  ['ASML',.444444,.277778,.361111],['COHR',.203704,.5,.351852],['GFS',.481481,.222222,.351852]
-];
-const julySelectedTickers = new Set(['MU','SNDK','UMC','LRCX','LITE']);
-const julyRankings = makeRankings(julyRankingValues,julySelectedTickers);
-const augustRankingValues = [
-  ['SNDK',.870370,1,.935185],['MU',.888889,.944444,.916667],['WDC',.703704,.888889,.796296],
-  ['UMC',.648148,.611111,.629630],['LITE',.277778,.833333,.555556],['AMAT',.407407,.666667,.537037],
-  ['STX',.296296,.777778,.537037],['TSM',.833333,.222222,.527778],['AMD',.5,.5,.5],
-  ['LRCX',.407407,.555556,.481481],['NVDA',.870370,.055556,.462963],['CIEN',.148148,.722222,.435185],
-  ['MRVL',.407407,.388889,.398148],['ASML',.444444,.333333,.388889],['KLAC',.462963,.277778,.370370],
-  ['AVGO',.611111,.111111,.361111],['COHR',.240741,.444444,.342593],['GFS',.481481,.166667,.324074]
-];
-const augustSelectedTickers = new Set(['SNDK','MU','UMC','LITE','AMAT']);
-const augustRankings = makeRankings(augustRankingValues,augustSelectedTickers);
-
 const reportRoot = path.join(config.projectRoot,'dayk_strategy','reports','industry18');
 const snapshot = JSON.parse(fs.readFileSync(path.join(reportRoot,'enriched_snapshot.json'),'utf8'));
+const simulation = JSON.parse(fs.readFileSync(
+  path.join(config.projectRoot,'dayk_strategy','quality_momentum_simulation_signals.json'),'utf8'
+));
 const ciks = Object.fromEntries(universe.map((ticker) => {
   const raw=JSON.parse(fs.readFileSync(path.join(reportRoot,'raw',`${ticker}_sec.json`),'utf8'));
   return [ticker,String(raw.company.cik)];
@@ -78,11 +47,17 @@ function rebalanceSelection(previous, rankings, tradeDate) {
   const portfolioValue = previous.reduce((sum,item) => sum + item.quantity * closes[item.ticker],0);
   return { portfolioValue, selected:targetSelection(rankings,tradeDate,portfolioValue) };
 }
-const cycles = [
-  {signalDate:'2026-06-30',tradeDate:'2026-07-01',rankings:juneRankings},
-  {signalDate:'2026-07-31',tradeDate:'2026-08-03',rankings:julyRankings},
-  {signalDate:'2026-08-31',tradeDate:'2026-09-01',rankings:augustRankings}
-];
+const cycles = simulation.signals.map((signal) => ({
+  ...signal,
+  rankings:signal.rankings.map((row) => ({ ...row,group:groupOf[row.ticker] }))
+}));
+if (cycles[0]?.tradeDate !== '2026-01-02') throw new Error('模拟起始日必须为2026-01-02');
+if (cycles.some((cycle) => cycle.rankings.filter((row) => row.selected).length !== 5)) {
+  throw new Error('每期必须恰好选中5只股票');
+}
+if (cycles.some((cycle) => Object.values(Object.groupBy(
+  cycle.rankings.filter((row) => row.selected),row => row.group
+)).some((rows) => rows.length > 2))) throw new Error('选股结果违反每组最多2只限制');
 cycles[0].portfolioValue=1000000;
 cycles[0].selected=targetSelection(cycles[0].rankings,cycles[0].tradeDate,cycles[0].portfolioValue);
 for (let index=1;index<cycles.length;index+=1) {
@@ -158,11 +133,11 @@ try {
   for (const [index,cycle] of cycles.entries()) {
     saveQualityMomentumStrategy(db,{
       name:'选股策略：质量—动量',capital:1000000,selectionCount:5,maxPerGroup:2,targetWeight:.2,
-      rebalanceRule:'每月最后一个交易日收盘评分，下一交易日执行；2026-07-01首次建仓；每组最多2只；按调仓前组合净值等权配置',
+      rebalanceRule:'每月最后一个交易日收盘评分，下一交易日执行；2026-01-02首次建仓；每组最多2只；按调仓前组合净值等权配置',
       scoring:{qualityWeight:.5,momentumWeight:.5,description:'TTM净利率、TTM经营现金流率和低负债率构成质量分；跳过最近21个交易日的12个月动量构成动量分；两者各占50%'},
       universe,groups,signalDate:cycle.signalDate,tradeDate:cycle.tradeDate,
       rankings:cycle.rankings,selected:cycle.selected,
-      source:{protocol:'dayk_strategy/industry18_protocol.json',report:'dayk_strategy/reports/industry18/summary.json'}
+      source:{protocol:'dayk_strategy/industry18_protocol.json',report:'dayk_strategy/reports/industry18/summary.json',signals:'dayk_strategy/quality_momentum_simulation_signals.json'}
     });
     const currentQuantities=new Map(previousSelected.map((item) => [item.ticker,item.quantity]));
     const targetQuantities=new Map(cycle.selected.map((item) => [item.ticker,item.quantity]));

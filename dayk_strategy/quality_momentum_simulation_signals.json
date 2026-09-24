@@ -1,0 +1,1339 @@
+{
+  "source": "dayk_strategy/reports/industry18/decision_rankings.csv",
+  "signals": [
+    {
+      "signalDate": "2025-12-31",
+      "tradeDate": "2026-01-02",
+      "rankings": [
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.764706,
+          "momentumRank": 0.823529,
+          "combined": 0.794118,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.392157,
+          "momentumRank": 0.941176,
+          "combined": 0.666667,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.568627,
+          "momentumRank": 0.705882,
+          "combined": 0.637255,
+          "selected": true
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.568627,
+          "momentumRank": 0.647059,
+          "combined": 0.607843,
+          "selected": true
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.921569,
+          "momentumRank": 0.294118,
+          "combined": 0.607843,
+          "selected": true
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.72549,
+          "momentumRank": 0.470588,
+          "combined": 0.598039,
+          "selected": false
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.941176,
+          "momentumRank": 0.235294,
+          "combined": 0.588235,
+          "selected": false
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.137255,
+          "momentumRank": 1.0,
+          "combined": 0.568627,
+          "selected": false
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.529412,
+          "momentumRank": 0.588235,
+          "combined": 0.558824,
+          "selected": false
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.215686,
+          "momentumRank": 0.882353,
+          "combined": 0.54902,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.235294,
+          "momentumRank": 0.764706,
+          "combined": 0.5,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.509804,
+          "momentumRank": 0.411765,
+          "combined": 0.460784,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.509804,
+          "momentumRank": 0.352941,
+          "combined": 0.431373,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.294118,
+          "momentumRank": 0.529412,
+          "combined": 0.411765,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.588235,
+          "momentumRank": 0.176471,
+          "combined": 0.382353,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.627451,
+          "momentumRank": 0.058824,
+          "combined": 0.343137,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.470588,
+          "momentumRank": 0.117647,
+          "combined": 0.294118,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-01-30",
+      "tradeDate": "2026-02-02",
+      "rankings": [
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.764706,
+          "momentumRank": 0.882353,
+          "combined": 0.823529,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.392157,
+          "momentumRank": 0.941176,
+          "combined": 0.666667,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.588235,
+          "momentumRank": 0.705882,
+          "combined": 0.647059,
+          "selected": true
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.941176,
+          "momentumRank": 0.352941,
+          "combined": 0.647059,
+          "selected": true
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.921569,
+          "momentumRank": 0.294118,
+          "combined": 0.607843,
+          "selected": true
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.72549,
+          "momentumRank": 0.470588,
+          "combined": 0.598039,
+          "selected": false
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.137255,
+          "momentumRank": 1.0,
+          "combined": 0.568627,
+          "selected": false
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.529412,
+          "momentumRank": 0.588235,
+          "combined": 0.558824,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.235294,
+          "momentumRank": 0.823529,
+          "combined": 0.529412,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.529412,
+          "momentumRank": 0.529412,
+          "combined": 0.529412,
+          "selected": false
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.215686,
+          "momentumRank": 0.764706,
+          "combined": 0.490196,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.529412,
+          "momentumRank": 0.411765,
+          "combined": 0.470588,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.294118,
+          "momentumRank": 0.647059,
+          "combined": 0.470588,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.588235,
+          "momentumRank": 0.176471,
+          "combined": 0.382353,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.509804,
+          "momentumRank": 0.235294,
+          "combined": 0.372549,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.627451,
+          "momentumRank": 0.058824,
+          "combined": 0.343137,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.470588,
+          "momentumRank": 0.117647,
+          "combined": 0.294118,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-02-27",
+      "tradeDate": "2026-03-02",
+      "rankings": [
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.740741,
+          "momentumRank": 0.777778,
+          "combined": 0.759259,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.944444,
+          "combined": 0.731481,
+          "selected": true
+        },
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.407407,
+          "momentumRank": 1.0,
+          "combined": 0.703704,
+          "selected": false
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.555556,
+          "momentumRank": 0.666667,
+          "combined": 0.611111,
+          "selected": true
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.907407,
+          "momentumRank": 0.277778,
+          "combined": 0.592593,
+          "selected": true
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.555556,
+          "momentumRank": 0.555556,
+          "combined": 0.555556,
+          "selected": true
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.925926,
+          "momentumRank": 0.166667,
+          "combined": 0.546296,
+          "selected": false
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.259259,
+          "momentumRank": 0.833333,
+          "combined": 0.546296,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.555556,
+          "momentumRank": 0.5,
+          "combined": 0.527778,
+          "selected": false
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.166667,
+          "momentumRank": 0.888889,
+          "combined": 0.527778,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.444444,
+          "combined": 0.481481,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.722222,
+          "momentumRank": 0.222222,
+          "combined": 0.472222,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.611111,
+          "momentumRank": 0.333333,
+          "combined": 0.472222,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.203704,
+          "momentumRank": 0.722222,
+          "combined": 0.462963,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.388889,
+          "combined": 0.453704,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.277778,
+          "momentumRank": 0.611111,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.574074,
+          "momentumRank": 0.055556,
+          "combined": 0.314815,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.481481,
+          "momentumRank": 0.111111,
+          "combined": 0.296296,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-03-31",
+      "tradeDate": "2026-04-01",
+      "rankings": [
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.888889,
+          "momentumRank": 0.777778,
+          "combined": 0.833333,
+          "selected": true
+        },
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.407407,
+          "momentumRank": 1.0,
+          "combined": 0.703704,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.5,
+          "momentumRank": 0.888889,
+          "combined": 0.694444,
+          "selected": false
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.888889,
+          "momentumRank": 0.444444,
+          "combined": 0.666667,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.555556,
+          "momentumRank": 0.611111,
+          "combined": 0.583333,
+          "selected": true
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.148148,
+          "momentumRank": 0.944444,
+          "combined": 0.546296,
+          "selected": true
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.925926,
+          "momentumRank": 0.166667,
+          "combined": 0.546296,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.555556,
+          "combined": 0.537037,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.222222,
+          "momentumRank": 0.833333,
+          "combined": 0.527778,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.537037,
+          "momentumRank": 0.5,
+          "combined": 0.518519,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.259259,
+          "momentumRank": 0.722222,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.648148,
+          "momentumRank": 0.277778,
+          "combined": 0.462963,
+          "selected": false
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.259259,
+          "momentumRank": 0.666667,
+          "combined": 0.462963,
+          "selected": false
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.555556,
+          "momentumRank": 0.333333,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.5,
+          "momentumRank": 0.388889,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.611111,
+          "momentumRank": 0.222222,
+          "combined": 0.416667,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.537037,
+          "momentumRank": 0.111111,
+          "combined": 0.324074,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.537037,
+          "momentumRank": 0.055556,
+          "combined": 0.296296,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-04-30",
+      "tradeDate": "2026-05-01",
+      "rankings": [
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.888889,
+          "momentumRank": 0.722222,
+          "combined": 0.805556,
+          "selected": true
+        },
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.407407,
+          "momentumRank": 1.0,
+          "combined": 0.703704,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.481481,
+          "momentumRank": 0.888889,
+          "combined": 0.685185,
+          "selected": false
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.888889,
+          "momentumRank": 0.388889,
+          "combined": 0.638889,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.574074,
+          "momentumRank": 0.611111,
+          "combined": 0.592593,
+          "selected": true
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.333333,
+          "momentumRank": 0.777778,
+          "combined": 0.555556,
+          "selected": false
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.148148,
+          "momentumRank": 0.944444,
+          "combined": 0.546296,
+          "selected": true
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.925926,
+          "momentumRank": 0.166667,
+          "combined": 0.546296,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.555556,
+          "combined": 0.537037,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.222222,
+          "momentumRank": 0.833333,
+          "combined": 0.527778,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.555556,
+          "momentumRank": 0.5,
+          "combined": 0.527778,
+          "selected": false
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.537037,
+          "momentumRank": 0.444444,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.259259,
+          "momentumRank": 0.666667,
+          "combined": 0.462963,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.648148,
+          "momentumRank": 0.222222,
+          "combined": 0.435185,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.462963,
+          "momentumRank": 0.333333,
+          "combined": 0.398148,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.277778,
+          "combined": 0.398148,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.611111,
+          "momentumRank": 0.111111,
+          "combined": 0.361111,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.518519,
+          "momentumRank": 0.055556,
+          "combined": 0.287037,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-05-29",
+      "tradeDate": "2026-06-01",
+      "rankings": [
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.777778,
+          "momentumRank": 1.0,
+          "combined": 0.888889,
+          "selected": true
+        },
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.87037,
+          "momentumRank": 0.722222,
+          "combined": 0.796296,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.648148,
+          "momentumRank": 0.888889,
+          "combined": 0.768519,
+          "selected": false
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.87037,
+          "momentumRank": 0.333333,
+          "combined": 0.601852,
+          "selected": true
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.203704,
+          "momentumRank": 0.944444,
+          "combined": 0.574074,
+          "selected": true
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.5,
+          "momentumRank": 0.611111,
+          "combined": 0.555556,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.537037,
+          "momentumRank": 0.555556,
+          "combined": 0.546296,
+          "selected": false
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.259259,
+          "momentumRank": 0.777778,
+          "combined": 0.518519,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.166667,
+          "momentumRank": 0.833333,
+          "combined": 0.5,
+          "selected": false
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.925926,
+          "momentumRank": 0.055556,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.425926,
+          "momentumRank": 0.5,
+          "combined": 0.462963,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.444444,
+          "momentumRank": 0.444444,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.222222,
+          "momentumRank": 0.666667,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.5,
+          "momentumRank": 0.388889,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.592593,
+          "momentumRank": 0.222222,
+          "combined": 0.407407,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.62963,
+          "momentumRank": 0.111111,
+          "combined": 0.37037,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.444444,
+          "momentumRank": 0.277778,
+          "combined": 0.361111,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.481481,
+          "momentumRank": 0.166667,
+          "combined": 0.324074,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-06-30",
+      "tradeDate": "2026-07-01",
+      "rankings": [
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.777778,
+          "momentumRank": 1.0,
+          "combined": 0.888889,
+          "selected": true
+        },
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.907407,
+          "momentumRank": 0.833333,
+          "combined": 0.87037,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.62963,
+          "momentumRank": 0.888889,
+          "combined": 0.759259,
+          "selected": false
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.185185,
+          "momentumRank": 0.944444,
+          "combined": 0.564815,
+          "selected": true
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.5,
+          "momentumRank": 0.611111,
+          "combined": 0.555556,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.537037,
+          "momentumRank": 0.555556,
+          "combined": 0.546296,
+          "selected": true
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.592593,
+          "momentumRank": 0.5,
+          "combined": 0.546296,
+          "selected": false
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.851852,
+          "momentumRank": 0.166667,
+          "combined": 0.509259,
+          "selected": false
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.925926,
+          "momentumRank": 0.055556,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.259259,
+          "momentumRank": 0.722222,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.185185,
+          "momentumRank": 0.777778,
+          "combined": 0.481481,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.203704,
+          "momentumRank": 0.666667,
+          "combined": 0.435185,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.425926,
+          "momentumRank": 0.444444,
+          "combined": 0.435185,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.444444,
+          "momentumRank": 0.388889,
+          "combined": 0.416667,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.5,
+          "momentumRank": 0.333333,
+          "combined": 0.416667,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.648148,
+          "momentumRank": 0.111111,
+          "combined": 0.37963,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.481481,
+          "momentumRank": 0.277778,
+          "combined": 0.37963,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.444444,
+          "momentumRank": 0.222222,
+          "combined": 0.333333,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-07-31",
+      "tradeDate": "2026-08-03",
+      "rankings": [
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.907407,
+          "momentumRank": 0.944444,
+          "combined": 0.925926,
+          "selected": true
+        },
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.777778,
+          "momentumRank": 1.0,
+          "combined": 0.888889,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.62963,
+          "momentumRank": 0.888889,
+          "combined": 0.759259,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.666667,
+          "momentumRank": 0.611111,
+          "combined": 0.638889,
+          "selected": true
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.5,
+          "momentumRank": 0.666667,
+          "combined": 0.583333,
+          "selected": true
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.185185,
+          "momentumRank": 0.833333,
+          "combined": 0.509259,
+          "selected": true
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.240741,
+          "momentumRank": 0.777778,
+          "combined": 0.509259,
+          "selected": false
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.851852,
+          "momentumRank": 0.166667,
+          "combined": 0.509259,
+          "selected": false
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.425926,
+          "momentumRank": 0.555556,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.925926,
+          "momentumRank": 0.055556,
+          "combined": 0.490741,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.185185,
+          "momentumRank": 0.722222,
+          "combined": 0.453704,
+          "selected": false
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.5,
+          "momentumRank": 0.388889,
+          "combined": 0.444444,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.425926,
+          "momentumRank": 0.444444,
+          "combined": 0.435185,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.5,
+          "momentumRank": 0.333333,
+          "combined": 0.416667,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.648148,
+          "momentumRank": 0.111111,
+          "combined": 0.37963,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.444444,
+          "momentumRank": 0.277778,
+          "combined": 0.361111,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.203704,
+          "momentumRank": 0.5,
+          "combined": 0.351852,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.481481,
+          "momentumRank": 0.222222,
+          "combined": 0.351852,
+          "selected": false
+        }
+      ]
+    },
+    {
+      "signalDate": "2026-08-31",
+      "tradeDate": "2026-09-01",
+      "rankings": [
+        {
+          "ticker": "SNDK",
+          "group": "存储",
+          "qualityRank": 0.87037,
+          "momentumRank": 1.0,
+          "combined": 0.935185,
+          "selected": true
+        },
+        {
+          "ticker": "MU",
+          "group": "存储",
+          "qualityRank": 0.888889,
+          "momentumRank": 0.944444,
+          "combined": 0.916667,
+          "selected": true
+        },
+        {
+          "ticker": "WDC",
+          "group": "存储",
+          "qualityRank": 0.703704,
+          "momentumRank": 0.888889,
+          "combined": 0.796296,
+          "selected": false
+        },
+        {
+          "ticker": "UMC",
+          "group": "晶圆制造",
+          "qualityRank": 0.648148,
+          "momentumRank": 0.611111,
+          "combined": 0.62963,
+          "selected": true
+        },
+        {
+          "ticker": "LITE",
+          "group": "光通信",
+          "qualityRank": 0.277778,
+          "momentumRank": 0.833333,
+          "combined": 0.555556,
+          "selected": true
+        },
+        {
+          "ticker": "AMAT",
+          "group": "半导体设备",
+          "qualityRank": 0.407407,
+          "momentumRank": 0.666667,
+          "combined": 0.537037,
+          "selected": true
+        },
+        {
+          "ticker": "STX",
+          "group": "存储",
+          "qualityRank": 0.296296,
+          "momentumRank": 0.777778,
+          "combined": 0.537037,
+          "selected": false
+        },
+        {
+          "ticker": "TSM",
+          "group": "晶圆制造",
+          "qualityRank": 0.833333,
+          "momentumRank": 0.222222,
+          "combined": 0.527778,
+          "selected": false
+        },
+        {
+          "ticker": "AMD",
+          "group": "芯片设计",
+          "qualityRank": 0.5,
+          "momentumRank": 0.5,
+          "combined": 0.5,
+          "selected": false
+        },
+        {
+          "ticker": "LRCX",
+          "group": "半导体设备",
+          "qualityRank": 0.407407,
+          "momentumRank": 0.555556,
+          "combined": 0.481481,
+          "selected": false
+        },
+        {
+          "ticker": "NVDA",
+          "group": "芯片设计",
+          "qualityRank": 0.87037,
+          "momentumRank": 0.055556,
+          "combined": 0.462963,
+          "selected": false
+        },
+        {
+          "ticker": "CIEN",
+          "group": "光通信",
+          "qualityRank": 0.148148,
+          "momentumRank": 0.722222,
+          "combined": 0.435185,
+          "selected": false
+        },
+        {
+          "ticker": "MRVL",
+          "group": "芯片设计",
+          "qualityRank": 0.407407,
+          "momentumRank": 0.388889,
+          "combined": 0.398148,
+          "selected": false
+        },
+        {
+          "ticker": "ASML",
+          "group": "半导体设备",
+          "qualityRank": 0.444444,
+          "momentumRank": 0.333333,
+          "combined": 0.388889,
+          "selected": false
+        },
+        {
+          "ticker": "KLAC",
+          "group": "半导体设备",
+          "qualityRank": 0.462963,
+          "momentumRank": 0.277778,
+          "combined": 0.37037,
+          "selected": false
+        },
+        {
+          "ticker": "AVGO",
+          "group": "芯片设计",
+          "qualityRank": 0.611111,
+          "momentumRank": 0.111111,
+          "combined": 0.361111,
+          "selected": false
+        },
+        {
+          "ticker": "COHR",
+          "group": "光通信",
+          "qualityRank": 0.240741,
+          "momentumRank": 0.444444,
+          "combined": 0.342593,
+          "selected": false
+        },
+        {
+          "ticker": "GFS",
+          "group": "晶圆制造",
+          "qualityRank": 0.481481,
+          "momentumRank": 0.166667,
+          "combined": 0.324074,
+          "selected": false
+        }
+      ]
+    }
+  ]
+}
