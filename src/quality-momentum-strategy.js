@@ -265,6 +265,7 @@ export function getQualityMomentumStrategy(db) {
   // the strategy's original capital across every monthly rotation.
   const investedCapital = Number(row.capital);
   const marketValue = positions.reduce((sum, item) => sum + Number(item.marketValue || 0), 0);
+  const returnComparison = getQualityMomentumMonthlyPerformance(db).returnComparison || null;
   return {
     strategyKey: row.strategy_key,
     name: row.name,
@@ -280,6 +281,7 @@ export function getQualityMomentumStrategy(db) {
     signal,
     signals,
     positions,
+    returnComparison,
     totals: {
       investedCapital,
       marketValue,
@@ -302,6 +304,61 @@ function monthsBetween(startMonth, endMonth) {
     if (month === 13) { year += 1; month = 1; }
   }
   return months;
+}
+
+function benchmarkValue(db, tickers, capital, startDate, endDate) {
+  if (!tickers.length) return null;
+  const startPrice=db.prepare(`
+    SELECT close FROM prices_daily WHERE ticker = ? AND trade_date = ?
+    ORDER BY CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC LIMIT 1
+  `);
+  const endPrice=db.prepare(`
+    SELECT close FROM prices_daily WHERE ticker = ? AND trade_date <= ?
+    ORDER BY trade_date DESC, CASE WHEN provider = 'manual' THEN 0 ELSE 1 END, ingested_at DESC LIMIT 1
+  `);
+  const allocation=capital/tickers.length;
+  let value=0;
+  for (const ticker of tickers) {
+    const initial=Number(startPrice.get(ticker,startDate)?.close);
+    const ending=Number(endPrice.get(ticker,endDate)?.close);
+    if (!(initial>0) || !(ending>0)) return null;
+    value+=(allocation/initial)*ending;
+  }
+  return value;
+}
+
+function buildReturnComparison(db, strategy, performance) {
+  const startDate=toPlain(db.prepare(`
+    SELECT MIN(substr(trade_time,1,10)) start_date FROM transactions
+    WHERE note LIKE '质量—动量%'
+  `).get())?.start_date;
+  if (!startDate) return { startDate:null, benchmarkName:'股票池等权买入持有', returns:[] };
+  const universe=parse(strategy.universe_json,[]);
+  const capital=Number(strategy.capital);
+  let strategyEquity=capital;
+  let benchmarkEquity=capital;
+  const returns=performance.months.map((month) => {
+    const previousStrategyEquity=strategyEquity;
+    const previousBenchmarkEquity=benchmarkEquity;
+    strategyEquity+=Number(month.totalPnl || 0);
+    benchmarkEquity=benchmarkValue(db,universe,capital,startDate,month.lastDate);
+    return {
+      month:month.month,date:month.lastDate,
+      strategyMonthlyReturn:month.totalPnl == null ? null : strategyEquity/previousStrategyEquity-1,
+      benchmarkMonthlyReturn:benchmarkEquity == null || previousBenchmarkEquity == null ? null : benchmarkEquity/previousBenchmarkEquity-1,
+      strategyCumulativeReturn:month.totalPnl == null ? null : strategyEquity/capital-1,
+      benchmarkCumulativeReturn:benchmarkEquity == null ? null : benchmarkEquity/capital-1
+    };
+  });
+  const latest=returns.at(-1);
+  return {
+    startDate,asOf:latest?.date || null,benchmarkName:`股票池${universe.length}只等金额买入持有`,
+    strategyReturn:latest?.strategyCumulativeReturn ?? null,
+    benchmarkReturn:latest?.benchmarkCumulativeReturn ?? null,
+    excessReturn:latest?.strategyCumulativeReturn != null && latest?.benchmarkCumulativeReturn != null
+      ? latest.strategyCumulativeReturn-latest.benchmarkCumulativeReturn : null,
+    returns
+  };
 }
 
 export function getQualityMomentumMonthlyPerformance(db) {
@@ -345,11 +402,14 @@ export function getQualityMomentumMonthlyPerformance(db) {
       }))
     };
   });
-  return {
+  const result = {
     startMonth: range.start_month,
     endMonth: range.latest_price_date.slice(0, 7),
     priceDate: range.latest_price_date,
     tickers: [...new Set(months.flatMap((month) => month.positions.map((item) => item.ticker)))].sort(),
     months
   };
+  const strategy=toPlain(db.prepare(`SELECT * FROM quality_momentum_strategies WHERE strategy_key = ?`).get(STRATEGY_KEY));
+  if (strategy) result.returnComparison=buildReturnComparison(db,strategy,result);
+  return result;
 }

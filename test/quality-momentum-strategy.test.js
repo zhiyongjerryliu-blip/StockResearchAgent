@@ -112,3 +112,28 @@ test('策略盈亏明细按月汇总组合及每只持仓股票', () => {
   ]);
   db.close();
 });
+
+test('策略收益率与起始日股票池等金额买入持有逐月对比', () => {
+  const db=openDatabase(':memory:');
+  for (const ticker of ['A','B']) {
+    upsertWatchlistItem(db,{ticker});
+    saveManualPrice(db,{ticker,tradeDate:'2026-08-31',close:100});
+    saveManualPrice(db,{ticker,tradeDate:'2026-09-01',close:ticker==='A'?110:90});
+  }
+  addTransaction(db,{ticker:'A',side:'BUY',tradeDate:'2026-08-31',quantity:10,price:100,fee:0,note:'质量—动量策略初始建仓'});
+  saveQualityMomentumStrategy(db,{
+    name:'测试策略',capital:1000,selectionCount:1,maxPerGroup:1,targetWeight:1,
+    rebalanceRule:'月末评分',scoring:{description:'各50%'},universe:['A','B'],groups:{一:['A'],二:['B']},
+    signalDate:'2026-08-28',tradeDate:'2026-08-31',
+    rankings:[{ticker:'A',group:'一',combined:1,selected:true},{ticker:'B',group:'二',combined:0,selected:false}],
+    selected:[{ticker:'A',group:'一',targetWeight:1,targetValue:1000,entryPrice:100,quantity:10}]
+  });
+  const strategy=getQualityMomentumStrategy(db);
+  assert.ok(Math.abs(strategy.returnComparison.strategyReturn-.1)<1e-12);
+  assert.ok(Math.abs(strategy.returnComparison.benchmarkReturn)<1e-12);
+  const comparison=getQualityMomentumMonthlyPerformance(db).returnComparison;
+  assert.deepEqual(comparison.returns.map((item) => item.month),['2026-08','2026-09']);
+  assert.ok(Math.abs(comparison.returns[1].strategyMonthlyReturn-.1)<1e-12);
+  assert.ok(Math.abs(comparison.returns[1].benchmarkMonthlyReturn)<1e-12);
+  db.close();
+});

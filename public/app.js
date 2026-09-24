@@ -11,7 +11,7 @@ const state = {
   researchReports: [], researchReport: null, researchLoadedTicker: null, researchDiff: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null, yearlyPerformance: null,
   transactionImportToken: null, systemStatus: null, dailyOperations: null, qualityMomentum: null,
-  qualityMomentumSignalDate: null, qualityMomentumPerformance: null
+  qualityMomentumSignalDate: null, qualityMomentumPerformance: null, qualityMomentumReturnPerformance: null
 };
 
 const THEME_STORAGE_KEY = 'stockresearchagent.theme';
@@ -487,6 +487,10 @@ function renderQualityMomentum() {
   value('#qm-market-value', money(strategy.totals.marketValue));
   value('#qm-pnl', money(strategy.totals.totalPnl), pnlClass(strategy.totals.totalPnl));
   value('#qm-return', percent(strategy.totals.totalReturn), pnlClass(strategy.totals.totalReturn));
+  const comparison=strategy.returnComparison;
+  document.querySelector('#qm-return-benchmark').textContent=comparison?.benchmarkReturn == null
+    ? '股票池等权对比尚无数据'
+    : `${comparison.benchmarkName}：${percent(comparison.benchmarkReturn)} · 点击查看 →`;
   value('#qm-pnl-basis', `相对初始资金 · 点击查看月度明细 →`);
   value('#qm-price-date', `行情截至 ${strategy.positions[0]?.priceDate || '—'}`);
   const status = document.querySelector('#qm-status');
@@ -739,6 +743,37 @@ async function openQualityMomentumPerformance() {
 
 function closeQualityMomentumPerformance() {
   document.querySelector('#qm-performance-modal').classList.add('hidden');
+}
+
+function renderQualityMomentumReturnComparison() {
+  const comparison=state.qualityMomentumReturnPerformance?.returnComparison;
+  if (!comparison) return;
+  document.querySelector('#qm-return-note').textContent=
+    `起始日 ${comparison.startDate}；对比组合将初始资金等金额买入股票池18只股票并持续持有。`;
+  document.querySelector('#qm-return-body').innerHTML=(comparison.returns || []).map((item) => {
+    const excess=item.strategyCumulativeReturn != null && item.benchmarkCumulativeReturn != null
+      ? item.strategyCumulativeReturn-item.benchmarkCumulativeReturn : null;
+    return `<tr><td><strong>${formatMonth(item.month)}</strong><br><small class="muted">截至 ${escapeHtml(item.date)}</small></td>
+      <td class="${pnlClass(item.strategyMonthlyReturn)}">${percent(item.strategyMonthlyReturn)}</td>
+      <td class="${pnlClass(item.benchmarkMonthlyReturn)}">${percent(item.benchmarkMonthlyReturn)}</td>
+      <td class="${pnlClass(item.strategyCumulativeReturn)}">${percent(item.strategyCumulativeReturn)}</td>
+      <td class="${pnlClass(item.benchmarkCumulativeReturn)}">${percent(item.benchmarkCumulativeReturn)}</td>
+      <td class="${pnlClass(excess)}">${percent(excess)}</td></tr>`;
+  }).join('');
+  document.querySelector('#qm-return-empty').classList.toggle('hidden',comparison.returns.length>0);
+}
+
+async function openQualityMomentumReturnComparison() {
+  const modal=document.querySelector('#qm-return-modal');
+  modal.classList.remove('hidden');
+  document.querySelector('#qm-return-note').textContent='正在计算收益率对比…';
+  state.qualityMomentumReturnPerformance=await api('/api/strategies/quality-momentum/performance');
+  renderQualityMomentumReturnComparison();
+  modal.querySelector('.modal-close').focus();
+}
+
+function closeQualityMomentumReturnComparison() {
+  document.querySelector('#qm-return-modal').classList.add('hidden');
 }
 
 function renderTransactions() {
@@ -2191,6 +2226,12 @@ document.querySelector('#qm-pnl-card').addEventListener('click', () => {
     showToast(error.message, true);
   });
 });
+document.querySelector('#qm-return-card').addEventListener('click', () => {
+  openQualityMomentumReturnComparison().catch((error) => {
+    closeQualityMomentumReturnComparison();
+    showToast(error.message,true);
+  });
+});
 document.querySelector('#monthly-modal').addEventListener('click', (event) => {
   if (event.target.closest('[data-close-monthly]')) closeMonthlyDetail();
 });
@@ -2199,6 +2240,9 @@ document.querySelector('#yearly-modal').addEventListener('click', (event) => {
 });
 document.querySelector('#qm-performance-modal').addEventListener('click', (event) => {
   if (event.target.closest('[data-close-qm-performance]')) closeQualityMomentumPerformance();
+});
+document.querySelector('#qm-return-modal').addEventListener('click', (event) => {
+  if (event.target.closest('[data-close-qm-return]')) closeQualityMomentumReturnComparison();
 });
 document.querySelector('#monthly-picker').addEventListener('change', (event) => {
   if (!event.target.value) return;
@@ -2217,6 +2261,9 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Escape' && !document.querySelector('#qm-performance-modal').classList.contains('hidden')) {
     closeQualityMomentumPerformance();
+  }
+  if (event.key === 'Escape' && !document.querySelector('#qm-return-modal').classList.contains('hidden')) {
+    closeQualityMomentumReturnComparison();
   }
 });
 document.body.addEventListener('click', async (event) => {

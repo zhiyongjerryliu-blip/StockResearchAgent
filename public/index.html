@@ -561,7 +561,7 @@
           <article class="metric-card"><span>策略资金</span><strong id="qm-capital">—</strong><small>初始模拟资金</small></article>
           <article class="metric-card"><span>当前市值</span><strong id="qm-market-value">—</strong><small id="qm-price-date">尚无策略持仓</small></article>
           <button type="button" class="metric-card metric-card-button" id="qm-pnl-card"><span>策略盈亏</span><strong id="qm-pnl">—</strong><small id="qm-pnl-basis">点击查看月度明细 →</small></button>
-          <article class="metric-card"><span>策略收益率</span><strong id="qm-return">—</strong><small>当前持仓合计</small></article>
+          <button type="button" class="metric-card metric-card-button" id="qm-return-card"><span>策略收益率</span><strong id="qm-return">—</strong><small id="qm-return-benchmark">股票池等权对比 · 点击查看 →</small></button>
         </div>
         <article class="panel">
           <div class="panel-head"><div><p class="eyebrow">STOCK SELECTION · QUALITY + MOMENTUM</p><h2>选股策略：质量—动量</h2></div><span id="qm-status" class="badge">尚未配置</span></div>
@@ -813,6 +813,23 @@
         </table>
       </div>
       <div id="qm-performance-empty" class="empty hidden">尚无策略持仓盈亏数据。</div>
+    </section>
+  </div>
+  <div class="modal hidden" id="qm-return-modal" role="dialog" aria-modal="true" aria-labelledby="qm-return-title">
+    <button class="modal-backdrop" type="button" data-close-qm-return aria-label="关闭"></button>
+    <section class="modal-panel">
+      <div class="modal-head">
+        <div><p class="eyebrow">STRATEGY RETURN COMPARISON</p><h2 id="qm-return-title">策略与股票池等权收益对比</h2></div>
+        <button class="modal-close" type="button" data-close-qm-return aria-label="关闭">×</button>
+      </div>
+      <p class="monthly-note muted" id="qm-return-note">正在计算收益率对比…</p>
+      <div class="table-wrap monthly-table-wrap">
+        <table class="performance-matrix">
+          <thead><tr><th>月份</th><th>策略当月</th><th>股票池当月</th><th>策略累计</th><th>股票池累计</th><th>累计超额</th></tr></thead>
+          <tbody id="qm-return-body"></tbody>
+        </table>
+      </div>
+      <div id="qm-return-empty" class="empty hidden">尚无收益率对比数据。</div>
     </section>
   </div>
   <script type="module" src="/app.js"></script>
