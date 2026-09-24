@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../src/db.js';
 import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/repository.js';
-import { calculateLots, calculateMonthlyPerformance, calculatePosition } from '../src/portfolio.js';
+import {
+  calculateLots, calculateMonthlyPerformance, calculatePosition, calculateYearlyPerformance
+} from '../src/portfolio.js';
 
 test('FIFO批次、已实现和未实现盈亏计算正确', () => {
   const db = openDatabase(':memory:');
@@ -107,6 +109,12 @@ test('月度盈亏只展示建仓日至清仓日并包含交易现金流', () =>
   assert.equal(performance.totalPnl, 59);
   assert.equal(performance.firstDisplayedDate, '2026-08-03');
   assert.equal(performance.lastDisplayedDate, '2026-08-05');
+  const yearly = calculateYearlyPerformance(db, '2026');
+  assert.deepEqual(yearly.availableYears, ['2026']);
+  assert.equal(yearly.months.length, 1);
+  assert.equal(yearly.months[0].month, '2026-08');
+  assert.equal(yearly.months[0].totalPnl, 59);
+  assert.deepEqual(yearly.months[0].positions.map((position) => [position.ticker,position.totalPnl]),[['AAPL',59]]);
   db.close();
 });
 

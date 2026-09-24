@@ -371,6 +371,51 @@ export function calculateMonthlyPerformance(db, month, options = {}) {
   };
 }
 
+export function calculateYearlyPerformance(db, year) {
+  if (!/^\d{4}$/.test(String(year || ''))) throw new Error('年份格式必须为YYYY');
+  const range = db.prepare(`
+    SELECT MIN(substr(trade_time, 1, 4)) start_year,
+           (SELECT MAX(substr(p.trade_date, 1, 4)) FROM prices_daily p
+            WHERE p.ticker IN (SELECT DISTINCT ticker FROM transactions)) end_year
+    FROM transactions
+  `).get();
+  const availableYears = range?.start_year && range?.end_year
+    ? Array.from({ length:Number(range.end_year)-Number(range.start_year)+1 },(_,index) => String(Number(range.end_year)-index))
+    : [];
+  const months=[];
+  for (let monthNumber=1;monthNumber<=12;monthNumber+=1) {
+    const month=`${year}-${String(monthNumber).padStart(2,'0')}`;
+    const performance=calculateMonthlyPerformance(db,month);
+    if (!performance.days.length) continue;
+    const positions=new Map();
+    for (const day of performance.days) {
+      for (const position of day.positions) {
+        const aggregate=positions.get(position.ticker) || {
+          ticker:position.ticker,knownPnl:0,incompleteDays:0,firstDate:day.date,lastDate:day.date
+        };
+        aggregate.knownPnl+=Number(position.pnl || 0);
+        if (position.status !== 'COMPLETE') aggregate.incompleteDays+=1;
+        aggregate.lastDate=day.date;
+        positions.set(position.ticker,aggregate);
+      }
+    }
+    months.push({
+      month,firstDate:performance.firstDisplayedDate,lastDate:performance.lastDisplayedDate,
+      totalPnl:performance.totalPnl,knownPnl:performance.knownPnl,incompleteDays:performance.incompleteDays,
+      positions:[...positions.values()].sort((left,right) => left.ticker.localeCompare(right.ticker)).map((item) => ({
+        ...item,knownPnl:round(item.knownPnl),totalPnl:item.incompleteDays ? null : round(item.knownPnl)
+      }))
+    });
+  }
+  const incompleteMonths=months.filter((month) => month.totalPnl == null).length;
+  const knownPnl=months.reduce((sum,month) => sum+Number(month.knownPnl || 0),0);
+  return {
+    year:String(year),availableYears,
+    tickers:[...new Set(months.flatMap((month) => month.positions.map((item) => item.ticker)))].sort(),
+    totalPnl:incompleteMonths ? null : round(knownPnl),knownPnl:round(knownPnl),incompleteMonths,months
+  };
+}
+
 export function saveDailySnapshots(db, snapshotDate) {
   const portfolio = calculatePortfolio(db, snapshotDate);
   const statement = db.prepare(`

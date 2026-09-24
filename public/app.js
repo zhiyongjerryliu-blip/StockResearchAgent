@@ -9,7 +9,7 @@ const state = {
   valuationOverview: null, valuationLoadedTicker: null,
   valuationPeerSelection: null,
   researchReports: [], researchReport: null, researchLoadedTicker: null, researchDiff: null,
-  currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null,
+  currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null, yearlyPerformance: null,
   transactionImportToken: null, systemStatus: null, dailyOperations: null, qualityMomentum: null,
   qualityMomentumSignalDate: null, qualityMomentumPerformance: null
 };
@@ -455,8 +455,8 @@ function renderPortfolio() {
   }
   const monthlyNote = document.querySelector('#metric-monthly-note');
   monthlyNote.textContent = monthly?.incompleteDays
-    ? `${monthly.incompleteDays}个交易日数据不完整 · 点击查看`
-    : '点击查看每日明细 →';
+    ? `${monthly.incompleteDays}个交易日数据不完整 · 点击查看年度明细`
+    : '点击查看年度月度明细 →';
   const held = portfolio.positions.filter((position) => position.quantity > 0);
   document.querySelector('#positions-body').innerHTML = held.map((position) => `
     <tr>
@@ -614,7 +614,7 @@ function renderMonthlyDetail() {
   const ticker = state.monthlyTickerFilter;
   const performance = summarizeMonthlyPerformance(state.monthlyDetail, ticker);
   if (!performance) return;
-  document.querySelector('#monthly-modal-title').textContent = ticker ? `${ticker} 月度盈亏明细` : '月度盈亏明细';
+  document.querySelector('#monthly-modal-title').textContent = ticker ? `${ticker} 每日盈亏明细` : '每日盈亏明细';
   document.querySelector('#monthly-picker').value = performance.month;
   const total = document.querySelector('#monthly-detail-total');
   total.textContent = money(performance.totalPnl);
@@ -625,18 +625,17 @@ function renderMonthlyDetail() {
       ? `仅展示持仓有效区间：${performance.firstDisplayedDate} 至 ${performance.lastDisplayedDate}。建仓前及完全清仓后的日期不会展示。`
       : '本月没有处于持仓区间的交易日。';
 
+  const tickers = [...new Set(performance.days.flatMap((day) => day.positions.map((position) => position.ticker)))].sort();
+  document.querySelector('#monthly-detail-head').innerHTML = `<tr><th>交易日</th><th class="period-total">当日总盈亏</th>${tickers.map((item) => `<th>${escapeHtml(item)}</th>`).join('')}<th>数据状态</th></tr>`;
   document.querySelector('#monthly-detail-body').innerHTML = [...performance.days].reverse().map((day) => {
-    const tickers = day.positions.map((position) => `<span class="monthly-ticker">${escapeHtml(position.ticker)}</span>`).join('');
-    const quantities = day.positions.map((position) =>
-      `<span>${escapeHtml(position.ticker)} ${position.beginningQuantity} → ${position.endingQuantity}</span>`
-    ).join('');
-    return `<tr>
-      <td><strong>${escapeHtml(day.date)}</strong></td>
-      <td><div class="monthly-tickers">${tickers}</div></td>
-      <td><div class="monthly-quantities">${quantities}</div></td>
-      <td class="${pnlClass(day.pnl)}">${money(day.pnl)}</td>
-      <td><span class="badge ${day.status === 'COMPLETE' ? 'buy' : 'P2'}">${day.status === 'COMPLETE' ? '完整' : '缺少行情'}</span></td>
-    </tr>`;
+    const positionMap = new Map(day.positions.map((position) => [position.ticker,position]));
+    return `<tr><td><strong>${escapeHtml(day.date)}</strong></td>
+      <td class="period-total ${pnlClass(day.pnl)}">${money(day.pnl)}</td>
+      ${tickers.map((item) => {
+        const position=positionMap.get(item);
+        return `<td class="${pnlClass(position?.pnl)}">${position ? money(position.pnl) : '—'}</td>`;
+      }).join('')}
+      <td><span class="badge ${day.status === 'COMPLETE' ? 'buy' : 'P2'}">${day.status === 'COMPLETE' ? '完整' : '缺少行情'}</span></td></tr>`;
   }).join('');
   document.querySelector('#monthly-detail-empty').classList.toggle('hidden', performance.days.length > 0);
 }
@@ -657,6 +656,49 @@ function openMonthlyDetail(ticker = null) {
 function closeMonthlyDetail() {
   document.querySelector('#monthly-modal').classList.add('hidden');
   state.monthlyTickerFilter = null;
+}
+
+function renderYearlyPerformance() {
+  const performance=state.yearlyPerformance;
+  if (!performance) return;
+  const picker=document.querySelector('#yearly-picker');
+  picker.innerHTML=(performance.availableYears || []).map((year) => `<option value="${year}">${year}年</option>`).join('');
+  picker.value=performance.year;
+  const total=document.querySelector('#yearly-detail-total');
+  total.textContent=money(performance.totalPnl);
+  total.className=pnlClass(performance.totalPnl);
+  const tickers=performance.tickers || [];
+  document.querySelector('#yearly-detail-head').innerHTML=`<tr><th>月份</th><th class="period-total">当月总盈亏</th>${tickers.map((ticker) => `<th>${escapeHtml(ticker)}</th>`).join('')}</tr>`;
+  document.querySelector('#yearly-detail-body').innerHTML=(performance.months || []).map((month) => {
+    const positionMap=new Map(month.positions.map((position) => [position.ticker,position]));
+    return `<tr><td><strong>${formatMonth(month.month)}</strong><br><small class="muted">${escapeHtml(month.firstDate)} 至 ${escapeHtml(month.lastDate)}</small></td>
+      <td class="period-total ${pnlClass(month.totalPnl)}">${money(month.totalPnl)}</td>
+      ${tickers.map((ticker) => {
+        const position=positionMap.get(ticker);
+        return `<td class="${pnlClass(position?.totalPnl)}">${position ? money(position.totalPnl) : '—'}</td>`;
+      }).join('')}</tr>`;
+  }).join('');
+  document.querySelector('#yearly-detail-note').textContent=performance.incompleteMonths
+    ? `有 ${performance.incompleteMonths} 个月存在行情缺口，对应月份和年度合计暂不发布。`
+    : '每月盈亏包含持仓市值变化及当月买卖现金流。';
+  document.querySelector('#yearly-detail-empty').classList.toggle('hidden',performance.months.length>0);
+}
+
+async function loadYearlyPerformance(year) {
+  state.yearlyPerformance=await api(`/api/performance/yearly?year=${encodeURIComponent(year)}`);
+  renderYearlyPerformance();
+}
+
+async function openYearlyPerformance() {
+  const modal=document.querySelector('#yearly-modal');
+  modal.classList.remove('hidden');
+  document.querySelector('#yearly-detail-note').textContent='正在计算年度盈亏…';
+  await loadYearlyPerformance(currentEtDate().slice(0,4));
+  document.querySelector('#yearly-picker').focus();
+}
+
+function closeYearlyPerformance() {
+  document.querySelector('#yearly-modal').classList.add('hidden');
 }
 
 function formatMonth(month) {
@@ -2136,7 +2178,13 @@ document.querySelector('#nav').addEventListener('click', (event) => {
   const button = event.target.closest('[data-view]');
   if (button) showView(button.dataset.view);
 });
-document.querySelector('#metric-monthly-card').addEventListener('click', () => openMonthlyDetail());
+document.querySelector('#metric-daily-card').addEventListener('click', () => openMonthlyDetail());
+document.querySelector('#metric-monthly-card').addEventListener('click', () => {
+  openYearlyPerformance().catch((error) => {
+    closeYearlyPerformance();
+    showToast(error.message,true);
+  });
+});
 document.querySelector('#qm-pnl-card').addEventListener('click', () => {
   openQualityMomentumPerformance().catch((error) => {
     closeQualityMomentumPerformance();
@@ -2146,6 +2194,9 @@ document.querySelector('#qm-pnl-card').addEventListener('click', () => {
 document.querySelector('#monthly-modal').addEventListener('click', (event) => {
   if (event.target.closest('[data-close-monthly]')) closeMonthlyDetail();
 });
+document.querySelector('#yearly-modal').addEventListener('click', (event) => {
+  if (event.target.closest('[data-close-yearly]')) closeYearlyPerformance();
+});
 document.querySelector('#qm-performance-modal').addEventListener('click', (event) => {
   if (event.target.closest('[data-close-qm-performance]')) closeQualityMomentumPerformance();
 });
@@ -2153,9 +2204,16 @@ document.querySelector('#monthly-picker').addEventListener('change', (event) => 
   if (!event.target.value) return;
   loadMonthlyDetail(event.target.value).catch((error) => showToast(error.message, true));
 });
+document.querySelector('#yearly-picker').addEventListener('change', (event) => {
+  if (!event.target.value) return;
+  loadYearlyPerformance(event.target.value).catch((error) => showToast(error.message,true));
+});
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !document.querySelector('#monthly-modal').classList.contains('hidden')) {
     closeMonthlyDetail();
+  }
+  if (event.key === 'Escape' && !document.querySelector('#yearly-modal').classList.contains('hidden')) {
+    closeYearlyPerformance();
   }
   if (event.key === 'Escape' && !document.querySelector('#qm-performance-modal').classList.contains('hidden')) {
     closeQualityMomentumPerformance();

@@ -554,6 +554,9 @@ code { color: var(--accent); background: var(--code-bg); padding: 2px 5px; borde
 .qm-performance-table { min-width: 760px; }
 .qm-performance-table th:not(:first-child), .qm-performance-table td:not(:first-child) { text-align: right; }
 .qm-performance-table .month-total { font-weight: 800; border-left: 1px solid var(--line); }
+.performance-matrix { min-width: 760px; }
+.performance-matrix th:not(:first-child), .performance-matrix td:not(:first-child) { text-align: right; }
+.performance-matrix .period-total { font-weight: 800; border-left: 1px solid var(--line); }
 .research-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
 .research-toolbar h2 { margin-bottom: 7px; }
 .research-toolbar p { margin-bottom: 0; }
