@@ -26,6 +26,7 @@ import {
 } from './daily-cycle-automation.js';
 import { generateWatchlistResearchReports } from './research-reports.js';
 import { requireHeldTicker } from './analysis-scope.js';
+import { runQualityMomentumAutomation } from './quality-momentum-automation.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -105,6 +106,11 @@ async function executeDailyCycle(
         return { provider: provider.name, count: upsertDailyBars(db, bars) };
       });
     }, syncAttempts);
+    await runStep('QUALITY_MOMENTUM', '质量—动量月末选股与调仓', () => (
+      ticker
+        ? { skipped: true, reason: 'portfolio-strategy-only' }
+        : runQualityMomentumAutomation(db, reviewDate)
+    ));
     await runStep('MARKET_CONTEXT', '宏观市场同步', () => (
       syncMarketContext(db, provider, reviewDate)
     ), syncAttempts);

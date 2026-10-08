@@ -74,7 +74,9 @@ function buildRebalance(db, strategy, signal, previousSelected = []) {
   });
 }
 
-function persistAuditRecords(db, strategy, signal, previousSelected = [], timestamp = nowIso()) {
+function persistAuditRecords(
+  db, strategy, signal, previousSelected = [], timestamp = nowIso(), includeRebalances = true
+) {
   const scores = db.prepare(`
     INSERT OR REPLACE INTO quality_momentum_score_records (
       strategy_key, signal_date, trade_date, ticker, group_name, rank_number,
@@ -90,6 +92,12 @@ function persistAuditRecords(db, strategy, signal, previousSelected = [], timest
     selectionReason(signal.rankings, index, item, strategy),
     JSON.stringify(item.scoringDetails || item.details || {}), timestamp
   ));
+  if (!includeRebalances) {
+    db.prepare(`
+      DELETE FROM quality_momentum_rebalances WHERE strategy_key = ? AND signal_date = ?
+    `).run(STRATEGY_KEY, signal.signalDate);
+    return [];
+  }
   const rebalances = buildRebalance(db, strategy, signal, previousSelected);
   const rebalanceStatement = db.prepare(`
     INSERT OR REPLACE INTO quality_momentum_rebalances (
@@ -123,7 +131,8 @@ export function ensureQualityMomentumAuditRecords(db) {
   for (const row of signals) {
     const signal = {
       signalDate: row.signal_date, tradeDate: row.trade_date,
-      rankings: parse(row.rankings_json, []), selected: parse(row.selected_json, [])
+      rankings: parse(row.rankings_json, []), selected: parse(row.selected_json, []),
+      status: row.status || 'EXECUTED'
     };
     const scoreCount = Number(db.prepare(`
       SELECT COUNT(*) count FROM quality_momentum_score_records
@@ -133,8 +142,10 @@ export function ensureQualityMomentumAuditRecords(db) {
       SELECT COUNT(*) count FROM quality_momentum_rebalances
       WHERE strategy_key = ? AND signal_date = ?
     `).get(STRATEGY_KEY, signal.signalDate).count);
-    if (scoreCount !== signal.rankings.length || !rebalanceCount) {
-      persistAuditRecords(db, config, signal, previousSelected, row.created_at);
+    if (scoreCount !== signal.rankings.length || (signal.status === 'EXECUTED' && !rebalanceCount)) {
+      persistAuditRecords(
+        db, config, signal, previousSelected, row.created_at, signal.status === 'EXECUTED'
+      );
     }
     previousSelected = signal.selected;
   }
@@ -171,15 +182,16 @@ export function saveQualityMomentumStrategy(db, input) {
   `).get(STRATEGY_KEY, input.signalDate));
   db.prepare(`
     INSERT INTO quality_momentum_signals (
-      strategy_key, signal_date, trade_date, rankings_json, selected_json, source_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      strategy_key, signal_date, trade_date, rankings_json, selected_json, source_json, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(strategy_key, signal_date) DO UPDATE SET
       trade_date=excluded.trade_date, rankings_json=excluded.rankings_json,
       selected_json=excluded.selected_json, source_json=excluded.source_json,
-      created_at=excluded.created_at
+      status=excluded.status, created_at=excluded.created_at
   `).run(
     STRATEGY_KEY, input.signalDate, input.tradeDate, JSON.stringify(input.rankings),
-    JSON.stringify(input.selected), JSON.stringify(input.source || {}), timestamp
+    JSON.stringify(input.selected), JSON.stringify(input.source || {}),
+    input.status === 'PENDING' ? 'PENDING' : 'EXECUTED', timestamp
   );
   persistAuditRecords(db, {
     capital: Number(input.capital), selectionCount: Number(input.selectionCount),
@@ -187,7 +199,7 @@ export function saveQualityMomentumStrategy(db, input) {
   }, {
     signalDate: input.signalDate, tradeDate: input.tradeDate,
     rankings: input.rankings, selected: input.selected
-  }, parse(previous?.selected_json, []), timestamp);
+  }, parse(previous?.selected_json, []), timestamp, input.status !== 'PENDING');
   return getQualityMomentumStrategy(db);
 }
 
@@ -222,6 +234,7 @@ function signalFromRow(db, row) {
     .reduce((sum, item) => sum + item.cashAmount, 0);
   return {
     signalDate: row.signal_date, tradeDate: row.trade_date,
+    status: row.status || 'EXECUTED',
     rankings: scores.length ? scores : parse(row.rankings_json, []),
     selected: parse(row.selected_json, []), source: parse(row.source_json, {}),
     rebalance,
@@ -245,7 +258,7 @@ export function getQualityMomentumStrategy(db) {
     WHERE strategy_key = ? ORDER BY signal_date DESC
   `).all(STRATEGY_KEY));
   const signals = signalRows.map((signalRow) => signalFromRow(db, signalRow));
-  const signal = signals[0] || null;
+  const signal = signals.find((item) => item.status === 'EXECUTED') || signals[0] || null;
   const selected = signal?.selected || [];
   const positions = selected.map((item) => {
     const position = calculatePosition(db, item.ticker);

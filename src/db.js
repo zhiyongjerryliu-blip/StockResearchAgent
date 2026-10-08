@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS quality_momentum_signals (
   rankings_json TEXT NOT NULL,
   selected_json TEXT NOT NULL,
   source_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'EXECUTED' CHECK(status IN ('PENDING','EXECUTED')),
   created_at TEXT NOT NULL,
   PRIMARY KEY(strategy_key, signal_date)
 );
@@ -1092,6 +1093,12 @@ export function openDatabase(databasePath = config.databasePath) {
   }
   if (!transactionColumns.has('import_row_number')) {
     db.exec('ALTER TABLE transactions ADD COLUMN import_row_number INTEGER');
+  }
+  const qualityMomentumSignalColumns = new Set(
+    toPlainRows(db.prepare('PRAGMA table_info(quality_momentum_signals)').all()).map((column) => column.name)
+  );
+  if (!qualityMomentumSignalColumns.has('status')) {
+    db.exec("ALTER TABLE quality_momentum_signals ADD COLUMN status TEXT NOT NULL DEFAULT 'EXECUTED'");
   }
   const securityColumns = new Set(
     toPlainRows(db.prepare('PRAGMA table_info(securities)').all()).map((column) => column.name)
