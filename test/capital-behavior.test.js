@@ -39,12 +39,14 @@ test('连续资金模型识别持续吸筹并幂等生成多周期验证账本',
   const dates = seedTrend(db, 'BUILD', 1);
   const first = runCapitalBehaviorBacktest(db, 'BUILD', dates.at(-1), { maxSessions: 120 });
   const second = runCapitalBehaviorBacktest(db, 'BUILD', dates.at(-1), { maxSessions: 120 });
+  const historicalRerun = runCapitalBehaviorBacktest(db, 'BUILD', dates.at(-3), { maxSessions: 120 });
   const overview = getCapitalBehaviorOverview(db, 'BUILD', dates.at(-1));
 
   assert.ok(['ACCUMULATION', 'ACCELERATED_ACCUMULATION'].includes(first.latest.stage));
   assert.equal(first.latest.direction, 'BULLISH');
   assert.equal(first.validationRowsUpdated, 600);
   assert.ok(second.datesProcessed <= 5);
+  assert.ok(historicalRerun.datesProcessed <= 5);
   assert.ok(second.validationRowsUpdated < 600);
   assert.equal(db.prepare(`
     SELECT COUNT(*) AS count FROM capital_behavior_snapshots

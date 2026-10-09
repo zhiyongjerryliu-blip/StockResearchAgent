@@ -6,7 +6,7 @@ import { config } from './config.js';
 const schema = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
+PRAGMA busy_timeout = 30000;
 
 CREATE TABLE IF NOT EXISTS securities (
   ticker TEXT PRIMARY KEY,

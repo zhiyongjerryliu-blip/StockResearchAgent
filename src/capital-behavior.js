@@ -465,14 +465,15 @@ export function runCapitalBehaviorBacktest(db, tickerValue, asOf, options = {}) 
   const backfillDates = canonicalDates(db, ticker, asOf).slice(-maximum);
   const lastStored = toPlain(db.prepare(`
     SELECT MAX(as_of) AS value FROM capital_behavior_snapshots
-    WHERE ticker = ? AND model_version = ?
-  `).get(ticker, CAPITAL_BEHAVIOR_MODEL_VERSION))?.value;
+    WHERE ticker = ? AND model_version = ? AND as_of <= ?
+  `).get(ticker, CAPITAL_BEHAVIOR_MODEL_VERSION, asOf))?.value;
   const lastStoredIndex = lastStored ? backfillDates.indexOf(lastStored) : -1;
   const dates = options.full === true || lastStoredIndex < 0
     ? backfillDates : backfillDates.slice(Math.max(0, lastStoredIndex - 4));
   const snapshots = [];
   let validationRowsUpdated = 0;
-  db.exec('BEGIN');
+  // 先取得写锁，避免并发分钟行情写入把延迟事务的读快照升级成 SQLITE_BUSY_SNAPSHOT。
+  db.exec('BEGIN IMMEDIATE');
   try {
     for (const date of dates) snapshots.push(saveCapitalBehavior(db, ticker, date));
     const pendingSnapshots = lastStoredIndex < 0 ? [] : toPlainRows(db.prepare(`

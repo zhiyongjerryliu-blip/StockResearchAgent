@@ -1537,7 +1537,24 @@ export function runPredictionBacktest(db, tickerValue, asOf, options = {}) {
   const ticker = normalizeTicker(tickerValue);
   const dates = allCanonicalDates(db, ticker, asOf);
   const maximum = Math.min(1600, Math.max(30, Number(options.maxSessions) || 1600));
-  const selectedDates = dates.slice(-maximum);
+  const fullDates = dates.slice(-maximum);
+  let selectedDates = fullDates;
+  // 日终运行仅重算最近 180 个交易日：覆盖最长 126 日预测的到期更新。
+  // 只有更早日期的两套模型都已完整入库才启用增量模式；首次建仓及缺口修复仍全量回测。
+  if (options.incremental === true && fullDates.length > 180) {
+    const olderCount = fullDates.length - 180;
+    const windowStart = fullDates[olderCount];
+    const coverage = db.prepare(`
+      SELECT model_version, COUNT(DISTINCT as_of) AS covered
+      FROM prediction_backtest_results
+      WHERE ticker = ? AND horizon_days = 21 AND as_of >= ? AND as_of < ?
+        AND model_version IN (?, ?)
+      GROUP BY model_version
+    `).all(ticker, fullDates[0], windowStart, PREDICTION_MODEL_VERSION, CANDIDATE_MODEL_VERSION);
+    if (coverage.length === 2 && coverage.every((row) => row.covered === olderCount)) {
+      selectedDates = fullDates.slice(-180);
+    }
+  }
   let generated = 0;
   let excluded = 0;
   for (const date of selectedDates) {

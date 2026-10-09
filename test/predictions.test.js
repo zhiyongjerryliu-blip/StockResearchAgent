@@ -143,8 +143,12 @@ test('回测按交易日到期、幂等保存并自动生成可靠度和最新�
 
   const first = runPredictionBacktest(db, 'TEST', asOf, { maxSessions: 240 });
   const second = runPredictionBacktest(db, 'TEST', asOf, { maxSessions: 240 });
+  const incremental = runPredictionBacktest(db, 'TEST', asOf, { maxSessions: 240, incremental: true });
   const overview = getPredictionOverview(db, 'TEST');
 
+  assert.equal(first.datesProcessed, 240);
+  assert.equal(second.datesProcessed, 240);
+  assert.equal(incremental.datesProcessed, 180);
   assert.equal(first.predictions.length, 3);
   assert.equal(second.predictions.length, 3);
   assert.equal(db.prepare(`

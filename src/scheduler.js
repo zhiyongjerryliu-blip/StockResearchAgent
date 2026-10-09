@@ -170,8 +170,8 @@ async function executeDailyCycle(
     });
     await runStep('PREDICTIONS', '预测与历史验证', () => (
       ticker
-        ? scopedResult(() => runPredictionBacktest(db, ticker, reviewDate))
-        : runWatchlistPredictionBacktests(db, reviewDate)
+        ? scopedResult(() => runPredictionBacktest(db, ticker, reviewDate, { incremental: true }))
+        : runWatchlistPredictionBacktests(db, reviewDate, { incremental: true })
     ));
     await runStep('ADVICE', '投资建议生成', () => (
       ticker
