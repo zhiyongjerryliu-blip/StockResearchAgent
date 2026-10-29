@@ -5,6 +5,8 @@ const workerUrl = new URL('./daily-cycle-worker.js', import.meta.url);
 export class DailyCycleWorkerRunner {
   constructor(options = {}) {
     this.databasePath = options.databasePath;
+    this.workerUrl = options.workerUrl || workerUrl;
+    this.taskLabel = options.taskLabel || '日终';
     this.timeoutMilliseconds = Math.max(1_000, Number(options.timeoutMilliseconds) || 60 * 60_000);
     this.workerFactory = options.workerFactory || ((url, workerOptions) => new Worker(url, workerOptions));
     this.active = null;
@@ -22,9 +24,11 @@ export class DailyCycleWorkerRunner {
   }
 
   run(options = {}) {
-    if (this.active) throw new Error('日终任务正在运行，请等待当前任务完成');
-    const worker = this.workerFactory(workerUrl, {
-      execArgv: process.execArgv.filter((argument) => !argument.startsWith('--input-type')),
+    if (this.active) throw new Error(`${this.taskLabel}任务正在运行，请等待当前任务完成`);
+    const worker = this.workerFactory(this.workerUrl, {
+      // Configuration is inherited via process.env. Parent CLI/V8/test flags
+      // can be invalid in Worker, including --input-type and --tls-cipher-list.
+      execArgv: [],
       workerData: {
         databasePath: this.databasePath,
         requestedAt: new Date().toISOString(),
@@ -51,18 +55,18 @@ export class DailyCycleWorkerRunner {
       };
       active.timer = setTimeout(() => {
         void worker.terminate();
-        settle(reject, new Error(`日终工作线程运行超过${Math.round(this.timeoutMilliseconds / 60_000)}分钟，已终止并等待自动重试`));
+        settle(reject, new Error(`${this.taskLabel}工作线程运行超过${Math.round(this.timeoutMilliseconds / 60_000)}分钟，已终止并等待自动重试`));
       }, this.timeoutMilliseconds);
       active.timer.unref?.();
       worker.once('message', (message) => {
         if (message?.ok) settle(resolve, message.result);
-        else settle(reject, new Error(message?.error || '日终工作线程执行失败'));
+        else settle(reject, new Error(message?.error || `${this.taskLabel}工作线程执行失败`));
       });
       worker.once('error', (error) => settle(reject, error));
       worker.once('exit', (code) => {
         const message = code === 0
-          ? '日终工作线程退出但未返回结果'
-          : `日终工作线程异常退出（代码${code}）`;
+          ? `${this.taskLabel}工作线程退出但未返回结果`
+          : `${this.taskLabel}工作线程异常退出（代码${code}）`;
         settle(reject, new Error(message));
       });
     });
@@ -76,7 +80,7 @@ export class DailyCycleWorkerRunner {
       active.settled = true;
       clearTimeout(active.timer);
       if (this.active === active) this.active = null;
-      active.reject(new Error('服务关闭，日终工作线程已终止'));
+      active.reject(new Error(`服务关闭，${this.taskLabel}工作线程已终止`));
     }
     return true;
   }

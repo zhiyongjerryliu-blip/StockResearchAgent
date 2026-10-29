@@ -8,6 +8,53 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 30000;
 
+CREATE TABLE IF NOT EXISTS factor_input_cache (
+  input_key TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS factor_observation_strategies (
+  strategy_key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  capital REAL NOT NULL,
+  observation_start TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS factor_observation_signals (
+  strategy_key TEXT NOT NULL REFERENCES factor_observation_strategies(strategy_key),
+  signal_date TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('PENDING','EXECUTED')),
+  mode TEXT NOT NULL CHECK(mode IN ('HISTORICAL','FORWARD')),
+  rankings_json TEXT NOT NULL,
+  selected_json TEXT NOT NULL DEFAULT '[]',
+  source_json TEXT NOT NULL DEFAULT '{}',
+  rebalance_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(strategy_key, signal_date)
+);
+
+CREATE TABLE IF NOT EXISTS factor_observation_accounts (
+  strategy_key TEXT PRIMARY KEY REFERENCES factor_observation_strategies(strategy_key),
+  cash REAL NOT NULL,
+  positions_json TEXT NOT NULL DEFAULT '{}',
+  last_date TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS factor_observation_daily (
+  strategy_key TEXT NOT NULL REFERENCES factor_observation_strategies(strategy_key),
+  trade_date TEXT NOT NULL,
+  equity REAL NOT NULL,
+  cash REAL NOT NULL,
+  holdings_json TEXT NOT NULL,
+  PRIMARY KEY(strategy_key, trade_date)
+);
+
 CREATE TABLE IF NOT EXISTS securities (
   ticker TEXT PRIMARY KEY,
   name TEXT,

@@ -550,6 +550,10 @@ code { color: var(--accent); background: var(--code-bg); padding: 2px 5px; borde
 .monthly-tickers, .monthly-quantities { display: grid; gap: 4px; }
 .monthly-ticker { color: var(--text); font-weight: 800; }
 .monthly-quantities span { color: var(--muted); }
+.strategy-selector { margin: 0 0 20px; }
+.strategy-selector select { min-width: 280px; }
+.factor-comparison-chart { margin-top: 20px; }
+.factor-comparison-chart svg { display: block; width: 100%; max-height: 360px; }
 .qm-performance-panel { width: min(1180px, 100%); }
 .qm-performance-table { min-width: 760px; }
 .qm-performance-table th:not(:first-child), .qm-performance-table td:not(:first-child) { text-align: right; }

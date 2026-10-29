@@ -11,7 +11,8 @@ const state = {
   researchReports: [], researchReport: null, researchLoadedTicker: null, researchDiff: null,
   currentMonthPerformance: null, monthlyDetail: null, monthlyTickerFilter: null, yearlyPerformance: null,
   transactionImportToken: null, systemStatus: null, dailyOperations: null, qualityMomentum: null,
-  qualityMomentumSignalDate: null, qualityMomentumPerformance: null, qualityMomentumReturnPerformance: null
+  qualityMomentumSignalDate: null, qualityMomentumPerformance: null, qualityMomentumReturnPerformance: null,
+  factorObservations: null, selectionStrategyKey:'industry18-quality-momentum',factorComparisonPeriod:'forward'
 };
 
 const THEME_STORAGE_KEY = 'stockresearchagent.theme';
@@ -33,7 +34,7 @@ function applyTheme(theme, persist = false) {
 }
 
 const titles = {
-  dashboard: '投资组合总览', watchlist: '股票池管理', 'quality-momentum': '选股策略：质量—动量', transactions: '交易与持仓',
+  dashboard: '投资组合总览', watchlist: '股票池管理', 'quality-momentum': '选股策略', transactions: '交易与持仓',
   financials: '财报分析', valuation: '估值与竞争对手', predictions: '多周期预测与历史验证',
   research: '个股综合研报',
   capital: '资金与成交量', events: '事件与风险',
@@ -471,8 +472,37 @@ function renderPortfolio() {
   document.querySelector('#last-updated').textContent = `更新于 ${new Date(portfolio.asOf || Date.now()).toLocaleString('zh-CN')}`;
 }
 
+function activeSelectionStrategy() {
+  return state.selectionStrategyKey==='industry18-quality-momentum'?state.qualityMomentum
+    :state.factorObservations?.strategies.find(s=>s.strategyKey===state.selectionStrategyKey);
+}
+
+function renderFactorComparison() {
+  const data=state.factorObservations;const period=state.factorComparisonPeriod;
+  document.querySelector('#factor-comparison-period').value=period;
+  document.querySelector('#factor-comparison-note').textContent=data?.strategies?.length
+    ? `${period==='forward'?`前瞻观察从 ${data.observationStart} 开始，按加入前净值归一化，沿用历史模拟的当前持仓。`:'历史模拟从 2026-01-02 开始；质量动量对照沿用原策略的选股。'} 三者行情共同截至 ${data.asOf || '—'}。${data.costNote}`
+    :'观察策略尚未配置。';
+  document.querySelector('#factor-comparison-body').innerHTML=(data?.comparison || []).map(s=>`<tr><td>${escapeHtml(s.name)}</td>
+    <td class="${pnlClass(s[period].totalReturn)}">${percent(s[period].totalReturn)}</td><td>${percent(s[period].maxDrawdown)}</td>
+    <td>${s.selected.map(escapeHtml).join(' · ') || '—'}</td><td>${percent(s.overlap)}</td></tr>`).join('');
+  const series=(data?.strategies || []).map(s=>({name:s.name,points:s.curve.map(p=>({date:p.date,value:period==='forward'?p.forwardReturn:p.historicalReturn})).filter(p=>p.value!=null)}));
+  const all=series.flatMap(s=>s.points);const chart=document.querySelector('#factor-comparison-chart');
+  if (!all.length) {chart.innerHTML='<p class="muted">加入后的共同交易日数据尚未到齐；可以切换到历史模拟查看对比。</p>';return;}
+  const dates=[...new Set(all.map(p=>p.date))].sort();const low=Math.min(0,...all.map(p=>p.value));const high=Math.max(.01,...all.map(p=>p.value));
+  const x=date=>65+dates.indexOf(date)/Math.max(1,dates.length-1)*850;
+  const y=value=>225-(value-low)/(high-low)*185;const colors=['#3975dc','#1a9b77','#d47a26'];
+  const axes=Array.from({length:5},(_,i)=>{const v=low+(high-low)*i/4;return `<line x1="65" x2="915" y1="${y(v)}" y2="${y(v)}" stroke="currentColor" opacity=".12"/><text x="57" y="${y(v)+4}" text-anchor="end">${(v*100).toFixed(0)}%</text>`;}).join('');
+  chart.innerHTML=`<svg viewBox="0 0 960 285" role="img" aria-label="三种策略累计收益率曲线"><g fill="currentColor" font-size="12">${axes}
+    <text x="65" y="252">${dates[0]}</text><text x="915" y="252" text-anchor="end">${dates.at(-1)}</text>
+    ${series.map((s,i)=>`<path d="${s.points.map((p,j)=>`${j?'L':'M'}${x(p.date).toFixed(2)},${y(p.value).toFixed(2)}`).join(' ')}" fill="none" stroke="${colors[i]}" stroke-width="2.5"/><text x="${65+i*280}" y="278" fill="${colors[i]}">${escapeHtml(s.name)}</text>`).join('')}</g></svg>`;
+}
+
 function renderQualityMomentum() {
-  const strategy = state.qualityMomentum;
+  const strategy = activeSelectionStrategy();
+  renderFactorComparison();
+  document.querySelector('#selection-strategy-select').value=state.selectionStrategyKey;
+  document.querySelector('#qm-strategy-title').textContent=strategy?.name || '尚未配置策略';
   const value = (selector, content, className = '') => {
     const element = document.querySelector(selector);
     element.textContent = content;
@@ -494,9 +524,9 @@ function renderQualityMomentum() {
   value('#qm-pnl-basis', `相对初始资金 · 点击查看月度明细 →`);
   value('#qm-price-date', `行情截至 ${strategy.positions[0]?.priceDate || '—'}`);
   const status = document.querySelector('#qm-status');
-  status.textContent = strategy.enabled ? '运行中' : '已暂停';
+  status.textContent = strategy.enabled ? strategy.observation?'观察运行中':'运行中' : '已暂停';
   status.className = `badge ${strategy.enabled ? 'buy' : ''}`;
-  document.querySelector('#qm-rule').textContent = `${strategy.rebalanceRule}；${strategy.scoring.description}`;
+  document.querySelector('#qm-rule').textContent = `${strategy.rebalanceRule}；${strategy.scoring.description}${strategy.observation?' 采用独立模拟账户，卡片为历史模拟累计表现；加入后的收益见上方前瞻观察。':''}`;
   document.querySelector('#qm-groups').innerHTML = Object.entries(strategy.groups).map(([group, tickers]) => `
     <div><strong>${escapeHtml(group)}</strong><span>${tickers.map(escapeHtml).join(' · ')}</span></div>`).join('');
   const signals = strategy.signals || (strategy.signal ? [strategy.signal] : []);
@@ -533,12 +563,12 @@ function renderQualityMomentum() {
   document.querySelector('#qm-rebalance-empty').classList.toggle('hidden', rebalance.length > 0);
   document.querySelector('#qm-ranking-body').innerHTML = (displayedSignal?.rankings || []).map((item, index) => `
     <tr><td>${item.rank || index + 1}</td><td class="ticker">${escapeHtml(item.ticker)}</td><td>${escapeHtml(item.group)}</td>
-    <td>${decimal(item.qualityRank, 4)}</td><td>${decimal(item.momentumRank, 4)}</td><td>${decimal(item.combined, 4)}</td>
+    <td>${decimal(item.qualityRank, 4)}</td><td>${decimal(item.momentumRank, 4)}</td><td>${item.valueRank==null?'—':decimal(item.valueRank, 4)}</td><td>${decimal(item.combined, 4)}</td>
     <td><span class="badge ${item.selected ? 'buy' : ''}">${item.selected ? '入选' : '未入选'}</span></td>
     <td>${escapeHtml(item.selectionReason || (item.selected ? '入选' : '综合排名未入选'))}</td></tr>`).join('');
   document.querySelector('#qm-history-body').innerHTML = signals.map((item) => `
     <tr><td><button class="edit-link" data-qm-signal-date="${item.signalDate}">${item.signalDate}</button></td>
-    <td>${item.tradeDate}</td><td>${item.rankings.length}</td><td>${item.selected.map((row) => escapeHtml(row.ticker)).join(' · ')}</td>
+    <td>${item.tradeDate}</td><td>${item.status==='PENDING'?'待模拟调仓':item.mode==='HISTORICAL'?'历史模拟':item.mode==='FORWARD'?'前瞻观察':'现有策略'}</td><td>${item.rankings.length}</td><td>${(item.selected.length?item.selected:item.rankings.filter(x=>x.selected)).map((row) => escapeHtml(row.ticker)).join(' · ')}</td>
     <td>${item.rebalanceSummary?.buyCount || 0}</td><td>${item.rebalanceSummary?.sellCount || 0}</td>
     <td>${item.rebalanceSummary?.holdCount || 0}</td><td class="${pnlClass(item.rebalanceSummary?.netCash)}">${money(item.rebalanceSummary?.netCash || 0)}</td></tr>`).join('');
 }
@@ -736,7 +766,8 @@ async function openQualityMomentumPerformance() {
   const modal = document.querySelector('#qm-performance-modal');
   modal.classList.remove('hidden');
   document.querySelector('#qm-performance-note').textContent = '正在计算月度盈亏…';
-  state.qualityMomentumPerformance = await api('/api/strategies/quality-momentum/performance');
+  document.querySelector('#qm-performance-title').textContent=`${activeSelectionStrategy()?.name || '策略'}月度盈亏`;
+  state.qualityMomentumPerformance = activeSelectionStrategy()?.observation?activeSelectionStrategy().performance:await api('/api/strategies/quality-momentum/performance');
   renderQualityMomentumPerformance();
   modal.querySelector('.modal-close').focus();
 }
@@ -767,7 +798,8 @@ async function openQualityMomentumReturnComparison() {
   const modal=document.querySelector('#qm-return-modal');
   modal.classList.remove('hidden');
   document.querySelector('#qm-return-note').textContent='正在计算收益率对比…';
-  state.qualityMomentumReturnPerformance=await api('/api/strategies/quality-momentum/performance');
+  document.querySelector('#qm-return-title').textContent=`${activeSelectionStrategy()?.name || '策略'}收益率对比`;
+  state.qualityMomentumReturnPerformance=activeSelectionStrategy()?.observation?activeSelectionStrategy().performance:await api('/api/strategies/quality-momentum/performance');
   renderQualityMomentumReturnComparison();
   modal.querySelector('.modal-close').focus();
 }
@@ -2163,13 +2195,13 @@ async function loadResearchReports(preferredId = null) {
 }
 
 async function loadAll() {
-  const [watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment, qualityMomentum] = await Promise.all([
+  const [watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment, qualityMomentum,factorObservations] = await Promise.all([
     api('/api/watchlist'), api('/api/portfolio'), api('/api/portfolio/risk'), api('/api/transactions'),
     api('/api/notifications'), api('/api/reviews'), api('/api/config'),
     api(`/api/performance/monthly?month=${currentEtMonth()}`), api('/api/events?severity=ALL&limit=200'),
-    api('/api/news?limit=100'), api('/api/news/sentiment'), api('/api/strategies/quality-momentum')
+    api('/api/news?limit=100'), api('/api/news/sentiment'), api('/api/strategies/quality-momentum'),api('/api/strategies/factor-observations')
   ]);
-  Object.assign(state, { watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment, qualityMomentum });
+  Object.assign(state, { watchlist, portfolio, portfolioRisk, transactions, notifications, reviews, config, currentMonthPerformance, eventFeed, newsArticles, newsSentiment, qualityMomentum,factorObservations });
   renderWatchlist(); renderPortfolio(); renderPortfolioRisk(); renderQualityMomentum(); renderTransactions(); renderNotifications(); renderEvents(); renderNews(); renderExternalDrivers(); renderCapitalFlow(); renderIntradayFlow(); renderInvestmentAdvice(); renderPredictionOverview(); renderReviews(); renderConfig(); renderDailyOperations();
 }
 
@@ -2335,6 +2367,14 @@ document.querySelector('#watchlist-cancel-edit').addEventListener('click', reset
 document.querySelector('#qm-signal-select').addEventListener('change', (event) => {
   state.qualityMomentumSignalDate = event.target.value || null;
   renderQualityMomentum();
+});
+
+document.querySelector('#selection-strategy-select').addEventListener('change',event=>{
+  state.selectionStrategyKey=event.target.value;state.qualityMomentumSignalDate=null;
+  state.qualityMomentumPerformance=null;state.qualityMomentumReturnPerformance=null;renderQualityMomentum();
+});
+document.querySelector('#factor-comparison-period').addEventListener('change',event=>{
+  state.factorComparisonPeriod=event.target.value;renderFactorComparison();
 });
 
 document.querySelector('#sec-ticker').addEventListener('change', () => {

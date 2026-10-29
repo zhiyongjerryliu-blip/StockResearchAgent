@@ -99,3 +99,28 @@ test('系统状态会报告遗漏的自动日终任务并在补跑完成后恢�
   assert.ok(!recovered.issues.some((item) => item.code === 'DAILY_CYCLE_MISSING'));
   db.close();
 });
+
+test('每日备份轮换只清理旧每日备份，保留新备份及手工变更快照', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stock-research-backup-'));
+  const databasePath = path.join(directory, 'research.sqlite');
+  const backupDirectory = path.join(directory, 'backups');
+  fs.mkdirSync(backupDirectory);
+  const manual = Array.from({ length: 7 }, (_, index) => `research-before-change-${index}.sqlite`);
+  for (const name of [...manual, 'research-2000-01-01.sqlite']) {
+    fs.writeFileSync(path.join(backupDirectory, name), 'existing backup');
+  }
+  const db = openDatabase(databasePath);
+  try {
+    const options = { databasePath, backupDirectory, backupRetentionCount: 1, timezone: 'Asia/Shanghai' };
+    const result = await runSystemMaintenance(db, options);
+    assert.equal(result.integrity, 'ok');
+    assert.equal(fs.existsSync(path.join(backupDirectory, result.backup.name)), true);
+    assert.deepEqual(result.backup.removed, ['research-2000-01-01.sqlite']);
+    for (const name of manual) assert.equal(fs.existsSync(path.join(backupDirectory, name)), true);
+    const repeated = await runSystemMaintenance(db, options);
+    assert.equal(repeated.backup.reason, 'already_backed_up_today');
+  } finally {
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

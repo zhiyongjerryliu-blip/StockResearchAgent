@@ -65,3 +65,22 @@ test('工作线程正常退出但没有结果时立即报错而不等待超时',
   await assert.rejects(promise, /未返回结果/);
   assert.equal(runner.status().running, false);
 });
+
+test('耗时行情工作线程不会阻塞主线程定时响应', async () => {
+  const runner = new DailyCycleWorkerRunner({
+    taskLabel: '行情刷新',
+    workerUrl: new URL(`data:text/javascript,${encodeURIComponent(`
+      import { parentPort } from 'node:worker_threads';
+      const end = Date.now() + 200;
+      while (Date.now() < end) {}
+      parentPort.postMessage({ok:true,result:'refreshed'});
+    `)}`)
+  });
+  const events = [];
+  const task = runner.run().then(result => { events.push(result); });
+  await new Promise(resolve => setTimeout(() => { events.push('heartbeat'); resolve(); }, 20));
+  assert.deepEqual(events, ['heartbeat']);
+  await task;
+  assert.deepEqual(events, ['heartbeat', 'refreshed']);
+  assert.equal(runner.status().running, false);
+});

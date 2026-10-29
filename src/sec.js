@@ -3,6 +3,7 @@ import { nowIso, toPlain, toPlainRows } from './db.js';
 import { normalizeTicker } from './domain.js';
 import { configureAutomaticPeers } from './peer-selection.js';
 import { syncSecFilingEvents } from './events.js';
+import { saveFactorInput } from './factor-inputs.js';
 
 const SEC_BASE = 'https://www.sec.gov';
 const SEC_DATA_BASE = 'https://data.sec.gov';
@@ -241,6 +242,20 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
   const cik = normalizeCik(cikValue);
   const filings = normalizeSubmissions(submissions, ticker, cik);
   const facts = normalizeCompanyFacts(companyFacts, ticker, cik);
+  // Some AMD reports omit Liabilities but disclose matching assets and equity.
+  // Keep the same formula and conservative disclosure gate as the research adapter.
+  if (ticker==='AMD') {
+    for (const asset of facts.filter(f=>f.metricKey==='assets')) {
+      if (facts.some(f=>f.metricKey==='liabilities' && f.accessionNumber===asset.accessionNumber && f.periodEnd===asset.periodEnd && f.filedAt===asset.filedAt)) continue;
+      const match=tag=>(companyFacts.facts?.['us-gaap']?.[tag]?.units?.USD || []).filter(f=>!f.start && f.accn===asset.accessionNumber && f.end===asset.periodEnd && f.filed===asset.filedAt);
+      const eq=match('StockholdersEquity');const total=match('LiabilitiesAndStockholdersEquity');
+      if (eq.length && total.length && eq.every(f=>f.val===eq[0].val) && total.every(f=>f.val===asset.value)) {
+        const derived={...asset,metricKey:'liabilities',tagPriority:99,tag:'Assets-StockholdersEquity (same filing)',
+          label:'总负债（同份财报资产减权益）',value:asset.value-eq[0].val};
+        derived.sourceKey=sourceKey(derived);facts.push(derived);
+      }
+    }
+  }
   const entityName = companyFacts?.entityName || submissions?.name || null;
   const sic = submissions?.sic ? String(submissions.sic) : null;
   const sicDescription = submissions?.sicDescription || null;
@@ -274,6 +289,7 @@ export function saveSecCompanyData(db, tickerValue, cikValue, submissions, compa
 
   db.exec('BEGIN');
   try {
+    saveFactorInput(db, `sec:${ticker}`, { company: { ticker,cik },submissions,companyFacts });
     db.prepare(`
       UPDATE securities
       SET cik = ?, name = COALESCE(name, ?), sic = COALESCE(?, sic),

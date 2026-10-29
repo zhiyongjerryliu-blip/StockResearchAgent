@@ -26,7 +26,9 @@ import {
 } from './daily-cycle-automation.js';
 import { generateWatchlistResearchReports } from './research-reports.js';
 import { requireHeldTicker } from './analysis-scope.js';
-import { runQualityMomentumAutomation } from './quality-momentum-automation.js';
+import { runQualityMomentumAutomation,isQualityMomentumMonthEnd } from './quality-momentum-automation.js';
+import { runFactorObservationAutomation } from './factor-observation.js';
+import { syncForeignFactorFacts } from './factor-inputs.js';
 
 function etParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -86,7 +88,13 @@ async function executeDailyCycle(
   };
   try {
     await runStep('SEC', 'SEC披露同步', async () => {
-      if (!ticker) return syncSecWatchlist(db, secProvider);
+      if (!ticker) {
+        const result=await syncSecWatchlist(db,secProvider);
+        if (secProvider && isQualityMomentumMonthEnd(reviewDate) && db.prepare('SELECT 1 FROM factor_observation_strategies WHERE enabled=1 LIMIT 1').get()) {
+          await syncForeignFactorFacts(db,secProvider,reviewDate);
+        }
+        return result;
+      }
       if (!secProvider) return { skipped: true, reason: 'provider-unavailable', results: [] };
       try {
         secProvider.assertConfigured();
@@ -110,6 +118,10 @@ async function executeDailyCycle(
       ticker
         ? { skipped: true, reason: 'portfolio-strategy-only' }
         : runQualityMomentumAutomation(db, reviewDate)
+    ));
+    await runStep('FACTOR_OBSERVATION', '质量价值与三因子观察账户', () => (
+      ticker ? {skipped:true,reason:'portfolio-strategy-only'}
+        : runFactorObservationAutomation(db,reviewDate,{provider,secProvider})
     ));
     await runStep('MARKET_CONTEXT', '宏观市场同步', () => (
       syncMarketContext(db, provider, reviewDate)
@@ -344,9 +356,27 @@ export async function reconcileDailyCycles(
 
 export async function runMarketRefreshCycle(db, provider, date = new Date()) {
   const market = await refreshWatchlistPrices(db, provider);
-  const reviewDate = etDate(date);
+  const reviewDate = latestStableUsMarketDate(date);
+  // An overnight recovery must repair the completed sessions whose reviews
+  // were generated with stale/missing quotes, not today's unfinished session.
+  const staleDates = db.prepare(`
+    SELECT DISTINCT review_date FROM daily_reviews
+    WHERE review_date <= ? AND review_type = 'STOCK' AND status = 'FINAL'
+      AND json_valid(structured_json)
+      AND (json_extract(structured_json, '$.position.priceDate') < review_date
+        OR COALESCE(json_extract(structured_json, '$.position.priceDataStatus'), '') != 'COMPLETE')
+    ORDER BY review_date
+  `).all(reviewDate);
+  const historicalReviewRepairs = [];
+  for (const row of staleDates) {
+    if (row.review_date === reviewDate) continue;
+    historicalReviewRepairs.push({
+      reviewDate: row.review_date,
+      ...await refreshDailyReviewsIfNeeded(db, row.review_date)
+    });
+  }
   const reviewRepair = await refreshDailyReviewsIfNeeded(db, reviewDate);
-  return { ...market, reviewRepair };
+  return { ...market, reviewRepair, historicalReviewRepairs };
 }
 
 export function startScheduler(
@@ -357,7 +387,8 @@ export function startScheduler(
   const timers = [];
 
   const refreshTimer = setInterval(() => {
-    runMarketRefreshCycle(db, provider).catch((error) => {
+    const refresh = dependencies.executeMarketRefresh || (() => runMarketRefreshCycle(db, provider));
+    refresh().catch((error) => {
       console.error('定时行情更新失败：', error.message);
     });
   }, refreshMs);

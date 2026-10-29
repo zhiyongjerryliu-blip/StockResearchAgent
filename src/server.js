@@ -8,7 +8,7 @@ import { calculatePortfolioRisk } from './portfolio-risk.js';
 import { providerFromName, upsertDailyBars } from './market.js';
 import { createNotification } from './notifications.js';
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from './reviews.js';
-import { runMarketRefreshCycle, startScheduler } from './scheduler.js';
+import { startScheduler } from './scheduler.js';
 import { getSecOverview, SecEdgarProvider, syncSecCompany } from './sec.js';
 import { commitTransactionImport, validateTransactionImport } from './transaction-import.js';
 import { configureAutomaticPeers } from './peer-selection.js';
@@ -80,6 +80,7 @@ import {
   getQualityMomentumMonthlyPerformance, getQualityMomentumStrategy
 } from './quality-momentum-strategy.js';
 import { heldTickers, requireHeldTicker } from './analysis-scope.js';
+import { getFactorObservations } from './factor-observation.js';
 
 const applicationStartedAt = nowIso();
 const db = openDatabase();
@@ -114,6 +115,20 @@ const dailyCycleWorker = new DailyCycleWorkerRunner({
   databasePath: config.databasePath,
   timeoutMilliseconds: config.system.dailyCycleWorkerTimeoutMinutes * 60_000
 });
+const marketRefreshWorker = new DailyCycleWorkerRunner({
+  databasePath: config.databasePath,
+  workerUrl: new URL('./market-refresh-worker.js', import.meta.url),
+  taskLabel: '行情刷新',
+  timeoutMilliseconds: 10 * 60_000
+});
+let marketRefreshPromise = null;
+function refreshMarketInWorker() {
+  if (!marketRefreshPromise) {
+    marketRefreshPromise = marketRefreshWorker.run({ trigger: 'MARKET_REFRESH' })
+      .finally(() => { marketRefreshPromise = null; });
+  }
+  return marketRefreshPromise;
+}
 const futuRecovery = {
   totalAttempts: 0,
   consecutiveFailures: 0,
@@ -596,6 +611,9 @@ async function apiRoute(request, response, url) {
   if (method === 'GET' && url.pathname === '/api/strategies/quality-momentum') {
     return sendJson(response, 200, getQualityMomentumStrategy(db));
   }
+  if (method === 'GET' && url.pathname === '/api/strategies/factor-observations') {
+    return sendJson(response,200,getFactorObservations(db));
+  }
   if (method === 'GET' && url.pathname === '/api/strategies/quality-momentum/performance') {
     return sendJson(response, 200, getQualityMomentumMonthlyPerformance(db));
   }
@@ -621,7 +639,7 @@ async function apiRoute(request, response, url) {
     `).all(ticker.toUpperCase())));
   }
   if (method === 'POST' && url.pathname === '/api/market/refresh') {
-    return sendJson(response, 200, await runMarketRefreshCycle(db, provider));
+    return sendJson(response, 200, await refreshMarketInWorker());
   }
   if (method === 'GET' && url.pathname === '/api/market/context') {
     return sendJson(response, 200, getMarketContext(
@@ -956,6 +974,7 @@ const server = http.createServer(async (request, response) => {
 const stopScheduler = startScheduler(
   db, provider, config, secProvider, earningsProvider, newsProvider,
   {
+    executeMarketRefresh: refreshMarketInWorker,
     executeCycle: (_db, _provider, _date, _sec, _earnings, _news, cycleOptions) => (
       dailyCycleWorker.run(cycleOptions)
     )
@@ -1029,7 +1048,7 @@ async function shutdown(exitCode = 0, reason = 'shutdown') {
   forceExitTimer.unref();
   stopScheduler();
   try {
-    await dailyCycleWorker.stop();
+    await Promise.all([dailyCycleWorker.stop(), marketRefreshWorker.stop()]);
     await new Promise((resolve) => setImmediate(resolve));
   } catch (error) {
     console.error('关闭日终工作线程失败：', error.message);

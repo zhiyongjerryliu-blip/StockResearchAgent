@@ -237,7 +237,7 @@ export async function generateDailyReviews(db, reviewDate, options = {}) {
     };
     let narrative = deterministicStockNarrative(structured);
     try {
-      narrative = await explainStructuredReview(structured) || narrative;
+      if (options.useLlm !== false) narrative = await explainStructuredReview(structured) || narrative;
     } catch (error) {
       structured.llmError = error.message;
     }
@@ -353,6 +353,8 @@ export async function refreshDailyReviewsIfNeeded(db, reviewDate) {
   }
 
   saveDailySnapshots(db, reviewDate);
-  await generateDailyReviews(db, reviewDate);
+  // Quote recovery must complete using local facts even when the optional LLM
+  // is unavailable; otherwise each repaired stock can add a 45-second wait.
+  await generateDailyReviews(db, reviewDate, { useLlm: false });
   return { refreshed: true, reason: 'PRICE_DATA_CHANGED', tickers: staleTickers };
 }

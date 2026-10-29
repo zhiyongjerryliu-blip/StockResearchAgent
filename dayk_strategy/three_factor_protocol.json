@@ -1,0 +1,19 @@
+{
+  "version": "industry18-three-factor-v1",
+  "start": "2023-01-03",
+  "end": "2026-09-18",
+  "variants": {"QM": [0.5, 0.5, 0.0], "QV": [0.5, 0.0, 0.5], "QVM_equal": [0.3333333333333333, 0.3333333333333333, 0.3333333333333333], "QVM_442": [0.4, 0.4, 0.2]},
+  "weight_order": ["quality", "momentum", "value"],
+  "value_metrics": ["TTM net income / equity market capitalization", "TTM operating cash flow / equity market capitalization"],
+  "value_ranking": "mean of two percentile ranks within the original five industry subgroups; ties use average rank",
+  "quality_and_momentum": "unchanged from industry18_protocol.json; global eligible-universe percentile ranks",
+  "eligibility": "identical pool for all four variants: original QM eligibility plus positive disclosed ordinary share count aged <=550 days and available historical FX; QV also retains the original momentum warmup",
+  "execution": "first window close and subsequent calendar month-end close signals; next session open fills; select 5, maximum 2 per subgroup, target 20% each; unfilled slots remain cash",
+  "shares": "latest observation date visible strictly before signal day; DEI preferred at equal observation date, otherwise US-GAAP/IFRS; latest visible revision; non-DEI figures normalized from filing-date split basis to observation-date basis",
+  "adr_ordinary_shares_per_unit": {"TSM": 5, "UMC": 5, "ASML": 1, "GFS": 1},
+  "market_cap": "nominal USD close * split-normalized disclosed ordinary shares / ADR ratio, converted to reporting currency using last FX observation strictly before signal date, at most 7 calendar days old",
+  "corporate_actions": "restore nominal historical close using subsequent Yahoo split adjustments; adjust outstanding shares only for genuine stock splits; WDC 2025-02-24 ratio 1.323 is a spinoff price adjustment, not a share-count split",
+  "costs": "initial USD100000; one-way fee5bps and slippage5bps; terminal liquidation costs; stress fee10bps and slippage20bps",
+  "windows": {"full": "2023-01-03", "late": "2025-01-02", "one_year": "2025-09-18", "all18": "2026-03-02", "cost_stress": "2023-01-03", "one_year_cost": "2025-09-18", "delay_stress": "2023-01-03"},
+  "limitations": ["retrospectively selected AI-chain stock universe; selection/survivorship bias", "historical comparison, not an untouched out-of-sample test", "sparse subgroup rankings (3-4 members) and correlated factors", "latest disclosed share-count market-cap proxy, not exact daily market capitalization", "OCF yield is not free-cash-flow yield; capital expenditure not deducted", "GAAP/IFRS earnings and cash flow are not cleaned for nonrecurring items", "SNDK not eligible until 2026-02-25 due to momentum warmup", "WDC spinoff return uses inherited adjusted-price approximation, not actual distributed SNDK holdings", "research next-open execution differs from the live automation next-close convention", "no taxes, borrow costs or cash interest; no market-timing overlay"]
+}

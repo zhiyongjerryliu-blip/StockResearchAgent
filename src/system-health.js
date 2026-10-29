@@ -60,10 +60,15 @@ function listBackups(databasePath, backupDirectory) {
   const base = path.basename(databasePath, path.extname(databasePath));
   return fs.readdirSync(backupDirectory)
     .filter((name) => name.startsWith(base + '-') && name.endsWith('.sqlite'))
-    .map((name) => {
+    .flatMap((name) => {
       const filePath = path.join(backupDirectory, name);
-      const stat = fs.statSync(filePath);
-      return { name, sizeBytes: stat.size, createdAt: stat.mtime.toISOString() };
+      try {
+        const stat = fs.statSync(filePath);
+        return [{ name, sizeBytes: stat.size, createdAt: stat.mtime.toISOString() }];
+      } catch (error) {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      }
     })
     .sort((left, right) => right.name.localeCompare(left.name));
 }
@@ -220,7 +225,12 @@ async function createDailyBackup(db, options, date = new Date()) {
     throw error;
   }
   const retentionCount = Math.max(1, Number(options.backupRetentionCount || 7));
-  const files = listBackups(databasePath, backupDirectory);
+  // Manual before-change snapshots have a separate lifecycle. Only rotate
+  // generated daily backups, whose ISO dates sort chronologically.
+  const files = listBackups(databasePath, backupDirectory).filter((file) => (
+    file.name.startsWith(base + '-') &&
+    /^\d{4}-\d{2}-\d{2}\.sqlite$/.test(file.name.slice(base.length + 1))
+  ));
   const removed = [];
   for (const old of files.slice(retentionCount)) {
     fs.unlinkSync(path.join(backupDirectory, old.name));

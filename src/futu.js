@@ -72,6 +72,8 @@ export class FutuCollector {
     this.onEvent = onEvent;
     this.child = null;
     this.stopping = false;
+    this.lifecycle = Promise.resolve();
+    this.spawn = options.spawn || spawn;
     this.openDManager = options.openDManager || new FutuOpenDManager({
       enabled: options.enabled && options.autoLaunchOpenD,
       appName: options.openDAppName,
@@ -92,7 +94,17 @@ export class FutuCollector {
     };
   }
 
-  async start(tickers = [], backfillTickers = tickers) {
+  #enqueue(operation) {
+    const result = this.lifecycle.then(operation);
+    this.lifecycle = result.catch(() => {});
+    return result;
+  }
+
+  start(tickers = [], backfillTickers = tickers) {
+    return this.#enqueue(() => this.#start(tickers, backfillTickers));
+  }
+
+  async #start(tickers, backfillTickers) {
     const symbols = [...new Set(tickers.map((ticker) => String(ticker).trim().toUpperCase()).filter(Boolean))].sort();
     const backfillSymbols = [...new Set(backfillTickers
       .map((ticker) => String(ticker).trim().toUpperCase())
@@ -102,12 +114,12 @@ export class FutuCollector {
       return this.status();
     }
     if (!symbols.length) {
-      await this.stop();
+      await this.#stop();
       this.state = { ...this.state, status: 'waiting_for_symbols', symbols: [] };
       return this.status();
     }
     if (this.child && symbols.join(',') === this.state.symbols.join(',')) return this.status();
-    await this.stop();
+    await this.#stop();
     if (!fs.existsSync(this.options.pythonPath)) {
       this.state = {
         ...this.state, status: 'missing_sdk', symbols,
@@ -129,7 +141,7 @@ export class FutuCollector {
       '--backfill-days', String(this.options.backfillDays)
     ];
     this.stopping = false;
-    const child = spawn(this.options.pythonPath, args, {
+    const child = this.spawn(this.options.pythonPath, args, {
       cwd: this.options.projectRoot,
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -141,6 +153,7 @@ export class FutuCollector {
     };
     const stdout = readline.createInterface({ input: child.stdout });
     stdout.on('line', (line) => {
+      if (this.child !== child || this.stopping) return;
       const event = parseFutuCollectorLine(line);
       if (event) this.#handleEvent(event);
     });
@@ -149,10 +162,14 @@ export class FutuCollector {
       stderr = `${stderr}${chunk}`.slice(-4000);
     });
     child.on('error', (error) => {
+      if (this.child !== child) return;
+      if (!child.pid) this.child = null;
       this.state = { ...this.state, status: 'error', lastError: error.message, pid: null };
     });
     child.on('exit', (code, signal) => {
-      if (this.child === child) this.child = null;
+      stdout.close();
+      if (this.child !== child) return;
+      this.child = null;
       const expected = this.stopping || signal === 'SIGTERM' || code === 0;
       this.state = {
         ...this.state, status: expected ? 'stopped' : 'error', pid: null,
@@ -163,24 +180,41 @@ export class FutuCollector {
     return this.status();
   }
 
-  async restart(tickers = this.state.symbols, backfillTickers = []) {
-    await this.stop();
-    return this.start(tickers, backfillTickers);
+  restart(tickers = this.state.symbols, backfillTickers = []) {
+    return this.#enqueue(async () => {
+      await this.#stop();
+      return this.#start(tickers, backfillTickers);
+    });
   }
 
-  async stop() {
+  stop() {
+    return this.#enqueue(() => this.#stop());
+  }
+
+  async #stop() {
     if (!this.child) return;
     const child = this.child;
     this.stopping = true;
-    await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        if (this.child === child) child.kill('SIGKILL');
-        resolve();
-      }, 5000);
-      child.once('exit', () => {
+    await new Promise((resolve, reject) => {
+      let killTimer;
+      const finish = () => {
         clearTimeout(timer);
+        clearTimeout(killTimer);
+        child.removeListener('exit', finish);
+        child.removeListener('close', finish);
         resolve();
-      });
+      };
+      const timer = setTimeout(() => {
+        // Wait for actual exit after SIGKILL before allowing a replacement.
+        killTimer = setTimeout(() => {
+          child.removeListener('exit', finish);
+          child.removeListener('close', finish);
+          reject(new Error(`富途采集器 ${child.pid} 未退出，已暂停重启以避免重复进程`));
+        }, this.options.stopTimeoutMilliseconds || 5000);
+        if (this.child === child) child.kill('SIGKILL');
+      }, this.options.stopTimeoutMilliseconds || 5000);
+      child.once('exit', finish);
+      child.once('close', finish);
       child.kill('SIGTERM');
     });
   }

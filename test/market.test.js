@@ -27,6 +27,46 @@ test('Yahoo Provider将返回值标准化为日线', async () => {
   assert.equal(bars[1].provider, 'yahoo');
 });
 
+test('Yahoo主端点403时切换备用端点，后续请求优先使用已恢复端点', async () => {
+  const requests = [];
+  const provider = new YahooDailyProvider(async url => {
+    requests.push(new URL(url).hostname);
+    if (new URL(url).hostname === 'query1.finance.yahoo.com') return { ok: false, status: 403 };
+    return { ok: true, json: async () => ({ chart: { result: [{
+      timestamp: [Date.parse('2026-10-28T13:30:00Z') / 1000],
+      indicators: { quote: [{ close: [100] }] }
+    }] } }) };
+  });
+  const bars = await provider.fetchRange('AMD', '1mo');
+  await provider.fetchRange('MU', '1mo');
+  assert.equal(bars[0].tradeDate, '2026-10-28');
+  assert.equal(bars[0].provider, 'yahoo');
+  assert.deepEqual(requests, ['query1.finance.yahoo.com', 'query2.finance.yahoo.com', 'query2.finance.yahoo.com']);
+  assert.ok(provider.factorCharts.has('AMD'));
+});
+
+test('Yahoo网络失败有限切换，两端均失败时保留错误且不伪造行情', async () => {
+  let requests = 0;
+  const provider = new YahooDailyProvider(async () => {
+    requests += 1;
+    if (requests === 1) throw new TypeError('fetch failed');
+    return { ok: false, status: 429 };
+  });
+  await assert.rejects(provider.fetchRange('AMD', '1mo'), /query1.*fetch failed; query2.*HTTP 429/);
+  assert.equal(requests, 2);
+  assert.equal(provider.factorCharts.size, 0);
+});
+
+test('Yahoo无效股票404不切换端点重复请求', async () => {
+  let requests = 0;
+  const provider = new YahooDailyProvider(async () => {
+    requests += 1;
+    return { ok: false, status: 404 };
+  });
+  await assert.rejects(provider.fetchRange('INVALID', '1mo'), /HTTP 404/);
+  assert.equal(requests, 1);
+});
+
 test('Yahoo十日行情缺少上一交易日时自动用一个月行情补齐', async () => {
   const requests = [];
   const responseFor = (dates, closes) => ({

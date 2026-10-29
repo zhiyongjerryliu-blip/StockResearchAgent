@@ -1,5 +1,6 @@
 import { nowIso, toPlainRows } from './db.js';
 import { previousRegularUsTradingDate } from './trading-calendar.js';
+import { saveFactorChart } from './factor-inputs.js';
 
 function yahooSymbol(ticker) {
   return ticker.replaceAll('.', '-');
@@ -48,19 +49,41 @@ export class YahooDailyProvider {
   constructor(fetchImpl = fetch) {
     this.fetchImpl = fetchImpl;
     this.name = 'yahoo';
+    this.factorCharts = new Map();
+    this.chartHost = 'query1.finance.yahoo.com';
   }
 
   async fetchRange(ticker, range) {
     const symbol = encodeURIComponent(yahooSymbol(ticker));
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=1d&events=div%2Csplits`;
-    const response = await this.fetchImpl(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 Local Research Workbench' },
-      signal: AbortSignal.timeout(15_000)
-    });
-    if (!response.ok) throw new Error(`Yahoo行情请求失败：HTTP ${response.status}`);
-    const payload = await response.json();
+    const hosts = [this.chartHost, ...['query1.finance.yahoo.com', 'query2.finance.yahoo.com']
+      .filter(host => host !== this.chartHost)];
+    const errors = [];
+    let payload;
+    for (const host of hosts) {
+      try {
+        const url = `https://${host}/v8/finance/chart/${symbol}?range=${range}&interval=1d&events=div%2Csplits`;
+        const response = await this.fetchImpl(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 Local Research Workbench' },
+          signal: AbortSignal.timeout(15_000)
+        });
+        if (!response.ok) {
+          const error = new Error(`Yahoo行情请求失败：HTTP ${response.status}`);
+          error.retryable = [403, 408, 429].includes(response.status) || response.status >= 500;
+          throw error;
+        }
+        payload = await response.json();
+        this.chartHost = host;
+        break;
+      } catch (error) {
+        errors.push(`${host}: ${error.message}`);
+        if (error.retryable === false || host === hosts.at(-1)) {
+          throw new Error(errors.join('; '));
+        }
+      }
+    }
     const result = payload?.chart?.result?.[0];
     if (!result) throw new Error(payload?.chart?.error?.description || 'Yahoo行情数据为空');
+    this.factorCharts.set(ticker,payload);
 
     const quote = result.indicators?.quote?.[0] || {};
     const adjusted = result.indicators?.adjclose?.[0]?.adjclose || [];
@@ -87,8 +110,9 @@ export class YahooDailyProvider {
     const missingPrevious = !bars.some((bar) => bar.tradeDate === expectedPreviousDate);
     const missingHistory = options.historyStart &&
       !bars.some((bar) => bar.tradeDate <= options.historyStart);
-    if (missingPrevious || missingHistory) {
-      const fallbackRange = missingHistory
+    const recentSplit = Object.keys(this.factorCharts.get(ticker)?.chart?.result?.[0]?.events?.splits || {}).length > 0;
+    if (missingPrevious || missingHistory || recentSplit) {
+      const fallbackRange = recentSplit ? '5y' : missingHistory
         ? historyRange(options.historyStart, latest.tradeDate)
         : '1mo';
       const fallbackBars = await this.fetchRange(ticker, fallbackRange);
@@ -193,6 +217,7 @@ export async function refreshWatchlistPrices(db, provider) {
         ? desiredHistoryStart : null;
       const bars = await provider.fetchDaily(ticker, { historyStart });
       const count = upsertDailyBars(db, bars);
+      if (provider.factorCharts?.has(ticker)) saveFactorChart(db,ticker,provider.factorCharts.get(ticker));
       results.push({ ticker, role, ok: true, count, historyStart });
     } catch (error) {
       results.push({ ticker, role, ok: false, error: error.message });

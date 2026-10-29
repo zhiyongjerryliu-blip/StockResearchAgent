@@ -6,6 +6,50 @@ import { addTransaction, saveManualPrice, upsertWatchlistItem } from '../src/rep
 import { generateDailyReviews, refreshDailyReviewsIfNeeded } from '../src/reviews.js';
 import { indexSecFilingEvents } from '../src/events.js';
 import { ingestFutuBars, ingestFutuTicks } from '../src/intraday-flow.js';
+import { runMarketRefreshCycle } from '../src/scheduler.js';
+import { config } from '../src/config.js';
+
+test('隔夜行情恢复会修复缺失交易日的复盘和快照，不使用尚未收盘的当天', async () => {
+  const db = openDatabase(':memory:');
+  const originalLlm = { ...config.llm };
+  const originalFetch = globalThis.fetch;
+  let llmCalls = 0;
+  Object.assign(config.llm, { enabled: true, apiKey: 'test-key', model: 'test-model', baseUrl: 'https://llm.invalid' });
+  globalThis.fetch = async () => { llmCalls += 1; throw new Error('LLM unavailable'); };
+  try {
+    upsertWatchlistItem(db, { ticker: 'TEST' });
+    addTransaction(db, { ticker: 'TEST', side: 'BUY', tradeTime: '2026-10-26', quantity: 10, price: 100, fee: 0 });
+    saveManualPrice(db, { ticker: 'TEST', tradeDate: '2026-10-26', close: 100, volume: 1000 });
+    for (const day of ['2026-10-27', '2026-10-28']) {
+      saveDailySnapshots(db, day);
+      await generateDailyReviews(db, day, { useLlm: false });
+    }
+    const provider = {
+      name: 'test', fetchDaily: async ticker => ['2026-10-26', '2026-10-27', '2026-10-28'].map((tradeDate, index) => ({
+        ticker, tradeDate, open: 100, high: 121, low: 100,
+        close: [100, 110, 121][index], adjustedClose: [100, 110, 121][index], volume: 1000,
+        provider: 'manual'
+      }))
+    };
+    const result = await runMarketRefreshCycle(db, provider, new Date('2026-10-29T05:00:00Z'));
+    assert.equal(result.reviewRepair.refreshed, true);
+    assert.equal(result.historicalReviewRepairs.find(row => row.reviewDate === '2026-10-27').refreshed, true);
+    for (const [day, price] of [['2026-10-27', 110], ['2026-10-28', 121]]) {
+      const review = db.prepare("SELECT structured_json FROM daily_reviews WHERE ticker='TEST' AND review_date=?").get(day);
+      assert.equal(JSON.parse(review.structured_json).position.currentPrice, price);
+      assert.equal(db.prepare("SELECT close FROM daily_position_snapshots WHERE ticker='TEST' AND snapshot_date=?").get(day).close, price);
+    }
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM daily_reviews WHERE review_date='2026-10-29'").get().n, 0);
+    const repeated = await runMarketRefreshCycle(db, provider, new Date('2026-10-29T05:00:00Z'));
+    assert.equal(repeated.reviewRepair.reason, 'UP_TO_DATE');
+    assert.equal(repeated.historicalReviewRepairs.length, 0);
+    assert.equal(llmCalls, 0, '行情恢复不应等待不可用的可选LLM服务');
+  } finally {
+    Object.assign(config.llm, originalLlm);
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
 
 test('缺失行情补齐后自动重算快照和已有复盘', async () => {
   const db = openDatabase(':memory:');
